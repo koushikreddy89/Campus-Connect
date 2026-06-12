@@ -1,0 +1,130 @@
+{
+  "customColleges": [
+    {
+      "name": "SR University",
+      "domain": "sru.edu.in",
+      "alternativeDomains": ["mail.sru.edu.in", "student.sru.edu.in"],
+      "location": "Sonipat, Haryana",
+      "country": "India",
+      "keywords": ["sr", "sru", "sonipat", "haryana", "engineering", "university"],
+      "founded": 2009,
+      "type": "private",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "Shobhit University",
+      "domain": "shobhituniversity.ac.in",
+      "alternativeDomains": ["student.shobhituniversity.ac.in", "mail.shobhituniversity.ac.in"],
+      "location": "Meerut, Uttar Pradesh",
+      "country": "India",
+      "keywords": ["shobhit", "meerut", "engineering", "university", "uttar pradesh"],
+      "founded": 2010,
+      "type": "private",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "Gargi College",
+      "domain": "gargi.du.ac.in",
+      "alternativeDomains": ["mail.gargi.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["gargi", "delhi", "women", "college", "university"],
+      "founded": 1967,
+      "type": "public",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "Miranda House",
+      "domain": "mirandahouse.ac.in",
+      "alternativeDomains": ["mail.mirandahouse.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["miranda", "delhi", "women", "college", "liberal arts"],
+      "founded": 1948,
+      "type": "public",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "Ramjas College",
+      "domain": "ramjas.du.ac.in",
+      "alternativeDomains": ["mail.ramjas.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["ramjas", "delhi", "college", "university", "commerce"],
+      "founded": 1964,
+      "type": "public",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "Hindu College",
+      "domain": "hinducollege.ac.in",
+      "alternativeDomains": ["mail.hinducollege.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["hindu", "delhi", "college", "liberal arts", "science"],
+      "founded": 1899,
+      "type": "private",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "St. Stephen's College",
+      "domain": "ststephens.ac.in",
+      "alternativeDomains": ["mail.ststephens.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["stephen", "delhi", "college", "liberal arts"],
+      "founded": 1881,
+      "type": "private",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "IP University",
+      "domain": "ipu.ac.in",
+      "alternativeDomains": ["mail.ipu.ac.in", "student.ipu.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["ipu", "indraprastha", "delhi", "engineering", "tech"],
+      "founded": 1998,
+      "type": "public",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "BITS Pilani",
+      "domain": "bits-pilani.ac.in",
+      "alternativeDomains": ["student.bits-pilani.ac.in", "mail.bits-pilani.ac.in"],
+      "location": "Pilani, Rajasthan",
+      "country": "India",
+      "keywords": ["bits", "pilani", "rajasthan", "engineering", "technology"],
+      "founded": 1972,
+      "type": "private",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    },
+    {
+      "name": "IIIT Delhi",
+      "domain": "iiitd.ac.in",
+      "alternativeDomains": ["student.iiitd.ac.in", "mail.iiitd.ac.in"],
+      "location": "New Delhi",
+      "country": "India",
+      "keywords": ["iiit", "delhi", "technology", "it", "computing"],
+      "founded": 2008,
+      "type": "public",
+      "isCustom": true,
+      "addedAt": "2026-04-08"
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "lastUpdated": "2026-04-08",
+    "totalCustomColleges": 10,
+    "description": "Custom college dataset for universities not included in the standard API"
+  }
+}

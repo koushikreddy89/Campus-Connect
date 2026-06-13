@@ -31,6 +31,7 @@ export const AlumniExplorerPage: React.FC = () => {
   const [page, setPage] = useState(0);
 
   // Store
+  const authCollege = useAuthStore((state) => state.college);
   const college = authCollege || 'SR University';
   const {
     profiles,

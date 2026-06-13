@@ -3,13 +3,14 @@
  * Supports jobs, referrals, tips, achievements, and standard posts.
  */
 
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Heart, MessageCircle, Share2, Bookmark, Flame, MapPin, Briefcase, DollarSign, Calendar, ArrowUpRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { AlumniPost } from '@/types/alumni';
-import AlumniService from '@/services/alumniService';
+import AlumniService, { alumniProfileService } from '@/services/alumniService';
 import PremiumAvatar from './PremiumAvatar';
+import { useAuthStore } from '@/store/authStore';
 
 interface PremiumAlumniStoryCardProps {
   post: any; // Using any to seamlessly support both AlumniPost and AlumniPostEnhanced
@@ -35,22 +36,54 @@ function PremiumAlumniStoryCardComponent({
   const initialCommentsCount = post.comments?.length || post.commentCount || 0;
   const initialSharesCount = post.shareCount || post.shares || 0;
 
-  const [isLiked, setIsLiked] = useState(post.currentUserLiked || post.isLiked || false);
-  const [likeCount, setLikeCount] = useState(initialLikes);
-  const [isBookmarked, setIsBookmarked] = useState(post.currentUserBookmarked || post.isBookmarked || false);
+  const [isLiked, setIsLiked] = useState(post.currentUserLiked || post.isLiked || (post.likes && Array.isArray(post.likes) ? post.likes.includes(useAuthStore.getState().uid) : false));
+  const [likeCount, setLikeCount] = useState(post.likes && Array.isArray(post.likes) ? post.likes.length : initialLikes);
+  const [isBookmarked, setIsBookmarked] = useState(post.currentUserBookmarked || post.isBookmarked || (post.saves && Array.isArray(post.saves) ? post.saves.includes(useAuthStore.getState().uid) : false));
   const [isLoadingLike, setIsLoadingLike] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [commentsList, setCommentsList] = useState<any[]>(post.comments || []);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
 
+  const uid = useAuthStore((state) => state.uid);
+  const user = useAuthStore((state) => state.user);
+
+  useEffect(() => {
+    if (postType === 'referral') {
+      alumniProfileService.trackReferralView(post.refId || post.id).catch(console.error);
+    }
+  }, [postType, post.id, post.refId]);
+
+  useEffect(() => {
+    if (post.likes && Array.isArray(post.likes) && uid) {
+      setIsLiked(post.likes.includes(uid));
+      setLikeCount(post.likes.length);
+    }
+    if (post.saves && Array.isArray(post.saves) && uid) {
+      setIsBookmarked(post.saves.includes(uid));
+    }
+    if (post.comments) {
+      setCommentsList(post.comments);
+    }
+  }, [post.likes, post.saves, post.comments, uid]);
+
   const handleLike = useCallback(async () => {
     try {
       setIsLoadingLike(true);
-      const token = localStorage.getItem('token') || '';
-      
-      // Call mock service toggleLike
-      const success = await AlumniService.toggleLike(post.id, token);
+      let success = false;
+      if (postType === 'referral') {
+        if (!uid) {
+          toast.error('You must be logged in to like');
+          return;
+        }
+        const updated = await alumniProfileService.likeReferral(post.refId || post.id, uid);
+        if (updated && updated.likes) {
+          success = true;
+        }
+      } else {
+        const token = localStorage.getItem('token') || '';
+        success = await AlumniService.toggleLike(post.id, token);
+      }
 
       if (success) {
         const newIsLiked = !isLiked;
@@ -64,38 +97,53 @@ function PremiumAlumniStoryCardComponent({
     } finally {
       setIsLoadingLike(false);
     }
-  }, [post.id, isLiked, likeCount, onUpdate]);
+  }, [post.id, post.refId, postType, isLiked, likeCount, onUpdate, uid]);
 
   const handleBookmark = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token') || '';
-      const success = await AlumniService.toggleBookmark(post.id, token);
-      if (success) {
-        setIsBookmarked(!isBookmarked);
-        toast.success(isBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks');
+      if (postType === 'referral') {
+        if (!uid) {
+          toast.error('You must be logged in to save');
+          return;
+        }
+        await alumniProfileService.saveReferral(post.refId || post.id, uid);
+        const newSaved = !isBookmarked;
+        setIsBookmarked(newSaved);
+        toast.success(newSaved ? 'Saved to referrals successfully!' : 'Removed from saved referrals');
+      } else {
+        const token = localStorage.getItem('token') || '';
+        const success = await AlumniService.toggleBookmark(post.id, token);
+        if (success) {
+          setIsBookmarked(!isBookmarked);
+          toast.success(isBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks');
+        }
       }
     } catch (error) {
       toast.error('Failed to bookmark');
     }
-  }, [post.id, isBookmarked]);
+  }, [post.id, post.refId, postType, isBookmarked, uid]);
 
   const handleShare = useCallback(async () => {
-    const url = `${window.location.origin}/alumni/${post.alumniId || 'explorer'}`;
+    const applyUrl = post.applyLink || post.applicationUrl || `${window.location.origin}/alumni/${post.alumniId || 'explorer'}`;
+    if (postType === 'referral') {
+      alumniProfileService.trackReferralShare(post.refId || post.id).catch(console.error);
+    }
+    
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `${authorName}'s Contribution`,
+          title: `${authorName}'s Referral`,
           text: post.content,
-          url,
+          url: applyUrl,
         });
       } catch (err) {
         console.error('Share error:', err);
       }
     } else {
-      await navigator.clipboard.writeText(url);
-      toast.success('Link copied to clipboard!');
+      await navigator.clipboard.writeText(applyUrl);
+      toast.success('Referral link copied successfully');
     }
-  }, [post.alumniId, authorName, post.content]);
+  }, [post.alumniId, authorName, post.content, post.applyLink, post.applicationUrl, postType, post.refId, post.id]);
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,18 +151,54 @@ function PremiumAlumniStoryCardComponent({
 
     try {
       setIsSubmittingComment(true);
-      const newComment = await AlumniService.addComment(post.id, commentText);
-      if (newComment) {
-        const updatedComments = [...commentsList, newComment];
-        setCommentsList(updatedComments);
-        setCommentText('');
-        toast.success('Comment added!');
-        onUpdate?.(post.id, { comments: updatedComments } as any);
+      if (postType === 'referral') {
+        if (!uid) {
+          toast.error('You must be logged in to comment');
+          return;
+        }
+        const referralData = await alumniProfileService.commentReferral(post.refId || post.id, {
+          userId: uid,
+          userName: user?.name || 'Student',
+          userAvatar: user?.profileImageUrl || user?.profileImage || '',
+          content: commentText
+        });
+        if (referralData && referralData.comments) {
+          setCommentsList(referralData.comments);
+          setCommentText('');
+          toast.success('Comment added!');
+          onUpdate?.(post.id, { comments: referralData.comments } as any);
+        }
+      } else {
+        const newComment = await AlumniService.addComment(post.id, commentText);
+        if (newComment) {
+          const updatedComments = [...commentsList, newComment];
+          setCommentsList(updatedComments);
+          setCommentText('');
+          toast.success('Comment added!');
+          onUpdate?.(post.id, { comments: updatedComments } as any);
+        }
       }
     } catch (error) {
       toast.error('Failed to add comment');
     } finally {
       setIsSubmittingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!confirm('Are you sure you want to delete your comment?')) return;
+    try {
+      if (postType === 'referral') {
+        if (!uid) return;
+        const referralData = await alumniProfileService.deleteReferralComment(post.refId || post.id, commentId, uid);
+        if (referralData && referralData.comments) {
+          setCommentsList(referralData.comments);
+          toast.success('Comment deleted!');
+          onUpdate?.(post.id, { comments: referralData.comments } as any);
+        }
+      }
+    } catch (error) {
+      toast.error('Failed to delete comment');
     }
   };
 
@@ -163,7 +247,25 @@ function PremiumAlumniStoryCardComponent({
                 )}
               </div>
               <p className="text-xs sm:text-sm text-slate-400 font-medium truncate">
-                {company ? <>{role} at <span className="text-blue-300">{company}</span></> : role}
+                {company ? (
+                  <>
+                    {role} at{' '}
+                    <span
+                      onClick={() => {
+                        const link = post.applyLink || post.applicationUrl;
+                        if (link) {
+                          if (postType === 'referral') {
+                            alumniProfileService.trackReferralClick(post.refId || post.id).catch(console.error);
+                          }
+                          window.open(link, '_blank');
+                        }
+                      }}
+                      className="text-blue-300 cursor-pointer hover:underline"
+                    >
+                      {company}
+                    </span>
+                  </>
+                ) : role}
               </p>
               <p className="text-[11px] text-slate-500 mt-1">
                 Batch of {batch} • {post.author?.department || 'CS'}
@@ -212,18 +314,25 @@ function PremiumAlumniStoryCardComponent({
           {post.content}
         </p>
 
-        {/* Job Action Button */}
-        {(postType === 'job' || postType === 'internship') && post.applyLink && (
+        {/* Apply Action Button */}
+        {(postType === 'job' || postType === 'internship' || postType === 'referral') && (post.applyLink || post.applicationUrl) && (
           <div className="mb-6">
-            <a
-              href={post.applyLink}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              onClick={() => {
+                const link = post.applyLink || post.applicationUrl;
+                if (link) {
+                  if (postType === 'referral') {
+                    alumniProfileService.trackReferralClick(post.refId || post.id).catch(console.error);
+                    alumniProfileService.trackReferralApply(post.refId || post.id).catch(console.error);
+                  }
+                  window.open(link, '_blank');
+                }
+              }}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all shadow-lg shadow-blue-600/20"
             >
               Apply Now
               <ArrowUpRight className="w-4 h-4" />
-            </a>
+            </button>
           </div>
         )}
 
@@ -349,18 +458,28 @@ function PremiumAlumniStoryCardComponent({
                   <p className="text-xs text-slate-500 italic">No comments yet. Start the conversation!</p>
                 ) : (
                   commentsList.map((comm) => (
-                    <div key={comm.id} className="p-3 rounded-xl bg-white/5 border border-white/5 flex gap-3">
+                    <div key={comm.id || comm._id} className="p-3 rounded-xl bg-white/5 border border-white/5 flex gap-3">
                       <img
                         src={comm.author?.profileImageUrl || comm.userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${comm.userName}`}
                         alt={comm.userName}
                         className="w-8 h-8 rounded-full object-cover mt-0.5"
                       />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-white">{comm.userName || comm.author?.name}</span>
-                          <span className="text-[10px] text-slate-500">
-                            {comm.createdAt ? new Date(comm.createdAt).toLocaleDateString() : 'Just now'}
-                          </span>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-white">{comm.userName || comm.author?.name}</span>
+                            <span className="text-[10px] text-slate-500">
+                              {comm.createdAt ? new Date(comm.createdAt).toLocaleDateString() : 'Just now'}
+                            </span>
+                          </div>
+                          {postType === 'referral' && comm.userId === uid && (
+                            <button
+                              onClick={() => handleDeleteComment(comm.id || comm._id)}
+                              className="text-red-400 hover:text-red-300 text-[10px] font-semibold"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </div>
                         <p className="text-xs text-slate-300 mt-1 leading-relaxed">{comm.content}</p>
                       </div>

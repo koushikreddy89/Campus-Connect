@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useProfileStore } from '@/store/profileStore';
+import { alumniProfileService } from '@/services/alumniService';
 import { useProfileViewerStore } from '@/store/profileViewerStore';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { Button } from '@/components/ui/button';
@@ -105,6 +107,7 @@ const TagBuilder = ({
 };
 
 export default function ProfilePage() {
+  const navigate = useNavigate();
   const profile = useProfileStore(s => s.profile);
   const updateProfile = useProfileStore(s => s.updateProfile);
   const saveProfile = useProfileStore(s => s.saveProfile);
@@ -121,14 +124,36 @@ export default function ProfilePage() {
   const [editTab, setEditTab] = useState<'basic' | 'social' | 'skills' | 'career'>('basic');
   
   const [showBlock, setShowBlock] = useState(false);
-  const [blockEmail, setBlockEmail] = useState('');
-  const [blocked, setBlocked] = useState<string[]>([]);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [savedReferrals, setSavedReferrals] = useState<any[]>([]);
+
+  // Block & Report variables
+  const [modalTab, setModalTab] = useState<'block' | 'report'>('block');
+  const [blockSearch, setBlockSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [blockedUsersList, setBlockedUsersList] = useState<any[]>([]);
+  const [reportReason, setReportReason] = useState('Spam');
+  const [reportDescription, setReportDescription] = useState('');
+  const [selectedReportUser, setSelectedReportUser] = useState<any>(null);
+  const [submittingReport, setSubmittingReport] = useState(false);
+
+  const loadSavedReferrals = async () => {
+    try {
+      if (uid) {
+        const list = await alumniProfileService.getStudentReferrals({ saved: true, userId: uid });
+        setSavedReferrals(list);
+      }
+    } catch (err) {
+      console.error('Failed to load saved referrals:', err);
+    }
+  };
 
   // Sync profile from backend on mount
   useEffect(() => {
     if (uid) {
       loadProfile(uid);
+      loadSavedReferrals();
     }
   }, [uid, loadProfile]);
 
@@ -137,18 +162,155 @@ export default function ProfilePage() {
     fetchViewers(10);
   }, [fetchViewers]);
 
+  // Handle ESC key to close Block Modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowBlock(false);
+      }
+    };
+    if (showBlock) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showBlock]);
+
   const handleSave = async () => {
     await saveProfile();
     setEditing(false);
     toast.success('Profile saved successfully!');
   };
 
-  const handleBlock = () => {
-    if (blockEmail.trim()) {
-      setBlocked([...blocked, blockEmail.trim()]);
-      setBlockEmail('');
-      setShowBlock(false);
-      toast.success('User blocked');
+  // User Search effect
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (blockSearch.trim()) {
+        setSearchLoading(true);
+        try {
+          const res = await fetch(`http://localhost:5000/api/users/search?q=${encodeURIComponent(blockSearch)}`, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          const json = await res.json();
+          if (json.success) {
+            setSearchResults(json.data);
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setSearchLoading(false);
+        }
+      } else {
+        setSearchResults([]);
+      }
+    }, 300);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [blockSearch]);
+
+  // Fetch Blocked users list
+  const fetchBlockedUsers = async () => {
+    try {
+      const res = await fetch(`http://localhost:5000/api/privacy-settings`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const json = await res.json();
+      if (json.success && json.privacySettings) {
+        setBlockedUsersList(json.privacySettings.blockedUsers || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    if (showBlock) {
+      fetchBlockedUsers();
+    }
+  }, [showBlock]);
+
+  const handleBlockUser = async (userIdToBlock: string) => {
+    try {
+      const res = await fetch('http://localhost:5000/api/users/block', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ userIdToBlock })
+      });
+      const json = await res.json();
+      if (json.success) {
+        toast.success('User blocked successfully');
+        fetchBlockedUsers();
+        setBlockSearch('');
+      } else {
+        toast.error(json.error || 'Failed to block user');
+      }
+    } catch (e) {
+      toast.error('Failed to block user');
+    }
+  };
+
+  const handleUnblockUser = async (userIdToUnblock: string) => {
+    try {
+      const res = await fetch('http://localhost:5000/api/users/unblock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ userIdToUnblock })
+      });
+      const json = await res.json();
+      if (json.success) {
+        toast.success('User unblocked successfully');
+        fetchBlockedUsers();
+      } else {
+        toast.error(json.error || 'Failed to unblock user');
+      }
+    } catch (e) {
+      toast.error('Failed to unblock user');
+    }
+  };
+
+  const handleSendReport = async () => {
+    if (!selectedReportUser) {
+      toast.error('Please select a user to report');
+      return;
+    }
+    setSubmittingReport(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/users/report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          reportedUserId: selectedReportUser.userId,
+          type: reportReason,
+          reason: reportDescription
+        })
+      });
+      const json = await res.json();
+      if (json.success) {
+        toast.success('Report submitted successfully');
+        setSelectedReportUser(null);
+        setReportDescription('');
+        setShowBlock(false);
+      } else {
+        toast.error(json.error || 'Failed to submit report');
+      }
+    } catch (e) {
+      toast.error('Failed to submit report');
+    } finally {
+      setSubmittingReport(false);
     }
   };
 
@@ -775,6 +937,60 @@ export default function ProfilePage() {
                   </div>
                 </div>
               )}
+
+              {/* Saved Referrals Section */}
+              {savedReferrals && savedReferrals.length > 0 && (
+                <div className="glass-card p-4 border border-white/[0.05]">
+                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
+                    <Briefcase className="h-3.5 w-3.5 text-primary" /> Saved Referrals
+                  </p>
+                  <div className="space-y-3">
+                    {savedReferrals.map((ref) => (
+                      <div key={ref.id || ref._id} className="flex flex-col bg-secondary/20 p-3.5 rounded-2xl border border-white/[0.02] relative group">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="text-xs font-bold text-foreground">{ref.jobTitle || ref.role}</h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">{ref.companyName || ref.company} • {ref.location || 'Remote'}</p>
+                          </div>
+                          {(ref.applicationUrl || ref.applicationLink) && (
+                            <button
+                              onClick={() => {
+                                alumniProfileService.trackReferralClick(ref.id || ref._id).catch(console.error);
+                                alumniProfileService.trackReferralApply(ref.id || ref._id).catch(console.error);
+                                window.open(ref.applicationUrl || ref.applicationLink, '_blank');
+                              }}
+                              className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline font-semibold"
+                            >
+                              Apply Now
+                            </button>
+                          )}
+                        </div>
+                        {ref.description && (
+                          <p className="text-[11px] text-slate-400 mt-1.5 line-clamp-2">{ref.description}</p>
+                        )}
+                        <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-white/5 text-[10px] text-slate-500">
+                          <span>By {ref.authorName}</span>
+                          <button
+                            onClick={async () => {
+                              try {
+                                if (!uid) return;
+                                await alumniProfileService.saveReferral(ref.id || ref._id, uid);
+                                setSavedReferrals(prev => prev.filter(r => (r.id || r._id) !== (ref.id || ref._id)));
+                                toast.success('Removed from saved referrals');
+                              } catch (err) {
+                                toast.error('Failed to unsave');
+                              }
+                            }}
+                            className="text-red-400 hover:text-red-300 font-semibold"
+                          >
+                            Unsave
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -787,12 +1003,12 @@ export default function ProfilePage() {
             <span className="text-sm text-foreground flex-1 text-left font-medium">Block / Report</span>
             <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
           </motion.button>
-          <motion.button whileTap={{ scale: 0.98 }} className="w-full glass-card p-4 flex items-center gap-3">
+          <motion.button whileTap={{ scale: 0.98 }} onClick={() => navigate('/settings/privacy')} className="w-full glass-card p-4 flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center"><Shield className="h-4 w-4 text-primary" /></div>
             <span className="text-sm text-foreground flex-1 text-left font-medium">Privacy & Safety</span>
             <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
           </motion.button>
-          <motion.button whileTap={{ scale: 0.98 }} className="w-full glass-card p-4 flex items-center gap-3">
+          <motion.button whileTap={{ scale: 0.98 }} onClick={() => navigate('/support')} className="w-full glass-card p-4 flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-secondary flex items-center justify-center"><HelpCircle className="h-4 w-4 text-muted-foreground" /></div>
             <span className="text-sm text-foreground flex-1 text-left font-medium">Help & Support</span>
             <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
@@ -824,22 +1040,235 @@ export default function ProfilePage() {
       {/* Block Modal */}
       <AnimatePresence>
         {showBlock && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm px-4 pb-4" onClick={() => setShowBlock(false)}>
-            <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} transition={{ type: 'spring', damping: 25 }} onClick={e => e.stopPropagation()} className="glass-strong rounded-3xl p-6 w-full max-w-sm">
-              <h3 className="font-display text-lg font-bold text-foreground mb-4">Block / Report User</h3>
-              <input value={blockEmail} onChange={e => setBlockEmail(e.target.value)} placeholder="Enter user email or name" className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50 mb-3 transition-shadow" />
-              {blocked.length > 0 && (
-                <div className="mb-3">
-                  <p className="text-xs text-muted-foreground mb-1.5">Blocked:</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {blocked.map(b => (<span key={b} className="text-xs bg-accent/15 text-accent rounded-full px-2.5 py-0.5 font-medium">{b}</span>))}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-md px-4 py-6"
+            onClick={() => {
+              setShowBlock(false);
+              setSelectedReportUser(null);
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="block-modal-title"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+              onClick={e => e.stopPropagation()}
+              className="glass-strong rounded-[24px] p-6 sm:p-8 w-[92%] sm:w-[80%] md:w-[480px] max-w-[500px] border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] hover:border-red-500/20 transition-all duration-300 relative"
+            >
+              {/* Tab Selector */}
+              <div className="flex border-b border-white/10 mb-5">
+                <button
+                  onClick={() => setModalTab('block')}
+                  className={`flex-1 pb-3 text-sm font-semibold transition-all ${
+                    modalTab === 'block'
+                      ? 'text-red-500 border-b-2 border-red-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  🚫 Block User
+                </button>
+                <button
+                  onClick={() => setModalTab('report')}
+                  className={`flex-1 pb-3 text-sm font-semibold transition-all ${
+                    modalTab === 'report'
+                      ? 'text-red-500 border-b-2 border-red-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  ⚠️ Report User
+                </button>
+              </div>
+
+              {modalTab === 'block' ? (
+                // BLOCK TAB
+                <div className="space-y-4">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Blocking someone hides them from search results, stops direct messaging, prevents them from viewing your profile, and stops interaction.
+                  </p>
+                  
+                  <div className="relative">
+                    <input
+                      autoFocus
+                      value={blockSearch}
+                      onChange={e => setBlockSearch(e.target.value)}
+                      placeholder="Search users by name or email..."
+                      className="w-full bg-secondary/60 border border-white/5 rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-accent/40 transition-all shadow-inner"
+                    />
+                    {searchLoading && (
+                      <span className="absolute right-4 top-3 text-xs text-muted-foreground">Searching...</span>
+                    )}
+                  </div>
+
+                  {/* Search Results */}
+                  {searchResults.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto bg-black/30 border border-white/5 rounded-2xl p-2 space-y-1">
+                      {searchResults.map(u => (
+                        <div key={u.userId} className="flex items-center justify-between p-2 hover:bg-white/5 rounded-xl transition-all">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-semibold text-foreground">{u.name}</span>
+                            <span className="text-[10px] text-muted-foreground">{u.email} ({u.role})</span>
+                          </div>
+                          <Button
+                            onClick={() => handleBlockUser(u.userId)}
+                            className="bg-red-600 hover:bg-red-500 text-white rounded-lg h-7 px-3 text-[10px] font-bold"
+                          >
+                            Block
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Blocked accounts list */}
+                  <div className="space-y-2 pt-2">
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Currently Blocked:</p>
+                    {blockedUsersList.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground italic">No blocked users.</p>
+                    ) : (
+                      <div className="flex flex-col gap-2 max-h-36 overflow-y-auto pr-1">
+                        {blockedUsersList.map(b => (
+                          <div key={b.userId} className="flex items-center justify-between p-2 bg-red-500/5 border border-red-500/10 rounded-xl">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-semibold text-red-400">{b.name}</span>
+                              <span className="text-[10px] text-muted-foreground/70">{b.email}</span>
+                            </div>
+                            <button
+                              onClick={() => handleUnblockUser(b.userId)}
+                              className="text-[10px] text-red-400 hover:underline font-bold"
+                            >
+                              Unblock
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowBlock(false)}
+                      className="rounded-xl border-white/10 bg-white/5 hover:bg-white/10 text-foreground h-10 text-xs font-bold transition-all px-6"
+                    >
+                      Close
+                    </Button>
                   </div>
                 </div>
+              ) : (
+                // REPORT TAB
+                <div className="space-y-4">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Report users violating community guidelines. Administrators will investigate reports and suspend accounts if guidelines are breached.
+                  </p>
+
+                  {!selectedReportUser ? (
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-muted-foreground font-bold uppercase">1. Find User to Report</label>
+                      <div className="relative">
+                        <input
+                          autoFocus
+                          value={blockSearch}
+                          onChange={e => setBlockSearch(e.target.value)}
+                          placeholder="Search user to report..."
+                          className="w-full bg-secondary/60 border border-white/5 rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-accent/40 transition-all shadow-inner"
+                        />
+                        {searchLoading && (
+                          <span className="absolute right-4 top-3 text-xs text-muted-foreground">Searching...</span>
+                        )}
+                      </div>
+
+                      {searchResults.length > 0 && (
+                        <div className="max-h-40 overflow-y-auto bg-black/30 border border-white/5 rounded-2xl p-2 space-y-1">
+                          {searchResults.map(u => (
+                            <div
+                              key={u.userId}
+                              onClick={() => {
+                                setSelectedReportUser(u);
+                                setBlockSearch('');
+                              }}
+                              className="flex items-center justify-between p-2 hover:bg-white/5 rounded-xl cursor-pointer transition-all"
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-xs font-semibold text-foreground">{u.name}</span>
+                                <span className="text-[10px] text-muted-foreground">{u.email}</span>
+                              </div>
+                              <span className="text-[10px] text-accent font-semibold">Select</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between p-3 bg-secondary/40 border border-white/5 rounded-xl">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-foreground">Reporting: {selectedReportUser.name}</span>
+                          <span className="text-[10px] text-muted-foreground">{selectedReportUser.email}</span>
+                        </div>
+                        <button
+                          onClick={() => setSelectedReportUser(null)}
+                          className="text-[10px] text-muted-foreground hover:text-foreground font-bold"
+                        >
+                          Change
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-muted-foreground font-bold uppercase block">2. Category</label>
+                        <select
+                          value={reportReason}
+                          onChange={e => setReportReason(e.target.value)}
+                          className="w-full bg-secondary border border-white/10 rounded-2xl px-4 py-3 text-sm text-foreground focus:ring-2 focus:ring-accent/40 focus:border-accent/40 outline-none"
+                        >
+                          <option value="Spam">Spam</option>
+                          <option value="Harassment">Harassment</option>
+                          <option value="Fake Profile">Fake Profile</option>
+                          <option value="Inappropriate Content">Inappropriate Content</option>
+                          <option value="Scam/Fraud">Scam/Fraud</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-muted-foreground font-bold uppercase block">3. Description</label>
+                        <textarea
+                          value={reportDescription}
+                          onChange={e => setReportDescription(e.target.value)}
+                          placeholder="Provide details about the issue..."
+                          rows={3}
+                          className="w-full bg-secondary/60 border border-white/5 rounded-2xl p-4 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-accent/40 transition-all shadow-inner"
+                        />
+                      </div>
+
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedReportUser(null);
+                            setShowBlock(false);
+                          }}
+                          className="flex-1 rounded-xl border-white/10 bg-white/5 text-foreground h-11 text-xs font-bold transition-all"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleSendReport}
+                          disabled={submittingReport}
+                          className="flex-1 rounded-xl bg-red-600 hover:bg-red-500 text-white h-11 text-xs font-bold transition-all shadow-lg"
+                        >
+                          {submittingReport ? 'Submitting...' : 'Submit Report'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setShowBlock(false)} className="flex-1 rounded-xl border-border/50 h-11">Cancel</Button>
-                <Button onClick={handleBlock} className="flex-1 rounded-xl bg-accent text-accent-foreground hover:bg-accent/90 h-11 font-semibold">Block</Button>
-              </div>
             </motion.div>
           </motion.div>
         )}

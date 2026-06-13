@@ -187,6 +187,10 @@ export const alumniProfileService = {
    * Create referral
    */
   createReferral: async (data: any): Promise<any> => {
+    const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$/i;
+    if (!data.applicationUrl || !urlPattern.test(data.applicationUrl.trim())) {
+      throw new Error('Invalid application URL. Please provide a valid web link.');
+    }
     const res = await fetch(`${getApiUrl()}/api/alumni/referrals`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -220,6 +224,103 @@ export const alumniProfileService = {
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to delete referral');
+  },
+
+  /**
+   * Toggle like on referral
+   */
+  likeReferral: async (id: string, userId: string): Promise<any> => {
+    const res = await fetch(`${getApiUrl()}/api/referrals/${id}/like`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to toggle like');
+    return result.data;
+  },
+
+  /**
+   * Toggle save on referral
+   */
+  saveReferral: async (id: string, userId: string): Promise<any> => {
+    const res = await fetch(`${getApiUrl()}/api/referrals/${id}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to toggle save');
+    return result.data;
+  },
+
+  /**
+   * Add comment to referral
+   */
+  commentReferral: async (id: string, commentData: { userId: string; userName: string; userAvatar?: string; content: string }): Promise<any> => {
+    const res = await fetch(`${getApiUrl()}/api/referrals/${id}/comment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(commentData)
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to add comment');
+    return result.data;
+  },
+
+  /**
+   * Delete comment from referral
+   */
+  deleteReferralComment: async (id: string, commentId: string, userId: string): Promise<any> => {
+    const res = await fetch(`${getApiUrl()}/api/referrals/${id}/comment/${commentId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to delete comment');
+    return result.data;
+  },
+
+  /**
+   * Get student referrals (with optional filters)
+   */
+  getStudentReferrals: async (params?: { saved?: boolean; userId?: string }): Promise<any[]> => {
+    const query = new URLSearchParams();
+    if (params?.saved) query.append('saved', 'true');
+    if (params?.userId) query.append('userId', params.userId || '');
+    const res = await fetch(`${getApiUrl()}/api/student/referrals?${query.toString()}`);
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to fetch student referrals');
+    return (result.data || []).map((r: any) => ({ ...r, id: r.id || r._id }));
+  },
+
+  /**
+   * Track referral views analytics
+   */
+  trackReferralView: async (id: string): Promise<void> => {
+    await fetch(`${getApiUrl()}/api/referrals/${id}/view`, { method: 'POST' });
+  },
+
+  /**
+   * Track referral clicks analytics
+   */
+  trackReferralClick: async (id: string): Promise<void> => {
+    await fetch(`${getApiUrl()}/api/referrals/${id}/click`, { method: 'POST' });
+  },
+
+  /**
+   * Track referral shares analytics
+   */
+  trackReferralShare: async (id: string): Promise<void> => {
+    await fetch(`${getApiUrl()}/api/referrals/${id}/share`, { method: 'POST' });
+  },
+
+  /**
+   * Track referral applications analytics
+   */
+  trackReferralApply: async (id: string): Promise<void> => {
+    await fetch(`${getApiUrl()}/api/referrals/${id}/apply`, { method: 'POST' });
   },
 
   /**
@@ -496,10 +597,46 @@ export const alumniBookmarksService = {
 };
 
 export const adminAlumniService = {
-  getPendingProfiles: async () => [],
-  approveProfile: async () => {},
-  rejectProfile: async () => {},
-  approvePost: async () => {},
+  getPendingProfiles: async (collegeId: string): Promise<AlumniProfile[]> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni?status=pending`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
+      }
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to fetch pending profiles');
+    return (result.data || []).map((p: any) => ({ ...p, id: p.id || p._id }));
+  },
+  approveProfile: async (profileId: string, collegeId: string): Promise<void> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}/approve`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
+      }
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to approve profile');
+  },
+  rejectProfile: async (profileId: string, collegeId: string): Promise<void> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}/reject`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
+      }
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to reject profile');
+  },
+  approvePost: async (postId: string, collegeId: string): Promise<void> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/approve`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
+      }
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to approve post');
+  },
 };
 
 const AlumniService = {

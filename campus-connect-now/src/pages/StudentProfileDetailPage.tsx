@@ -46,7 +46,11 @@ export default function StudentProfileDetailPage() {
       if (!id) return;
 
       // 1. Fetch Student profile from MongoDB
-      const res = await fetch(`${getApiUrl()}/api/student/profile?userId=${id}`);
+      const res = await fetch(`${getApiUrl()}/api/student/profile?userId=${id}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
       const result = await res.json();
       if (result.success && result.data) {
         setStudent(result.data);
@@ -57,13 +61,21 @@ export default function StudentProfileDetailPage() {
       // Check connection state
       if (currentUserId && id) {
         // Fetch current user notifications to see if requested or use discovery api check
-        const notificationsRes = await fetch(`${getApiUrl()}/api/notifications?userId=${id}`);
+        const notificationsRes = await fetch(`${getApiUrl()}/api/notifications?userId=${id}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
         const notifResult = await notificationsRes.json();
         const incomingReqs = (notifResult.data || []).filter((n: any) => n.type === 'request' && n.relatedId === currentUserId);
         setIsRequested(incomingReqs.length > 0);
 
         // check accepted connections or pending requests initiated by currentUserId
-        const selfNotifsRes = await fetch(`${getApiUrl()}/api/notifications?userId=${currentUserId}`);
+        const selfNotifsRes = await fetch(`${getApiUrl()}/api/notifications?userId=${currentUserId}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
         const selfNotifResult = await selfNotifsRes.json();
         const outgoingReqs = (selfNotifResult.data || []).filter((n: any) => n.type === 'request' && n.userId === id);
         
@@ -73,7 +85,11 @@ export default function StudentProfileDetailPage() {
       }
 
       // 2. Fetch posts by this author
-      const postsRes = await fetch(`${getApiUrl()}/api/feed?authorId=${id}&userId=${currentUserId || ''}`);
+      const postsRes = await fetch(`${getApiUrl()}/api/feed?authorId=${id}&userId=${currentUserId || ''}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
       const postsResult = await postsRes.json();
       if (postsResult.success) {
         setPosts(postsResult.data || []);

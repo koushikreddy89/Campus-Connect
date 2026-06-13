@@ -78,6 +78,15 @@ const StudentProfileDetailPage = lazy(() => import("./pages/StudentProfileDetail
   throw err;
 }));
 
+const PrivacySafetyPage = lazy(() => import("./pages/PrivacySafetyPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] PrivacySafetyPage:', err);
+  throw err;
+}));
+const HelpSupportPage = lazy(() => import("./pages/HelpSupportPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] HelpSupportPage:', err);
+  throw err;
+}));
+
 // Lazy load Alumni pages
 const AlumniExplorerPage = lazy(() => import("./pages/AlumniExplorerPage.tsx").catch(err => {
   console.error('[Lazy Load Error] AlumniExplorerPage:', err);
@@ -172,6 +181,12 @@ const AlumniRoute = ({ children }: { children: React.ReactNode }) => {
     if (role === 'admin') return <Navigate to="/admin" replace />;
     return <Navigate to="/student/dashboard" replace />;
   }
+  return <>{children}</>;
+};
+
+const AuthOnlyRoute = ({ children }: { children: React.ReactNode }) => {
+  const isAuthenticated = useAuthStore(s => s.isAuthenticated);
+  if (!isAuthenticated) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -448,6 +463,22 @@ const App = () => {
                   element={
                     <Suspense fallback={<PageLoader />}>
                       <ProtectedRoute><ProfilePage /></ProtectedRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/settings/privacy"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <AuthOnlyRoute><PrivacySafetyPage /></AuthOnlyRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/support"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <AuthOnlyRoute><HelpSupportPage /></AuthOnlyRoute>
                     </Suspense>
                   }
                 />

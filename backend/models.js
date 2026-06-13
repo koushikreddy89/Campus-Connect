@@ -50,7 +50,17 @@ const AlumniSchema = new mongoose.Schema({
   whoCanSendRequests: { type: String, default: 'everyone' },
   emailNotifications: { type: Boolean, default: true },
   pushNotifications: { type: Boolean, default: true },
-  blockedUsers: { type: [String], default: [] }
+  blockedUsers: { type: [String], default: [] },
+  isTestAccount: { type: Boolean, default: false },
+  profileVisibility: { type: String, enum: ['Public', 'College Only', 'Connections Only', 'Private'], default: 'Public' },
+  messagingPermissions: { type: String, enum: ['Everyone', 'Alumni Only', 'Connections Only', 'Nobody'], default: 'Everyone' },
+  profileDiscovery: { type: String, enum: ['Show in Search', 'Hide from Search'], default: 'Show in Search' },
+  showPosts: { type: Boolean, default: true },
+  showReferrals: { type: Boolean, default: true },
+  showAchievements: { type: Boolean, default: true },
+  referralAlerts: { type: Boolean, default: true },
+  messageAlerts: { type: Boolean, default: true },
+  isSuspended: { type: Boolean, default: false }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // Post Schema
@@ -78,20 +88,63 @@ const PostSchema = new mongoose.Schema({
   comments: [PostCommentSchema],
   shareCount: { type: Number, default: 0 },
   viewCount: { type: Number, default: 0 },
-  approvalStatus: { type: String, default: 'approved' },
+  approvalStatus: { type: String, default: 'pending' },
+  status: { type: String, default: 'pending' },
+  isPublished: { type: Boolean, default: false },
   refId: { type: String, default: '' }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
+// Hook to automatically set approvalStatus/status/isPublished based on moderation flag
+PostSchema.pre('save', function (next) {
+  const moderationEnabled = process.env.MODERATION_ENABLED !== 'false';
+  if (!moderationEnabled) {
+    if (this.isNew) {
+      this.status = 'approved';
+      this.approvalStatus = 'approved';
+      this.isPublished = true;
+    }
+  } else {
+    if (this.isNew) {
+      this.status = 'pending';
+      this.approvalStatus = 'pending';
+      this.isPublished = false;
+    } else {
+      this.isPublished = (this.status === 'approved' || this.approvalStatus === 'approved');
+    }
+  }
+  next();
+});
+
 // Referral Schema
+const ReferralCommentSchema = new mongoose.Schema({
+  userId: String,
+  userName: String,
+  userAvatar: String,
+  content: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
 const ReferralSchema = new mongoose.Schema({
   alumniId: { type: String, required: true },
+  authorId: { type: String }, // duplicate of alumniId for consistency
+  authorName: { type: String, default: 'Alumni Member' },
   company: { type: String, required: true },
+  companyName: { type: String }, // duplicate of company for consistency
   role: { type: String, required: true },
-  location: { type: String, default: 'Remote' },
-  salary: { type: String, default: '' },
-  experience: { type: String, default: '' },
+  jobTitle: { type: String }, // duplicate of role for consistency
+  description: { type: String, default: '' },
   eligibility: { type: String, default: '' },
   deadline: { type: String, default: '' },
+  applicationUrl: { type: String, required: true },
+  likes: { type: [String], default: [] },
+  comments: [ReferralCommentSchema],
+  saves: { type: [String], default: [] },
+  shares: { type: Number, default: 0 },
+  views: { type: Number, default: 0 },
+  clicks: { type: Number, default: 0 },
+  applications: { type: Number, default: 0 },
+  salary: { type: String, default: '' },
+  location: { type: String, default: 'Remote' },
   applicants: [{
     userId: String,
     resumeUrl: String,
@@ -220,7 +273,16 @@ module.exports = {
     whoCanSendRequests: { type: String, default: 'everyone' },
     emailNotifications: { type: Boolean, default: true },
     pushNotifications: { type: Boolean, default: true },
-    blockedUsers: { type: [String], default: [] }
+    blockedUsers: { type: [String], default: [] },
+    profileVisibility: { type: String, enum: ['Public', 'College Only', 'Connections Only', 'Private'], default: 'Public' },
+    messagingPermissions: { type: String, enum: ['Everyone', 'Alumni Only', 'Connections Only', 'Nobody'], default: 'Everyone' },
+    profileDiscovery: { type: String, enum: ['Show in Search', 'Hide from Search'], default: 'Show in Search' },
+    showPosts: { type: Boolean, default: true },
+    showReferrals: { type: Boolean, default: true },
+    showAchievements: { type: Boolean, default: true },
+    referralAlerts: { type: Boolean, default: true },
+    messageAlerts: { type: Boolean, default: true },
+    isSuspended: { type: Boolean, default: false }
   }, { timestamps: true }), 'users'),
 
   StudentPost: mongoose.model('StudentPost', new mongoose.Schema({
@@ -231,6 +293,7 @@ module.exports = {
     content: { type: String, required: true },
     image: { type: String, default: '' },
     category: { type: String, default: 'general' },
+    type: { type: String, default: 'student_post' },
     viewCount: { type: Number, default: 0 }
   }, { timestamps: true }), 'posts'),
 
@@ -312,4 +375,40 @@ module.exports = {
     expiresAt: { type: Date, required: true }
   }, { timestamps: true }), 'stories')
 };
+
+// New models schemas
+const SupportTicketSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  name: { type: String, required: true },
+  email: { type: String, required: true },
+  subject: { type: String, required: true },
+  description: { type: String, required: true },
+  status: { type: String, enum: ['Open', 'In Progress', 'Resolved', 'Closed'], default: 'Open' },
+  replies: [{
+    senderId: String,
+    senderName: String,
+    message: String,
+    createdAt: { type: Date, default: Date.now }
+  }]
+}, { timestamps: true });
+
+const FAQSchema = new mongoose.Schema({
+  category: { type: String, required: true },
+  question: { type: String, required: true },
+  answer: { type: String, required: true }
+}, { timestamps: true });
+
+const FeatureRequestSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  type: { type: String, enum: ['feature', 'bug'], required: true },
+  description: { type: String, required: true },
+  deviceInfo: { type: mongoose.Schema.Types.Mixed },
+  screenshot: { type: String },
+  status: { type: String, default: 'Pending' }
+}, { timestamps: true });
+
+module.exports.SupportTicket = mongoose.model('SupportTicket', SupportTicketSchema, 'support_tickets');
+module.exports.FAQ = mongoose.model('FAQ', FAQSchema, 'faqs');
+module.exports.FeatureRequest = mongoose.model('FeatureRequest', FeatureRequestSchema, 'feature_requests');
+
 

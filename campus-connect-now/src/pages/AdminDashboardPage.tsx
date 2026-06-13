@@ -1,17 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/store/authStore';
-import { useAnnouncementStore, Announcement } from '@/store/announcementStore';
+import { useAnnouncementStore } from '@/store/announcementStore';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { useNavigate } from 'react-router-dom';
 import {
   Shield, Plus, Trash2, LogOut, Calendar, Users, Bell,
-  Image as ImageIcon, X, Megaphone, BarChart3,
+  Image as ImageIcon, X, Megaphone, BarChart3, Briefcase,
+  AlertTriangle, CheckCircle, LifeBuoy, MessageSquare,
+  Clock, Check, Eye
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-
-import { Briefcase } from 'lucide-react';
+import { toast } from 'sonner';
 
 const CATEGORIES: { key: any; label: string; icon: any }[] = [
   { key: 'announcement', label: 'Announcement', icon: Megaphone },
@@ -33,6 +34,9 @@ export default function AdminDashboardPage() {
   const createAnnouncement = useAnnouncementStore(s => s.createAnnouncement);
   const deleteAnnouncement = useAnnouncementStore(s => s.deleteAnnouncement);
 
+  const [activeAdminTab, setActiveAdminTab] = useState<'announcements' | 'reports' | 'tickets'>('announcements');
+
+  // Announcement Form State
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -43,29 +47,125 @@ export default function AdminDashboardPage() {
 
   const college = adminCollege ?? 'SR University';
 
-  // Protect admin route - redirect if not authenticated
+  // User Reports State
+  const [reports, setReports] = useState<any[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+
+  // Support Tickets State
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [replyTicketId, setReplyTicketId] = useState<string | null>(null);
+  const [replyStatus, setReplyStatus] = useState<string>('Resolved');
+
+  // Protect admin route
   useEffect(() => {
-    console.log('🔐 [AdminDashboard] Auth check:', {
-      isAuthenticated,
-      role,
-      hasToken: !!token,
-      hasCollege: !!adminCollege
-    });
-
     if (!isAuthenticated || !token) {
-      console.log('❌ [AdminDashboard] Not authenticated, redirecting to login');
       navigate('/', { replace: true });
       return;
     }
-
     if (role !== 'admin') {
-      console.log('❌ [AdminDashboard] User is not admin, redirecting to home');
       navigate('/', { replace: true });
       return;
     }
+  }, [isAuthenticated, token, role, navigate]);
 
-    console.log('✅ [AdminDashboard] Admin authenticated and authorized');
-  }, [isAuthenticated, token, role, navigate, adminCollege]);
+  const loadReports = async () => {
+    setReportsLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/reports', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const json = await res.json();
+      if (json.success) {
+        setReports(json.data);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load user reports');
+    } finally {
+      setReportsLoading(false);
+    }
+  };
+
+  const loadTickets = async () => {
+    setTicketsLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/support-tickets', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const json = await res.json();
+      if (json.success) {
+        setTickets(json.data);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load support tickets');
+    } finally {
+      setTicketsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeAdminTab === 'reports') {
+      loadReports();
+    } else if (activeAdminTab === 'tickets') {
+      loadTickets();
+    }
+  }, [activeAdminTab]);
+
+  const handleResolveReport = async (reportId: string, action: 'suspend' | 'dismiss') => {
+    try {
+      const res = await fetch(`http://localhost:5000/api/admin/reports/${reportId}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ action })
+      });
+      const json = await res.json();
+      if (json.success) {
+        toast.success(action === 'suspend' ? 'User account suspended' : 'Report dismissed');
+        loadReports();
+      } else {
+        toast.error(json.error || 'Failed to resolve report');
+      }
+    } catch (e) {
+      toast.error('Error resolving report');
+    }
+  };
+
+  const handleSendAdminReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!replyTicketId || !replyText.trim()) return;
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/admin/support-tickets/${replyTicketId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ reply: replyText.trim(), status: replyStatus })
+      });
+      const json = await res.json();
+      if (json.success) {
+        toast.success('Reply submitted and status updated');
+        setReplyText('');
+        setReplyTicketId(null);
+        loadTickets();
+      } else {
+        toast.error(json.error || 'Failed to submit reply');
+      }
+    } catch (e) {
+      toast.error('Error submitting reply');
+    }
+  };
 
   const myAnnouncements = announcements.filter(
     a => a.college.toLowerCase() === college.toLowerCase()
@@ -97,8 +197,10 @@ export default function AdminDashboardPage() {
       setImagePreview(null);
       setCategory('announcement');
       setShowForm(false);
+      toast.success('Announcement published successfully');
     } catch (error) {
       console.error('Failed to create announcement:', error);
+      toast.error('Failed to publish announcement');
     } finally {
       setIsCreating(false);
     }
@@ -121,28 +223,22 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const stats = [
-    { label: 'Total', value: myAnnouncements.length, icon: BarChart3, gradient: 'gradient-primary', glow: 'glow-primary' },
-    { label: 'Events', value: myAnnouncements.filter(a => a.category === 'event').length, icon: Calendar, gradient: 'bg-accent/15', glow: '' },
-    { label: 'Clubs', value: myAnnouncements.filter(a => a.category === 'club').length, icon: Users, gradient: 'bg-secondary', glow: '' },
-  ];
-
   return (
-    <div className="min-h-screen bg-background pb-10">
+    <div className="min-h-screen bg-background pb-12 text-foreground">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="px-5 pt-5 pb-5 flex items-center justify-between">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="px-5 pt-5 pb-5 flex items-center justify-between border-b border-white/5">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center glow-primary">
             <Shield className="h-5 w-5 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="font-display text-lg font-bold text-foreground">Admin Panel</h1>
+            <h1 className="font-display text-lg font-bold text-foreground">Campus Control</h1>
             <p className="text-[11px] text-muted-foreground font-medium">{college}</p>
           </div>
         </div>
         <div className="flex gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => navigate('/home')} className="text-xs rounded-xl h-9">
-            App →
+            App View
           </Button>
           <motion.button whileTap={{ scale: 0.9 }} onClick={handleLogout} className="p-2.5 rounded-xl hover:bg-secondary/50 transition-colors">
             <LogOut className="h-4 w-4 text-muted-foreground" />
@@ -150,173 +246,370 @@ export default function AdminDashboardPage() {
         </div>
       </motion.div>
 
-      {/* Stats */}
-      <div className="px-5 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {stats.map((stat, i) => {
-          const Icon = stat.icon;
-          return (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.08 }}
-              className="glass-card p-4 text-center"
-            >
-              <div className={`h-8 w-8 rounded-lg ${stat.gradient} flex items-center justify-center mx-auto mb-2 ${stat.glow}`}>
-                <Icon className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-              <p className="text-[10px] text-muted-foreground font-medium mt-0.5">{stat.label}</p>
-            </motion.div>
-          );
-        })}
-      </div>
-
-      {/* Create Button */}
-      <div className="px-5 mb-5">
-        <motion.div whileTap={{ scale: 0.98 }}>
-          <Button
-            onClick={() => setShowForm(!showForm)}
-            className="w-full gradient-primary rounded-2xl h-12 font-semibold text-sm glow-primary"
+      {/* Tabs */}
+      <div className="px-5 my-5">
+        <div className="flex bg-secondary/40 border border-white/5 p-1 rounded-2xl gap-1">
+          <button
+            onClick={() => setActiveAdminTab('announcements')}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'announcements' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
           >
-            {showForm ? <X className="h-4 w-4 mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-            {showForm ? 'Cancel' : 'New Announcement'}
-          </Button>
-        </motion.div>
+            <Megaphone className="h-3.5 w-3.5" /> Broadcasts
+          </button>
+          <button
+            onClick={() => setActiveAdminTab('reports')}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'reports' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" /> Moderation Reports
+          </button>
+          <button
+            onClick={() => setActiveAdminTab('tickets')}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'tickets' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <LifeBuoy className="h-3.5 w-3.5" /> Help Desk
+          </button>
+        </div>
       </div>
 
-      {/* Create Form */}
-      <AnimatePresence>
-        {showForm && (
+      <AnimatePresence mode="wait">
+        {/* Broadcasts Tab */}
+        {activeAdminTab === 'announcements' && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="px-5 mb-5 overflow-hidden"
+            key="announcements"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="space-y-5"
           >
-            <div className="glass-card p-5 space-y-3">
-              <input
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="Announcement title"
-                maxLength={100}
-                className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow"
-              />
-              <textarea
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder="Description..."
-                rows={3}
-                maxLength={500}
-                className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground outline-none resize-none focus:ring-2 focus:ring-primary/50 transition-shadow"
-              />
+            {/* Create Button */}
+            <div className="px-5">
+              <Button
+                onClick={() => setShowForm(!showForm)}
+                className="w-full gradient-primary rounded-2xl h-12 font-semibold text-sm glow-primary"
+              >
+                {showForm ? <X className="h-4 w-4 mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                {showForm ? 'Cancel' : 'New Broadcast'}
+              </Button>
+            </div>
 
-              {/* Category */}
-              <div className="flex flex-wrap gap-2">
-                {CATEGORIES.map(cat => {
-                  const Icon = cat.icon;
-                  return (
-                    <motion.button
-                      key={cat.key}
-                      whileTap={{ scale: 0.92 }}
-                      onClick={() => setCategory(cat.key)}
-                      className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full text-xs font-medium transition-all ${
-                        category === cat.key
-                          ? 'gradient-primary text-primary-foreground glow-primary'
-                          : 'bg-secondary/80 text-muted-foreground hover:text-foreground'
-                      }`}
+            {/* Create Form */}
+            {showForm && (
+              <div className="px-5">
+                <div className="glass-card p-5 space-y-4">
+                  <input
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    placeholder="Announcement title"
+                    maxLength={100}
+                    className="w-full bg-secondary/80 border border-white/5 rounded-2xl px-4 py-3.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow"
+                  />
+                  <textarea
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    placeholder="Description detail..."
+                    rows={3}
+                    maxLength={500}
+                    className="w-full bg-secondary/80 border border-white/5 rounded-2xl px-4 py-3.5 text-xs text-foreground placeholder:text-muted-foreground outline-none resize-none focus:ring-2 focus:ring-primary/50 transition-shadow"
+                  />
+
+                  {/* Category Selection */}
+                  <div className="flex flex-wrap gap-2">
+                    {CATEGORIES.map(cat => {
+                      const Icon = cat.icon;
+                      return (
+                        <button
+                          key={cat.key}
+                          type="button"
+                          onClick={() => setCategory(cat.key)}
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-[10px] font-bold transition-all ${
+                            category === cat.key
+                              ? 'gradient-primary text-primary-foreground glow-primary'
+                              : 'bg-secondary/80 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          {cat.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Image Attachment preview */}
+                  {imagePreview && (
+                    <div className="relative rounded-2xl overflow-hidden">
+                      <img src={imagePreview} alt="Preview" className="w-full max-h-40 object-cover rounded-2xl" />
+                      <button
+                        type="button"
+                        onClick={() => setImagePreview(null)}
+                        className="absolute top-2 right-2 h-7 w-7 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center"
+                      >
+                        <X className="h-3.5 w-3.5 text-foreground" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      className="h-9 w-9 rounded-xl bg-secondary/80 flex items-center justify-center hover:bg-secondary transition-colors"
                     >
-                      <Icon className="h-3.5 w-3.5" />
-                      {cat.label}
-                    </motion.button>
-                  );
-                })}
+                      <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                    <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
+                    
+                    <Button
+                      onClick={handleCreate}
+                      disabled={!title.trim() || !description.trim() || isCreating}
+                      size="sm"
+                      className="rounded-full gradient-primary px-6 h-9 font-semibold text-xs"
+                    >
+                      {isCreating ? 'Publishing...' : 'Publish'}
+                    </Button>
+                  </div>
+                </div>
               </div>
+            )}
 
-              {/* Image */}
-              {imagePreview && (
-                <div className="relative rounded-2xl overflow-hidden">
-                  <img src={imagePreview} alt="Preview" className="w-full max-h-40 object-cover rounded-2xl" />
-                  <button
-                    onClick={() => setImagePreview(null)}
-                    className="absolute top-2 right-2 h-7 w-7 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center"
-                  >
-                    <X className="h-3.5 w-3.5 text-foreground" />
-                  </button>
+            {/* Broadcasts List */}
+            <div className="px-5">
+              <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+                <Megaphone className="h-3.5 w-3.5 text-primary" />
+                Active Announcements
+              </h2>
+              
+              {myAnnouncements.length === 0 ? (
+                <EmptyState title="No announcements yet" description="Create your first campus announcement!" />
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {myAnnouncements.map((ann) => (
+                    <div key={ann.id} className="glass-card p-4 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-start justify-between">
+                          <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-primary/10 text-primary">
+                            {ann.category}
+                          </span>
+                          <button
+                            onClick={() => deleteAnnouncement(ann.id)}
+                            className="h-7 w-7 rounded-lg bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </button>
+                        </div>
+                        <h3 className="text-xs font-bold text-foreground mt-2">{ann.title}</h3>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{ann.description}</p>
+                      </div>
+                      
+                      <div>
+                        {ann.imageURL && (
+                          <img src={ann.imageURL} alt={ann.title} className="w-full max-h-32 object-cover rounded-xl mt-3" />
+                        )}
+                        <p className="text-[9px] text-muted-foreground/60 mt-3">
+                          {formatDistanceToNow(new Date(ann.createdAt), { addSuffix: true })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
-
-              <div className="flex items-center justify-between pt-1">
-                <motion.button whileTap={{ scale: 0.9 }} onClick={() => fileRef.current?.click()} className="h-9 w-9 rounded-xl bg-secondary/80 flex items-center justify-center hover:bg-secondary transition-colors">
-                  <ImageIcon className="h-4 w-4 text-muted-foreground" />
-                </motion.button>
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-                <Button
-                  onClick={handleCreate}
-                  disabled={!title.trim() || !description.trim() || isCreating}
-                  size="sm"
-                  className="rounded-full gradient-primary px-6 h-9 font-semibold"
-                >
-                  {isCreating ? 'Publishing...' : 'Publish'}
-                </Button>
-              </div>
             </div>
           </motion.div>
         )}
-      </AnimatePresence>
 
-      {/* Announcements List */}
-      <div className="px-5">
-        <h2 className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
-          <Megaphone className="h-3.5 w-3.5 text-primary" />
-          Your Announcements
-        </h2>
-        {myAnnouncements.length === 0 ? (
-          <EmptyState title="No announcements yet" description="Create your first campus announcement!" />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {myAnnouncements.map((ann, i) => (
-              <motion.div
-                key={ann.id}
-                layout
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="glass-card p-4"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold ${
-                        ann.category === 'event' ? 'bg-primary/15 text-primary' :
-                        ann.category === 'club' ? 'bg-accent/15 text-accent' :
-                        'bg-secondary text-muted-foreground'
-                      }`}>
-                        {ann.category.toUpperCase()}
-                      </span>
+        {/* User Reports Tab */}
+        {activeAdminTab === 'reports' && (
+          <motion.div
+            key="reports"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="px-5 space-y-4"
+          >
+            <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+              <AlertTriangle className="h-3.5 w-3.5 text-primary" /> Pending Moderation Reports ({reports.length})
+            </h2>
+
+            {reportsLoading ? (
+              <div className="flex justify-center py-12">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            ) : reports.length === 0 ? (
+              <div className="glass-card p-10 text-center text-muted-foreground text-xs italic">
+                No active reports pending review. Clear dashboard! 🎉
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {reports.map((report) => (
+                  <div key={report._id} className="glass-card p-5 space-y-4 border border-white/5 relative">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[9px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                          {report.type}
+                        </span>
+                        <h3 className="text-xs font-bold mt-1 text-foreground">
+                          Reported User: {report.reported ? report.reported.name : 'Unknown User'}
+                        </h3>
+                        <p className="text-[10px] text-muted-foreground">{report.reported ? report.reported.email : report.reportedNameOrEmail}</p>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => handleResolveReport(report._id, 'dismiss')}
+                          variant="outline"
+                          className="border-white/10 hover:bg-secondary h-8 px-3 rounded-lg text-[10px] font-bold"
+                        >
+                          Dismiss
+                        </Button>
+                        <Button
+                          onClick={() => handleResolveReport(report._id, 'suspend')}
+                          disabled={report.reported?.isSuspended}
+                          className="bg-red-600 hover:bg-red-500 text-white h-8 px-3 rounded-lg text-[10px] font-bold"
+                        >
+                          {report.reported?.isSuspended ? 'Suspended' : 'Suspend User'}
+                        </Button>
+                      </div>
                     </div>
-                    <h3 className="text-sm font-semibold text-foreground truncate">{ann.title}</h3>
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">{ann.description}</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-2">
-                      {formatDistanceToNow(new Date(ann.createdAt), { addSuffix: true })}
-                    </p>
+
+                    <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1 text-xs">
+                      <p className="font-semibold text-foreground/90">Reason details:</p>
+                      <p className="text-muted-foreground leading-relaxed italic">"{report.reason}"</p>
+                    </div>
+
+                    <div className="text-[9px] text-muted-foreground/60 flex items-center justify-between">
+                      <span>Reporter: {report.reporter ? `${report.reporter.name} (${report.reporter.email})` : 'Anonymous'}</span>
+                      <span>{formatDistanceToNow(new Date(report.createdAt), { addSuffix: true })}</span>
+                    </div>
                   </div>
-                  <motion.button
-                    whileTap={{ scale: 0.85 }}
-                    onClick={() => deleteAnnouncement(ann.id)}
-                    className="ml-3 h-9 w-9 rounded-xl bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  </motion.button>
-                </div>
-                {ann.imageURL && (
-                  <img src={ann.imageURL} alt={ann.title} className="w-full max-h-32 object-cover rounded-2xl mt-3" />
-                )}
-              </motion.div>
-            ))}
-          </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
         )}
-      </div>
+
+        {/* Support Help Desk Tab */}
+        {activeAdminTab === 'tickets' && (
+          <motion.div
+            key="tickets"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="px-5 space-y-4"
+          >
+            <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+              <LifeBuoy className="h-3.5 w-3.5 text-primary" /> Support Tickets ({tickets.length})
+            </h2>
+
+            {ticketsLoading ? (
+              <div className="flex justify-center py-12">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            ) : tickets.length === 0 ? (
+              <div className="glass-card p-10 text-center text-muted-foreground text-xs italic">
+                No support tickets filed yet. Great support history!
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {tickets.map((ticket) => (
+                  <div key={ticket._id} className="glass-card p-5 space-y-4 border border-white/5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                            ticket.status === 'Open' ? 'bg-green-500/10 text-green-400' :
+                            ticket.status === 'In Progress' ? 'bg-amber-500/10 text-amber-400' :
+                            ticket.status === 'Resolved' ? 'bg-blue-500/10 text-blue-400' :
+                            'bg-gray-500/10 text-gray-400'
+                          }`}>
+                            {ticket.status}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">User: {ticket.name} ({ticket.email})</span>
+                        </div>
+                        <h3 className="text-xs font-bold text-foreground mt-2">{ticket.subject}</h3>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{ticket.description}</p>
+                      </div>
+
+                      <Button
+                        onClick={() => {
+                          setReplyTicketId(replyTicketId === ticket._id ? null : ticket._id);
+                          setReplyText('');
+                        }}
+                        className="bg-primary hover:bg-primary/90 text-white rounded-lg h-8 px-3 text-[10px] font-bold shrink-0"
+                      >
+                        Reply / Edit
+                      </Button>
+                    </div>
+
+                    {/* Replies count */}
+                    {ticket.replies && ticket.replies.length > 0 && (
+                      <div className="pl-4 border-l border-white/10 space-y-2.5">
+                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Thread Replies ({ticket.replies.length})</p>
+                        {ticket.replies.map((rep: any, idx: number) => (
+                          <div key={idx} className="space-y-1 text-xs">
+                            <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                              <span className="font-semibold text-foreground">{rep.senderName}</span>
+                              <span>• {new Date(rep.createdAt).toLocaleDateString()}</span>
+                            </div>
+                            <p className="text-muted-foreground bg-secondary/35 p-2 rounded-lg border border-white/5">{rep.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Inline reply form */}
+                    {replyTicketId === ticket._id && (
+                      <form onSubmit={handleSendAdminReply} className="p-4 bg-secondary/30 border border-white/5 rounded-xl space-y-3">
+                        <h4 className="text-[10px] text-foreground font-bold uppercase">Submit Support Response</h4>
+                        
+                        <div className="flex flex-col sm:flex-row gap-3">
+                          <textarea
+                            value={replyText}
+                            onChange={(e) => setReplyText(e.target.value)}
+                            placeholder="Write response message to the user..."
+                            rows={3}
+                            className="flex-1 bg-secondary border border-white/10 rounded-xl p-3 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                          />
+                          
+                          <div className="flex flex-row sm:flex-col justify-between sm:justify-start gap-2">
+                            <div className="flex flex-col">
+                              <label className="text-[9px] text-muted-foreground font-bold uppercase mb-1">Status</label>
+                              <select
+                                value={replyStatus}
+                                onChange={(e) => setReplyStatus(e.target.value)}
+                                className="bg-secondary border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                              >
+                                <option value="In Progress">In Progress</option>
+                                <option value="Resolved">Resolved</option>
+                                <option value="Closed">Closed</option>
+                              </select>
+                            </div>
+                            
+                            <Button
+                              type="submit"
+                              disabled={!replyText.trim()}
+                              className="bg-primary hover:bg-primary/95 text-white rounded-lg h-9 px-4 text-xs font-bold mt-auto sm:mt-1.5"
+                            >
+                              Submit
+                            </Button>
+                          </div>
+                        </div>
+                      </form>
+                    )}
+
+                    <div className="text-[9px] text-muted-foreground/60 flex items-center gap-1.5">
+                      <Clock className="h-3 w-3" /> Submitted {formatDistanceToNow(new Date(ticket.createdAt), { addSuffix: true })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

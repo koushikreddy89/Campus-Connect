@@ -171,6 +171,7 @@ const PremiumDashboardAvatar: React.FC<PremiumAvatarProps> = ({ src, name = 'Use
 
 export const MyAlumniProfilePage: React.FC = () => {
   const navigate = useNavigate();
+  const authCollege = useAuthStore((state) => state.college);
   const college = authCollege || 'SR University';
   const userId = useAuthStore((state) => state.uid);
   const logout = useAuthStore((state) => state.logout);
@@ -383,9 +384,25 @@ export const MyAlumniProfilePage: React.FC = () => {
   const handleSaveReferral = async (data: any) => {
     try {
       if (!currentAlumniProfile) return;
+      
+      const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$/i;
+      if (!data.applicationUrl || !urlPattern.test(data.applicationUrl.trim())) {
+        toast.error('Invalid application URL. Please provide a valid web link.');
+        return;
+      }
+
       const payload = {
-        ...data,
         alumniId: currentAlumniProfile.id,
+        company: data.companyName,
+        companyName: data.companyName,
+        role: data.jobTitle,
+        jobTitle: data.jobTitle,
+        eligibility: data.eligibility,
+        deadline: data.deadline,
+        applicationUrl: data.applicationUrl.trim(),
+        description: data.description || '',
+        salary: data.salary || '',
+        location: data.location || 'Remote'
       };
 
       if (editingItem) {
@@ -400,8 +417,8 @@ export const MyAlumniProfilePage: React.FC = () => {
       setEditingItem(null);
       referralForm.reset();
       loadAllData(currentAlumniProfile.id);
-    } catch (err) {
-      toast.error('Failed to save referral');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save referral');
     }
   };
 
@@ -971,21 +988,24 @@ export const MyAlumniProfilePage: React.FC = () => {
                   <Card key={ref.id} className="bg-card/40 border-border/30 p-4">
                     <div className="flex justify-between items-start">
                       <div>
-                        <h3 className="text-sm font-bold text-foreground">{ref.role}</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">{ref.company} • {ref.location || 'Remote'}</p>
+                        <h3 className="text-sm font-bold text-foreground">{ref.jobTitle || ref.role}</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">{ref.companyName || ref.company} • {ref.location || 'Remote'}</p>
                         
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-3 text-[11px] text-muted-foreground">
                           <p>🎯 <span className="font-semibold">Eligibility:</span> {ref.eligibility || 'Open'}</p>
                           <p>📅 <span className="font-semibold">Deadline:</span> {ref.deadline || 'No Deadline'}</p>
                           {ref.salary && <p>💰 <span className="font-semibold">Salary:</span> {ref.salary}</p>}
-                          {ref.experience && <p>👔 <span className="font-semibold">Experience:</span> {ref.experience}</p>}
+                          {(ref.role || ref.jobTitle) && <p>👔 <span className="font-semibold">Role:</span> {ref.jobTitle || ref.role}</p>}
                         </div>
+                        {ref.description && (
+                          <p className="text-xs text-muted-foreground mt-2 border-t border-border/10 pt-2">{ref.description}</p>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
-                      {ref.applicationLink ? (
-                        <a href={ref.applicationLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
+                      {(ref.applicationUrl || ref.applicationLink) ? (
+                        <a href={ref.applicationUrl || ref.applicationLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
                           <LinkIcon size={10} /> Link
                         </a>
                       ) : <span className="text-[10px] text-muted-foreground">No Link</span>}
@@ -996,7 +1016,16 @@ export const MyAlumniProfilePage: React.FC = () => {
                           variant="ghost"
                           onClick={() => {
                             setEditingItem(ref);
-                            referralForm.reset(ref);
+                            referralForm.reset({
+                              companyName: ref.companyName || ref.company,
+                              jobTitle: ref.jobTitle || ref.role,
+                              eligibility: ref.eligibility || '',
+                              deadline: ref.deadline || '',
+                              salary: ref.salary || '',
+                              location: ref.location || 'Remote',
+                              applicationUrl: ref.applicationUrl || ref.applicationLink || '',
+                              description: ref.description || ''
+                            });
                             setActiveModal('referral');
                           }}
                           className="h-7 px-2.5 text-xs text-muted-foreground"
@@ -1626,28 +1655,56 @@ export const MyAlumniProfilePage: React.FC = () => {
           <form onSubmit={referralForm.handleSubmit(handleSaveReferral)} className="space-y-3 pt-2">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Company</label>
-                <Input {...referralForm.register('company', { required: true })} placeholder="e.g. Google" className="mt-1 bg-background/50" />
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Company Name *</label>
+                <Input 
+                  {...referralForm.register('companyName', { required: 'Company Name is required' })} 
+                  placeholder="e.g. Google" 
+                  className={`mt-1 bg-background/50 ${referralForm.formState.errors.companyName ? 'border-red-500' : ''}`}
+                />
+                {referralForm.formState.errors.companyName && (
+                  <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.companyName.message?.toString()}</p>
+                )}
               </div>
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Role</label>
-                <Input {...referralForm.register('role', { required: true })} placeholder="e.g. Frontend Intern" className="mt-1 bg-background/50" />
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Job Title *</label>
+                <Input 
+                  {...referralForm.register('jobTitle', { required: 'Job Title is required' })} 
+                  placeholder="e.g. Frontend Intern" 
+                  className={`mt-1 bg-background/50 ${referralForm.formState.errors.jobTitle ? 'border-red-500' : ''}`}
+                />
+                {referralForm.formState.errors.jobTitle && (
+                  <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.jobTitle.message?.toString()}</p>
+                )}
               </div>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Eligibility Requirements</label>
-              <Input {...referralForm.register('eligibility')} placeholder="e.g. B.Tech 2025/2026, Min 8 CGPA" className="mt-1 bg-background/50" />
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Eligibility Requirements *</label>
+              <Input 
+                {...referralForm.register('eligibility', { required: 'Eligibility requirements are required' })} 
+                placeholder="e.g. B.Tech 2025/2026, Min 8 CGPA" 
+                className={`mt-1 bg-background/50 ${referralForm.formState.errors.eligibility ? 'border-red-500' : ''}`}
+              />
+              {referralForm.formState.errors.eligibility && (
+                <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.eligibility.message?.toString()}</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Deadline</label>
-                <Input {...referralForm.register('deadline')} type="date" className="mt-1 bg-background/50 text-xs" />
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Deadline *</label>
+                <Input 
+                  {...referralForm.register('deadline', { required: 'Deadline is required' })} 
+                  type="date" 
+                  className={`mt-1 bg-background/50 text-xs ${referralForm.formState.errors.deadline ? 'border-red-500' : ''}`}
+                />
+                {referralForm.formState.errors.deadline && (
+                  <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.deadline.message?.toString()}</p>
+                )}
               </div>
               <div>
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Salary Range</label>
                 <select
                   {...referralForm.register('salary')}
-                  className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground"
+                  className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none"
                 >
                   <option value="">Select Range</option>
                   {SalaryRangeOptions.map(r => <option key={r} value={r}>{r}</option>)}
@@ -1655,12 +1712,27 @@ export const MyAlumniProfilePage: React.FC = () => {
               </div>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Application Link</label>
-              <Input {...referralForm.register('applicationLink')} placeholder="https://..." className="mt-1 bg-background/50" />
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Application URL *</label>
+              <Input 
+                {...referralForm.register('applicationUrl', { required: 'Application URL is required' })} 
+                placeholder="https://..." 
+                className={`mt-1 bg-background/50 ${referralForm.formState.errors.applicationUrl ? 'border-red-500' : ''}`}
+              />
+              {referralForm.formState.errors.applicationUrl && (
+                <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.applicationUrl.message?.toString()}</p>
+              )}
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Optional Description</label>
+              <Textarea 
+                {...referralForm.register('description')} 
+                placeholder="Add optional notes, tips, or details about the referral process..." 
+                className="mt-1 h-20 bg-background/50 text-xs" 
+              />
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
-              <Button type="submit" size="sm">Share Opportunity</Button>
+              <Button type="submit" size="sm">{editingItem ? 'Update Opportunity' : 'Share Opportunity'}</Button>
             </div>
           </form>
         </DialogContent>

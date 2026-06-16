@@ -2,8 +2,32 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
-const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report } = require('./models');
+const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification } = require('./models');
 const emailService = require('./emailService');
+const crypto = require('crypto');
+
+// MongoDB query injection sanitizer helper
+const sanitizeMongoOperators = (obj) => {
+  if (obj && typeof obj === 'object') {
+    for (const key in obj) {
+      if (key.startsWith('$')) {
+        delete obj[key];
+      } else if (typeof obj[key] === 'object') {
+        sanitizeMongoOperators(obj[key]);
+      }
+    }
+  }
+  return obj;
+};
+
+const mongoSanitizeMiddleware = (req, res, next) => {
+  req.body = sanitizeMongoOperators(req.body);
+  req.query = sanitizeMongoOperators(req.query);
+  req.params = sanitizeMongoOperators(req.params);
+  next();
+};
+
+router.use(mongoSanitizeMiddleware);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'campus-connect-super-secret';
 const ADMIN_EMAILS = ['admin@mit.edu', 'admin@stanford.edu', 'admin@sru.edu.in'];
@@ -11,18 +35,119 @@ const ADMIN_EMAILS = ['admin@mit.edu', 'admin@stanford.edu', 'admin@sru.edu.in']
 // URL validation regex helper
 const URL_REGEX = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$/i;
 
-// Domain validation helper for students
-const isApprovedCollegeDomain = (email) => {
+// Domain validation helper for students (DB-backed and auto-detecting)
+const isApprovedCollegeDomain = async (email) => {
   const parts = email.split('@');
   if (parts.length !== 2) return false;
-  const domain = parts[1].toLowerCase();
+  const domain = parts[1].toLowerCase().trim();
   
   // Reject common personal mail domains.
   const rejectedDomains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'live.com', 'aol.com', 'mail.com'];
   if (rejectedDomains.includes(domain)) return false;
   
-  // Ensure the domain ends with .edu, .edu.in, or .ac.in
-  return domain.endsWith('.edu') || domain.endsWith('.edu.in') || domain.endsWith('.ac.in');
+  // Check the DB CollegeDomain registry
+  const exists = await CollegeDomain.findOne({ domain });
+  if (exists) return true;
+  
+  // Auto-register and approve if it's a valid college TLD suffix
+  if (domain.endsWith('.edu') || domain.endsWith('.edu.in') || domain.endsWith('.ac.in')) {
+    const namePart = domain.split('.')[0];
+    const friendlyName = namePart.charAt(0).toUpperCase() + namePart.slice(1) + ' College';
+    await CollegeDomain.create({ name: friendlyName, domain }).catch(() => {});
+    return true;
+  }
+  
+  return false;
+};
+
+// Brute force lockout helper functions
+const checkLockout = async (email, ipAddress) => {
+  const query = { $or: [] };
+  if (email) query.$or.push({ email: email.toLowerCase().trim() });
+  if (ipAddress) query.$or.push({ ipAddress });
+  
+  if (query.$or.length === 0) return { locked: false };
+  
+  const attempts = await LoginAttempt.find(query);
+  for (const attempt of attempts) {
+    if (attempt.lockUntil && attempt.lockUntil > new Date()) {
+      const waitMinutes = Math.ceil((attempt.lockUntil.getTime() - Date.now()) / 60000);
+      return { locked: true, waitMinutes, lockUntil: attempt.lockUntil };
+    }
+  }
+  return { locked: false };
+};
+
+const recordFailedAttempt = async (email, ipAddress) => {
+  const lowerEmail = email.toLowerCase().trim();
+  let attempt = await LoginAttempt.findOne({ email: lowerEmail, ipAddress });
+  if (!attempt) {
+    attempt = new LoginAttempt({ email: lowerEmail, ipAddress, attempts: 0 });
+  }
+  attempt.attempts += 1;
+  attempt.lastAttemptAt = new Date();
+  
+  if (attempt.attempts >= 5) {
+    attempt.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 min lock
+  }
+  await attempt.save();
+  return attempt;
+};
+
+const resetAttempts = async (email, ipAddress) => {
+  const lowerEmail = email.toLowerCase().trim();
+  await LoginAttempt.deleteMany({
+    $or: [
+      { email: lowerEmail },
+      { ipAddress }
+    ]
+  });
+};
+
+// Email-Name uniqueness constraint helper (Product Requirement)
+const normalizeName = (name) => {
+  if (!name) return '';
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+};
+
+const checkEmailNameConflict = async (email, name, userId) => {
+  if (!email || !name) return null;
+  const lowerEmail = email.toLowerCase().trim();
+  const normInputName = normalizeName(name);
+
+  // Search User (Student) collection
+  const queryStudent = {
+    $or: [
+      { email: lowerEmail },
+      { collegeEmail: lowerEmail },
+      { personalEmail: lowerEmail }
+    ]
+  };
+  if (userId) {
+    queryStudent.userId = { $ne: userId };
+  }
+  const existingStudent = await User.findOne(queryStudent);
+
+  if (existingStudent && existingStudent.name) {
+    if (normalizeName(existingStudent.name) !== normInputName) {
+      return existingStudent.name;
+    }
+  }
+
+  // Search Alumni collection
+  const queryAlumni = { email: lowerEmail };
+  if (userId) {
+    queryAlumni.userId = { $ne: userId };
+  }
+  const existingAlumni = await Alumni.findOne(queryAlumni);
+
+  if (existingAlumni && existingAlumni.name) {
+    if (normalizeName(existingAlumni.name) !== normInputName) {
+      return existingAlumni.name;
+    }
+  }
+
+  return null;
 };
 
 // requireAuth Middleware
@@ -35,6 +160,25 @@ const requireAuth = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
+
+    // DB-backed session check
+    if (decoded.sessionId) {
+      const session = await Session.findOne({ sessionId: decoded.sessionId });
+      if (!session || new Date() > session.expiresAt) {
+        return res.status(401).json({ success: false, error: 'Session expired or revoked. Please log in again.', isSessionInvalid: true });
+      }
+      
+      // Update session activity
+      session.lastActiveAt = new Date();
+      const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+      if (currentIp && session.ipAddress !== currentIp) {
+        session.ipAddress = currentIp;
+      }
+      await session.save();
+    } else if (decoded.role !== 'admin') {
+      // Require session ID for non-admin accounts to ensure active session tracking
+      return res.status(401).json({ success: false, error: 'Session tracking is required. Please log in again.', isSessionInvalid: true });
+    }
 
     // Check if user or alumni is suspended
     if (decoded.role === 'student' || decoded.role === 'alumni') {
@@ -165,10 +309,17 @@ router.post('/auth/send-otp', async (req, res) => {
     }
     
     const lowerEmail = email.toLowerCase().trim();
+    const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     
+    // Brute force lockout check
+    const lockout = await checkLockout(lowerEmail, currentIp);
+    if (lockout.locked) {
+      return res.status(423).json({ success: false, error: `Too many failed attempts. Account is temporarily locked. Please try again after ${lockout.waitMinutes} minutes.` });
+    }
+
     // Domain validation based on role
     if (role === 'student') {
-      if (!isApprovedCollegeDomain(lowerEmail)) {
+      if (!(await isApprovedCollegeDomain(lowerEmail))) {
         return res.status(400).json({ success: false, error: 'Please use your official college email address.' });
       }
     } else if (role === 'admin') {
@@ -184,22 +335,32 @@ router.post('/auth/send-otp', async (req, res) => {
       return res.status(429).json({ success: false, error: `Please wait ${waitSeconds} seconds before requesting a new OTP.` });
     }
     
-    // Generate 6-digit OTP
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    // Cryptographically secure 6-digit OTP
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const hashedOtp = crypto.createHash('sha256').update(code).digest('hex');
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiration
     console.log(`🔑 [OTP Flow] OTP Generated: ${code} for ${lowerEmail}`);
     
     await OTP.findOneAndUpdate(
       { email: lowerEmail },
-      { code, otp: code, expiresAt, role: role || 'student', attempts: 0, verified: false },
+      { code: hashedOtp, otp: hashedOtp, expiresAt, role: role || 'student', attempts: 0, verified: false },
       { upsert: true, new: true }
     );
-    console.log('💾 [OTP Flow] OTP Saved successfully to MongoDB');
+    console.log('💾 [OTP Flow] Hashed OTP Saved successfully to MongoDB');
     
-    console.log(`✉️ [OTP Flow] Brevo Request Sent to ${lowerEmail}`);
-    
-    // Dispatch via Email Service
+    // Dispatch via Email Service (sending plain text code)
     const dispatchResult = await emailService.sendOTP(lowerEmail, code, 5);
+    
+    // Security audit log
+    await SecurityLog.create({
+      email: lowerEmail,
+      event: 'send_otp',
+      status: dispatchResult && dispatchResult.success ? 'success' : 'failure',
+      ipAddress: currentIp,
+      userAgent: req.headers['user-agent'] || '',
+      details: { role: role || 'student' }
+    });
+
     if (dispatchResult && dispatchResult.success) {
       if (dispatchResult.mock) {
         console.log(`✉️ [OTP Flow] Email Delivered (Mock dispatch) to ${lowerEmail}`);
@@ -228,7 +389,14 @@ router.post('/auth/verify-alumni', async (req, res) => {
     const lowerEmail = personalEmail.toLowerCase().trim();
     const cleanRollNumber = rollNumber.trim();
     const cleanBatch = batch.trim();
+    const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     
+    // Brute force lockout check
+    const lockout = await checkLockout(lowerEmail, currentIp);
+    if (lockout.locked) {
+      return res.status(423).json({ success: false, error: `Too many failed attempts. Account is temporarily locked. Please try again after ${lockout.waitMinutes} minutes.` });
+    }
+
     // Rate limiting (60 seconds)
     const existingOtp = await OTP.findOne({ email: lowerEmail });
     if (existingOtp && (Date.now() - new Date(existingOtp.updatedAt).getTime() < 60000)) {
@@ -259,17 +427,24 @@ router.post('/auth/verify-alumni', async (req, res) => {
       };
       console.log(`⚠️ [Testing Mode] Alumni Record Verification Bypassed for ${lowerEmail}`);
     }
+
+    // Check for email name conflict
+    const conflictName = await checkEmailNameConflict(lowerEmail, record.name);
+    if (conflictName) {
+      return res.status(400).json({ success: false, error: `This email ID already exists for ${conflictName}` });
+    }
     
-    // Generate 6-digit OTP
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    // Cryptographically secure 6-digit OTP
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const hashedOtp = crypto.createHash('sha256').update(code).digest('hex');
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
     console.log(`🔑 [OTP Flow] OTP Generated: ${code} for Alumni ${lowerEmail}`);
     
     await OTP.findOneAndUpdate(
       { email: lowerEmail },
       { 
-        code, 
-        otp: code,
+        code: hashedOtp, 
+        otp: hashedOtp,
         expiresAt, 
         role: 'alumni',
         attempts: 0,
@@ -278,17 +453,27 @@ router.post('/auth/verify-alumni', async (req, res) => {
           rollNumber: cleanRollNumber,
           batch: cleanBatch,
           name: record.name,
-          department: record.department
+          department: record.department,
+          isTestAccount: record.isTestAccount
         }
       },
       { upsert: true, new: true }
     );
-    console.log('💾 [OTP Flow] OTP Saved successfully to MongoDB');
+    console.log('💾 [OTP Flow] Hashed OTP Saved successfully to MongoDB');
     
-    console.log(`✉️ [OTP Flow] Brevo Request Sent to ${lowerEmail}`);
-    
-    // Dispatch via Email Service
+    // Dispatch via Email Service (sending plain text code)
     const dispatchResult = await emailService.sendOTP(lowerEmail, code, 5);
+    
+    // Security audit log
+    await SecurityLog.create({
+      email: lowerEmail,
+      event: 'verify_alumni',
+      status: dispatchResult && dispatchResult.success ? 'success' : 'failure',
+      ipAddress: currentIp,
+      userAgent: req.headers['user-agent'] || '',
+      details: { rollNumber: cleanRollNumber, batch: cleanBatch }
+    });
+
     if (dispatchResult && dispatchResult.success) {
       if (dispatchResult.mock) {
         console.log(`✉️ [OTP Flow] Email Delivered (Mock dispatch) to ${lowerEmail}`);
@@ -315,16 +500,17 @@ router.post('/auth/verify-otp', async (req, res) => {
     }
     
     const lowerEmail = email.toLowerCase().trim();
+    const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    
+    // Brute force lockout check
+    const lockout = await checkLockout(lowerEmail, currentIp);
+    if (lockout.locked) {
+      return res.status(423).json({ success: false, error: `Too many failed attempts. Account is temporarily locked. Please try again after ${lockout.waitMinutes} minutes.` });
+    }
     
     const otpRecord = await OTP.findOne({ email: lowerEmail });
     if (!otpRecord) {
       return res.status(400).json({ success: false, error: 'No OTP requested for this email or it has expired.' });
-    }
-    
-    // Lockout check
-    if (otpRecord.attempts >= 5) {
-      await OTP.deleteOne({ _id: otpRecord._id });
-      return res.status(400).json({ success: false, error: 'Maximum verification attempts exceeded. Please request a new OTP.' });
     }
     
     // Expiration check
@@ -333,26 +519,36 @@ router.post('/auth/verify-otp', async (req, res) => {
       return res.status(400).json({ success: false, error: 'OTP code has expired. Please request a new one.' });
     }
     
-    // Code validation
-    if (otpRecord.code !== code.trim() && otpRecord.otp !== code.trim()) {
+    // Code validation (hash compare)
+    const hashedInput = crypto.createHash('sha256').update(code.trim()).digest('hex');
+    if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
       otpRecord.attempts += 1;
       await otpRecord.save();
       
-      if (otpRecord.attempts >= 5) {
+      // Track lockout attempts
+      const attempt = await recordFailedAttempt(lowerEmail, currentIp);
+      
+      await SecurityLog.create({
+        email: lowerEmail,
+        event: 'verify_otp',
+        status: 'failure',
+        ipAddress: currentIp,
+        userAgent: req.headers['user-agent'] || '',
+        details: { reason: 'invalid_code', attempts: otpRecord.attempts }
+      });
+
+      if (otpRecord.attempts >= 5 || (attempt && attempt.attempts >= 5)) {
         await OTP.deleteOne({ _id: otpRecord._id });
-        return res.status(400).json({ success: false, error: 'Maximum verification attempts exceeded. This OTP is now invalid. Please request a new one.' });
+        return res.status(400).json({ success: false, error: 'Maximum verification attempts exceeded. Account is locked. Please request a new OTP in 15 minutes.' });
       }
       
       const remaining = 5 - otpRecord.attempts;
       return res.status(400).json({ success: false, error: `Invalid OTP code. ${remaining} attempts remaining.` });
     }
     
+    // Success: Clean up OTP and reset lockout attempts
     await OTP.deleteOne({ _id: otpRecord._id });
-    
-    let userPayload = {
-      email: lowerEmail,
-      role: otpRecord.role
-    };
+    await resetAttempts(lowerEmail, currentIp);
     
     let isNewUser = false;
     let profileComplete = false;
@@ -364,23 +560,29 @@ router.post('/auth/verify-otp', async (req, res) => {
       if (!student) {
         isNewUser = true;
         userId = `student-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Auto-detect college from domain registry
+        const domain = lowerEmail.split('@')[1].toLowerCase().trim();
+        const collegeRecord = await CollegeDomain.findOne({ domain });
+        const collegeName = collegeRecord ? collegeRecord.name : 'SR University';
+        
         student = new User({
           userId,
           email: lowerEmail,
           collegeEmail: lowerEmail,
           role: 'student',
-          college: 'SR University'
+          college: collegeName
         });
         await student.save();
       } else {
         userId = student.userId;
-        profileComplete = !!student.name;
+        profileComplete = student.onboardingCompleted === true;
       }
-      userPayload.userId = userId;
       
     } else if (otpRecord.role === 'alumni') {
-      const { rollNumber, batch, name, department } = otpRecord.metadata || {};
+      const { rollNumber, batch, name, department, isTestAccount } = otpRecord.metadata || {};
       let alumni = await Alumni.findOne({ email: lowerEmail });
+      const computedIsTest = (process.env.ALUMNI_VERIFICATION_ENABLED === 'false' || !!isTestAccount);
       
       if (!alumni) {
         userId = `alumni-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -390,28 +592,79 @@ router.post('/auth/verify-otp', async (req, res) => {
           name: name || 'Alumni User',
           batch: batch || '2024',
           department: department || 'Computer Science',
-          approvalStatus: 'approved',
+          approvalStatus: computedIsTest ? 'approved' : 'pending', // Pending by default for production registrations
           role: 'alumni',
           rollNumber,
           fullName: name || 'Alumni User',
           batchYear: batch || '2024',
-          isTestAccount: (process.env.ALUMNI_VERIFICATION_ENABLED === 'false' || !!(otpRecord.metadata && otpRecord.metadata.isTestAccount))
+          isTestAccount: computedIsTest,
+          onboardingCompleted: false,
+          onboardingStep: 1
         });
         await alumni.save();
+
+        // Create initial verification log
+        await AlumniVerification.create({
+          userId,
+          email: lowerEmail,
+          name: name || 'Alumni User',
+          rollNumber,
+          batch,
+          status: computedIsTest ? 'approved' : 'pending',
+          method: 'email',
+          verifiedAt: computedIsTest ? new Date() : undefined,
+          verifiedBy: computedIsTest ? 'system' : ''
+        });
+
         isNewUser = true;
-        profileComplete = true;
+        profileComplete = false;
       } else {
         userId = alumni.userId;
-        profileComplete = true;
+        profileComplete = alumni.onboardingCompleted === true;
       }
-      userPayload.userId = userId;
       
     } else if (otpRecord.role === 'admin') {
       userId = 'admin-user-id';
-      userPayload.userId = userId;
       profileComplete = true;
     }
     
+    // Generate DB-backed Session
+    const sessionId = `session-${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
+    const ua = req.headers['user-agent'] || '';
+    let deviceType = 'desktop';
+    if (/mobile|android|iphone|ipad|phone/i.test(ua)) deviceType = 'mobile';
+    else if (/tablet|ipad/i.test(ua)) deviceType = 'tablet';
+    
+    const sessionExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days expiration
+    const session = new Session({
+      sessionId,
+      userId,
+      role: otpRecord.role,
+      userAgent: ua,
+      ipAddress: currentIp,
+      deviceType,
+      expiresAt: sessionExpires
+    });
+    await session.save();
+
+    // Security audit log
+    await SecurityLog.create({
+      userId,
+      email: lowerEmail,
+      event: 'login',
+      status: 'success',
+      ipAddress: currentIp,
+      userAgent: ua,
+      details: { sessionId }
+    });
+
+    const userPayload = {
+      userId,
+      email: lowerEmail,
+      role: otpRecord.role,
+      sessionId
+    };
+
     const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
     
     res.json({
@@ -498,7 +751,7 @@ router.get('/auth/session', requireAuth, async (req, res) => {
         const completion = computeBackendProfileCompletion(studentObj);
         studentObj.profileCompletion = completion;
         userDetails = studentObj;
-        profileComplete = completion === 100;
+        profileComplete = student.onboardingCompleted === true;
       }
     } else if (role === 'alumni') {
       const alumni = await Alumni.findOne({ userId });
@@ -507,7 +760,7 @@ router.get('/auth/session', requireAuth, async (req, res) => {
         const completion = computeBackendProfileCompletion(alumniObj);
         alumniObj.profileCompletion = completion;
         userDetails = alumniObj;
-        profileComplete = completion === 100;
+        profileComplete = alumni.onboardingCompleted === true;
       }
     } else if (role === 'admin') {
       userDetails = {
@@ -686,6 +939,13 @@ router.post('/alumni/profile', async (req, res) => {
     const actualUserId = userId || `mock-user-${Date.now()}`;
     const actualEmail = email || `alumni-${Date.now()}@college.edu`;
 
+    if (actualEmail && name) {
+      const conflict = await checkEmailNameConflict(actualEmail, name, actualUserId);
+      if (conflict) {
+        return res.status(400).json({ success: false, error: `This email ID already exists for ${conflict}` });
+      }
+    }
+
     // Check if profile already exists
     let existing = await Alumni.findOne({ userId: actualUserId });
     if (existing) {
@@ -726,6 +986,13 @@ router.post('/alumni', async (req, res) => {
     
     const actualUserId = userId || `mock-user-${Date.now()}`;
     const actualEmail = email || `alumni-${Date.now()}@college.edu`;
+
+    if (actualEmail && name) {
+      const conflict = await checkEmailNameConflict(actualEmail, name, actualUserId);
+      if (conflict) {
+        return res.status(400).json({ success: false, error: `This email ID already exists for ${conflict}` });
+      }
+    }
 
     let existing = await Alumni.findOne({ userId: actualUserId });
     if (existing) {
@@ -776,27 +1043,47 @@ router.post('/alumni', async (req, res) => {
 // PUT /api/alumni/profile - Update alumni profile by userId
 router.put('/alumni/profile', async (req, res) => {
   try {
-    const { userId, name, batch, department, company, role, story, profileImageUrl } = req.body;
+    const { userId, name, batch, department, company, role, story, profileImageUrl, onboardingCompleted, onboardingStep } = req.body;
     if (!userId) {
       return res.status(400).json({ success: false, error: 'userId is required' });
     }
 
+    const existingAlumni = await Alumni.findOne({ userId });
+    if (!existingAlumni) {
+      return res.status(404).json({ success: false, error: 'Alumni profile not found' });
+    }
+    if (name) {
+      const conflict = await checkEmailNameConflict(existingAlumni.email, name, userId);
+      if (conflict) {
+        return res.status(400).json({ success: false, error: `This email ID already exists for ${conflict}` });
+      }
+    }
+
+    const updateFields = { 
+      name, 
+      batch, 
+      department, 
+      company: company || '', 
+      role: role || '', 
+      story: story || '', 
+      profileImageUrl: profileImageUrl || '',
+      fullName: name,
+      batchYear: batch,
+      designation: role || '',
+      careerJourney: story || '',
+      profileImage: profileImageUrl || ''
+    };
+
+    if (onboardingCompleted !== undefined) {
+      updateFields.onboardingCompleted = onboardingCompleted;
+    }
+    if (onboardingStep !== undefined) {
+      updateFields.onboardingStep = onboardingStep;
+    }
+
     const updated = await Alumni.findOneAndUpdate(
       { userId },
-      { 
-        name, 
-        batch, 
-        department, 
-        company: company || '', 
-        role: role || '', 
-        story: story || '', 
-        profileImageUrl: profileImageUrl || '',
-        fullName: name,
-        batchYear: batch,
-        designation: role || '',
-        careerJourney: story || '',
-        profileImage: profileImageUrl || ''
-      },
+      updateFields,
       { new: true }
     );
 
@@ -813,7 +1100,19 @@ router.put('/alumni/profile', async (req, res) => {
 // PUT /api/alumni/:id - Update alumni profile by mongo ID or userId
 router.put('/alumni/:id', async (req, res) => {
   try {
-    const { name, batch, department, company, role, story, profileImageUrl } = req.body;
+    const { name, batch, department, company, role, story, profileImageUrl, onboardingCompleted, onboardingStep } = req.body;
+
+    const existingAlumni = await Alumni.findOne({ userId: req.params.id }) || (mongoose.Types.ObjectId.isValid(req.params.id) ? await Alumni.findById(req.params.id) : null);
+    if (!existingAlumni) {
+      return res.status(404).json({ success: false, error: 'Alumni profile not found' });
+    }
+    if (name) {
+      const conflict = await checkEmailNameConflict(existingAlumni.email, name, existingAlumni.userId);
+      if (conflict) {
+        return res.status(400).json({ success: false, error: `This email ID already exists for ${conflict}` });
+      }
+    }
+
     const updateFields = {
       name, 
       batch, 
@@ -828,6 +1127,13 @@ router.put('/alumni/:id', async (req, res) => {
       careerJourney: story || '',
       profileImage: profileImageUrl || ''
     };
+
+    if (onboardingCompleted !== undefined) {
+      updateFields.onboardingCompleted = onboardingCompleted;
+    }
+    if (onboardingStep !== undefined) {
+      updateFields.onboardingStep = onboardingStep;
+    }
 
     let updated = await Alumni.findOneAndUpdate({ userId: req.params.id }, updateFields, { new: true });
     
@@ -2004,34 +2310,58 @@ router.post('/student/profile', async (req, res) => {
       linkedinUrl,
       githubUrl,
       projects,
-      careerGoals
+      careerGoals,
+      onboardingCompleted,
+      onboardingStep
     } = req.body;
     if (!userId || !email) {
       return res.status(400).json({ success: false, error: 'userId and email are required' });
     }
 
+    if (name) {
+      const conflictForEmail = await checkEmailNameConflict(email, name, userId);
+      if (conflictForEmail) {
+        return res.status(400).json({ success: false, error: `This email ID already exists for ${conflictForEmail}` });
+      }
+      if (personalEmail) {
+        const conflictForPersonalEmail = await checkEmailNameConflict(personalEmail, name, userId);
+        if (conflictForPersonalEmail) {
+          return res.status(400).json({ success: false, error: `This email ID already exists for ${conflictForPersonalEmail}` });
+        }
+      }
+    }
+
+    const updatePayload = {
+      email,
+      name: name || '',
+      role: 'student',
+      department: department || '',
+      batch: batch || '',
+      skills: skills || [],
+      bio: bio || '',
+      interests: interests || [],
+      clubs: clubs || [],
+      achievements: achievements || [],
+      profileImageUrl: profileImageUrl || '',
+      college: college || '',
+      photos: photos || [],
+      personalEmail: personalEmail || '',
+      linkedinUrl: linkedinUrl || '',
+      githubUrl: githubUrl || '',
+      projects: projects || [],
+      careerGoals: careerGoals || ''
+    };
+
+    if (onboardingCompleted !== undefined) {
+      updatePayload.onboardingCompleted = onboardingCompleted;
+    }
+    if (onboardingStep !== undefined) {
+      updatePayload.onboardingStep = onboardingStep;
+    }
+
     const profile = await User.findOneAndUpdate(
       { userId },
-      {
-        email,
-        name: name || '',
-        role: 'student',
-        department: department || '',
-        batch: batch || '',
-        skills: skills || [],
-        bio: bio || '',
-        interests: interests || [],
-        clubs: clubs || [],
-        achievements: achievements || [],
-        profileImageUrl: profileImageUrl || '',
-        college: college || '',
-        photos: photos || [],
-        personalEmail: personalEmail || '',
-        linkedinUrl: linkedinUrl || '',
-        githubUrl: githubUrl || '',
-        projects: projects || [],
-        careerGoals: careerGoals || ''
-      },
+      updatePayload,
       { upsert: true, new: true }
     );
 
@@ -3178,6 +3508,253 @@ router.post('/feature-requests', requireAuth, async (req, res) => {
 
     await request.save();
     res.json({ success: true, message: 'Submitted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ====================================================
+// SESSION MANAGEMENT ROUTES
+// ====================================================
+
+// 1. GET /api/auth/sessions - List active sessions for user
+router.get('/auth/sessions', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const currentSessionId = req.user.sessionId;
+    
+    const sessions = await Session.find({ userId }).sort({ lastActiveAt: -1 });
+    
+    const mappedSessions = sessions.map(sess => {
+      const sessObj = sess.toObject();
+      sessObj.isCurrentDevice = sess.sessionId === currentSessionId;
+      return sessObj;
+    });
+    
+    res.json({ success: true, sessions: mappedSessions });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 2. POST /api/auth/sessions/:sessionId/revoke - Revoke a specific session
+router.post('/auth/sessions/:sessionId/revoke', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { sessionId } = req.params;
+    
+    // Revoke by deleting the session
+    const result = await Session.deleteOne({ sessionId, userId });
+    
+    // Log security event
+    await SecurityLog.create({
+      userId,
+      email: req.user.email,
+      event: 'session_revocation',
+      status: result.deletedCount > 0 ? 'success' : 'failure',
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '',
+      userAgent: req.headers['user-agent'] || '',
+      details: { revokedSessionId: sessionId }
+    });
+
+    res.json({ success: true, message: 'Session revoked successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. POST /api/auth/sessions/revoke-all - Revoke all other sessions
+router.post('/auth/sessions/revoke-all', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const currentSessionId = req.user.sessionId;
+    
+    const result = await Session.deleteMany({
+      userId,
+      sessionId: { $ne: currentSessionId }
+    });
+    
+    // Log security event
+    await SecurityLog.create({
+      userId,
+      email: req.user.email,
+      event: 'all_sessions_revocation',
+      status: 'success',
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '',
+      userAgent: req.headers['user-agent'] || '',
+      details: { count: result.deletedCount }
+    });
+
+    res.json({ success: true, message: `Successfully revoked ${result.deletedCount} other sessions` });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+// ====================================================
+// ADMIN MODERATION & COLLEGE DOMAIN MANAGEMENT
+// ====================================================
+
+// 1. GET /api/admin/alumni-verifications - Get pending alumni verifications
+router.get('/admin/alumni-verifications', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    
+    const verifications = await AlumniVerification.find({}).sort({ createdAt: -1 });
+    res.json({ success: true, data: verifications });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 2. POST /api/admin/alumni-verifications/:id/approve - Approve alumni
+router.post('/api/admin/alumni-verifications/:id/approve', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    
+    const verification = await AlumniVerification.findById(req.params.id);
+    if (!verification) {
+      return res.status(404).json({ success: false, error: 'Verification record not found' });
+    }
+    
+    verification.status = 'approved';
+    verification.verifiedAt = new Date();
+    verification.verifiedBy = req.user.email || 'admin';
+    await verification.save();
+    
+    // Update alumni profile
+    await Alumni.findOneAndUpdate(
+      { userId: verification.userId },
+      { approvalStatus: 'approved' }
+    );
+    
+    // Log security event
+    await SecurityLog.create({
+      userId: req.user.userId,
+      email: req.user.email,
+      event: 'alumni_approve',
+      status: 'success',
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '',
+      userAgent: req.headers['user-agent'] || '',
+      details: { approvedUserId: verification.userId, approvedUserEmail: verification.email }
+    });
+
+    res.json({ success: true, message: 'Alumni verification approved successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. POST /api/admin/alumni-verifications/:id/reject - Reject alumni
+router.post('/api/admin/alumni-verifications/:id/reject', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    
+    const verification = await AlumniVerification.findById(req.params.id);
+    if (!verification) {
+      return res.status(404).json({ success: false, error: 'Verification record not found' });
+    }
+    
+    verification.status = 'rejected';
+    verification.verifiedAt = new Date();
+    verification.verifiedBy = req.user.email || 'admin';
+    await verification.save();
+    
+    // Update alumni profile
+    await Alumni.findOneAndUpdate(
+      { userId: verification.userId },
+      { approvalStatus: 'rejected' }
+    );
+    
+    // Log security event
+    await SecurityLog.create({
+      userId: req.user.userId,
+      email: req.user.email,
+      event: 'alumni_reject',
+      status: 'success',
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '',
+      userAgent: req.headers['user-agent'] || '',
+      details: { rejectedUserId: verification.userId, rejectedUserEmail: verification.email }
+    });
+
+    res.json({ success: true, message: 'Alumni verification rejected' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4. GET /api/admin/security-logs - Get security events audit log
+router.get('/admin/security-logs', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    
+    const logs = await SecurityLog.find({}).sort({ createdAt: -1 }).limit(100);
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 5. GET /api/admin/colleges - List allowed colleges
+router.get('/admin/colleges', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    
+    const colleges = await CollegeDomain.find({}).sort({ name: 1 });
+    res.json({ success: true, data: colleges });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 6. POST /api/admin/colleges - Add a new allowed college domain
+router.post('/admin/colleges', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    
+    const { name, domain } = req.body;
+    if (!name || !domain) {
+      return res.status(400).json({ success: false, error: 'College Name and Domain are required' });
+    }
+    
+    const normalizedDomain = domain.toLowerCase().trim();
+    
+    const existing = await CollegeDomain.findOne({ domain: normalizedDomain });
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'This domain registry entry already exists' });
+    }
+    
+    const newCollege = new CollegeDomain({
+      name: name.trim(),
+      domain: normalizedDomain
+    });
+    await newCollege.save();
+    
+    // Log security event
+    await SecurityLog.create({
+      userId: req.user.userId,
+      email: req.user.email,
+      event: 'add_college_domain',
+      status: 'success',
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '',
+      userAgent: req.headers['user-agent'] || '',
+      details: { collegeName: name, domain: normalizedDomain }
+    });
+
+    res.json({ success: true, message: 'College domain added successfully', data: newCollege });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

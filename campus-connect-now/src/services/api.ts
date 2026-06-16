@@ -82,6 +82,116 @@ export const authApi = {
     localStorage.removeItem('auth_token');
     return { success: true };
   },
+
+  async getActiveSessions() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/sessions`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch active sessions' };
+    }
+  },
+
+  async revokeSession(sessionId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/sessions/${sessionId}/revoke`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to revoke session' };
+    }
+  },
+
+  async revokeAllOtherSessions() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/sessions/revoke-all`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to revoke other sessions' };
+    }
+  }
+};
+
+// ============================================
+// ADMIN ENDPOINTS
+// ============================================
+export const adminApi = {
+  async getAlumniVerifications() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/alumni-verifications`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch alumni verifications' };
+    }
+  },
+
+  async approveAlumni(id: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/alumni-verifications/${id}/approve`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to approve alumni' };
+    }
+  },
+
+  async rejectAlumni(id: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/alumni-verifications/${id}/reject`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to reject alumni' };
+    }
+  },
+
+  async getSecurityLogs() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/security-logs`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch security logs' };
+    }
+  },
+
+  async getColleges() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/colleges`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch colleges' };
+    }
+  },
+
+  async addCollege(name: string, domain: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/colleges`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ name, domain })
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to add college' };
+    }
+  }
 };
 
 // ============================================

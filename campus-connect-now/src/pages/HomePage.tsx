@@ -204,7 +204,6 @@ export default function HomePage() {
             { id: 'all', label: 'All Board' },
             { id: 'announcement', label: 'Announcements' },
             { id: 'placement', label: 'Placements' },
-            { id: 'internship', label: 'Internships' },
             { id: 'event', label: 'Events' },
             { id: 'notice', label: 'Notices' },
           ].map((cat) => (
@@ -255,6 +254,8 @@ export default function HomePage() {
               </div>
             )}
 
+
+
             {/* 2. PLACEMENT UPDATES */}
             {placementUpdates.length > 0 && (
               <div className="space-y-3.5">
@@ -264,21 +265,6 @@ export default function HomePage() {
                 </div>
                 <div className="space-y-4">
                   {placementUpdates.map((ann) => (
-                    <CommunicationCard key={ann.id} ann={ann} getBadgeClass={getCategoryBadgeClass} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 3. INTERNSHIP OPPORTUNITIES */}
-            {internshipOpportunities.length > 0 && (
-              <div className="space-y-3.5">
-                <div className="flex items-center gap-1.5">
-                  <BookOpen className="h-4 w-4 text-emerald-400" />
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400">Internships</h3>
-                </div>
-                <div className="space-y-4">
-                  {internshipOpportunities.map((ann) => (
                     <CommunicationCard key={ann.id} ann={ann} getBadgeClass={getCategoryBadgeClass} />
                   ))}
                 </div>

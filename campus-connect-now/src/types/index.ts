@@ -172,6 +172,8 @@ export interface ProfileSetupData {
   githubUrl?: string;
   projects?: string[];
   careerGoals?: string;
+  onboardingCompleted?: boolean;
+  onboardingStep?: number;
 }
 
 /**

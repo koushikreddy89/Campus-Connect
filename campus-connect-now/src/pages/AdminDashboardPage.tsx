@@ -9,10 +9,11 @@ import {
   Shield, Plus, Trash2, LogOut, Calendar, Users, Bell,
   Image as ImageIcon, X, Megaphone, BarChart3, Briefcase,
   AlertTriangle, CheckCircle, LifeBuoy, MessageSquare,
-  Clock, Check, Eye
+  Clock, Check, Eye, Globe
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
+import { adminApi } from '@/services/api';
 
 const CATEGORIES: { key: any; label: string; icon: any }[] = [
   { key: 'announcement', label: 'Announcement', icon: Megaphone },
@@ -34,7 +35,7 @@ export default function AdminDashboardPage() {
   const createAnnouncement = useAnnouncementStore(s => s.createAnnouncement);
   const deleteAnnouncement = useAnnouncementStore(s => s.deleteAnnouncement);
 
-  const [activeAdminTab, setActiveAdminTab] = useState<'announcements' | 'reports' | 'tickets'>('announcements');
+  const [activeAdminTab, setActiveAdminTab] = useState<'announcements' | 'reports' | 'tickets' | 'alumni' | 'colleges' | 'logs'>('announcements');
 
   // Announcement Form State
   const [showForm, setShowForm] = useState(false);
@@ -57,6 +58,21 @@ export default function AdminDashboardPage() {
   const [replyText, setReplyText] = useState('');
   const [replyTicketId, setReplyTicketId] = useState<string | null>(null);
   const [replyStatus, setReplyStatus] = useState<string>('Resolved');
+
+  // Alumni Verifications State
+  const [alumniVerifications, setAlumniVerifications] = useState<any[]>([]);
+  const [alumniLoading, setAlumniLoading] = useState(false);
+
+  // College Domains State
+  const [colleges, setColleges] = useState<any[]>([]);
+  const [collegesLoading, setCollegesLoading] = useState(false);
+  const [newCollegeName, setNewCollegeName] = useState('');
+  const [newCollegeDomain, setNewCollegeDomain] = useState('');
+  const [isAddingCollege, setIsAddingCollege] = useState(false);
+
+  // Security Logs State
+  const [securityLogs, setSecurityLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   // Protect admin route
   useEffect(() => {
@@ -110,13 +126,113 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const loadAlumniVerifications = async () => {
+    setAlumniLoading(true);
+    try {
+      const res = await adminApi.getAlumniVerifications();
+      if (res.success) {
+        setAlumniVerifications(res.data);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load alumni verifications');
+    } finally {
+      setAlumniLoading(false);
+    }
+  };
+
+  const loadColleges = async () => {
+    setCollegesLoading(true);
+    try {
+      const res = await adminApi.getColleges();
+      if (res.success) {
+        setColleges(res.data);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load colleges');
+    } finally {
+      setCollegesLoading(false);
+    }
+  };
+
+  const loadSecurityLogs = async () => {
+    setLogsLoading(true);
+    try {
+      const res = await adminApi.getSecurityLogs();
+      if (res.success) {
+        setSecurityLogs(res.data);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load security logs');
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeAdminTab === 'reports') {
       loadReports();
     } else if (activeAdminTab === 'tickets') {
       loadTickets();
+    } else if (activeAdminTab === 'alumni') {
+      loadAlumniVerifications();
+    } else if (activeAdminTab === 'colleges') {
+      loadColleges();
+    } else if (activeAdminTab === 'logs') {
+      loadSecurityLogs();
     }
   }, [activeAdminTab]);
+
+  const handleApproveAlumni = async (id: string) => {
+    try {
+      const res = await adminApi.approveAlumni(id);
+      if (res.success) {
+        toast.success('Alumni registration approved');
+        loadAlumniVerifications();
+      } else {
+        toast.error(res.error || 'Failed to approve');
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Error approving alumni');
+    }
+  };
+
+  const handleRejectAlumni = async (id: string) => {
+    try {
+      const res = await adminApi.rejectAlumni(id);
+      if (res.success) {
+        toast.success('Alumni registration rejected');
+        loadAlumniVerifications();
+      } else {
+        toast.error(res.error || 'Failed to reject');
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Error rejecting alumni');
+    }
+  };
+
+  const handleAddCollege = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCollegeName.trim() || !newCollegeDomain.trim()) return;
+    setIsAddingCollege(true);
+    try {
+      const res = await adminApi.addCollege(newCollegeName.trim(), newCollegeDomain.trim());
+      if (res.success) {
+        toast.success('College domain added successfully');
+        setNewCollegeName('');
+        setNewCollegeDomain('');
+        loadColleges();
+      } else {
+        toast.error(res.error || 'Failed to add college domain');
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Error adding college');
+    } finally {
+      setIsAddingCollege(false);
+    }
+  };
 
   const handleResolveReport = async (reportId: string, action: 'suspend' | 'dismiss') => {
     try {
@@ -248,26 +364,50 @@ export default function AdminDashboardPage() {
 
       {/* Tabs */}
       <div className="px-5 my-5">
-        <div className="flex bg-secondary/40 border border-white/5 p-1 rounded-2xl gap-1">
+        <div className="flex bg-secondary/40 border border-white/5 p-1 rounded-2xl gap-1 overflow-x-auto whitespace-nowrap scrollbar-none">
           <button
             onClick={() => setActiveAdminTab('announcements')}
-            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+            className={`flex-1 min-w-[100px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
               activeAdminTab === 'announcements' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <Megaphone className="h-3.5 w-3.5" /> Broadcasts
           </button>
           <button
+            onClick={() => setActiveAdminTab('alumni')}
+            className={`flex-1 min-w-[130px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'alumni' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Users className="h-3.5 w-3.5" /> Alumni Approvals
+          </button>
+          <button
+            onClick={() => setActiveAdminTab('colleges')}
+            className={`flex-1 min-w-[130px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'colleges' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Globe className="h-3.5 w-3.5" /> Domains Registry
+          </button>
+          <button
+            onClick={() => setActiveAdminTab('logs')}
+            className={`flex-1 min-w-[120px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'logs' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Shield className="h-3.5 w-3.5" /> Security Logs
+          </button>
+          <button
             onClick={() => setActiveAdminTab('reports')}
-            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+            className={`flex-1 min-w-[100px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
               activeAdminTab === 'reports' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <AlertTriangle className="h-3.5 w-3.5" /> Moderation Reports
+            <AlertTriangle className="h-3.5 w-3.5" /> Reports
           </button>
           <button
             onClick={() => setActiveAdminTab('tickets')}
-            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+            className={`flex-1 min-w-[100px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
               activeAdminTab === 'tickets' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -418,6 +558,204 @@ export default function AdminDashboardPage() {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+
+        {/* Alumni approvals tab */}
+        {activeAdminTab === 'alumni' && (
+          <motion.div
+            key="alumni"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="px-5 space-y-4"
+          >
+            <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+              <Users className="h-3.5 w-3.5 text-primary" /> Pending Alumni Verifications ({alumniVerifications.filter(v => v.status === 'pending').length})
+            </h2>
+
+            {alumniLoading ? (
+              <div className="flex justify-center py-12">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            ) : alumniVerifications.length === 0 ? (
+              <div className="glass-card p-10 text-center text-muted-foreground text-xs italic">
+                No alumni verification records found.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {alumniVerifications.map((verification) => (
+                  <div key={verification._id} className="glass-card p-5 space-y-4 border border-white/5 relative">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                            verification.status === 'approved' ? 'bg-green-500/10 text-green-400' :
+                            verification.status === 'rejected' ? 'bg-red-500/10 text-red-400' :
+                            'bg-amber-500/10 text-amber-400'
+                          }`}>
+                            {verification.status}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Class of {verification.batch} • Roll: {verification.rollNumber}</span>
+                        </div>
+                        <h3 className="text-xs font-bold mt-2 text-foreground">{verification.name}</h3>
+                        <p className="text-[10px] text-muted-foreground">{verification.email}</p>
+                      </div>
+
+                      {verification.status === 'pending' && (
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => handleRejectAlumni(verification._id)}
+                            variant="outline"
+                            className="border-red-500/20 hover:bg-red-500/10 text-red-400 h-8 px-3 rounded-lg text-[10px] font-bold"
+                          >
+                            Reject
+                          </Button>
+                          <Button
+                            onClick={() => handleApproveAlumni(verification._id)}
+                            className="bg-green-600 hover:bg-green-500 text-white h-8 px-3 rounded-lg text-[10px] font-bold"
+                          >
+                            Approve
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* College registry domains tab */}
+        {activeAdminTab === 'colleges' && (
+          <motion.div
+            key="colleges"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="px-5 space-y-5"
+          >
+            {/* Add college domain form */}
+            <form onSubmit={handleAddCollege} className="glass-card p-5 space-y-4">
+              <h3 className="text-xs font-semibold text-foreground">Register New College Domain</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  value={newCollegeName}
+                  onChange={e => setNewCollegeName(e.target.value)}
+                  placeholder="College Name (e.g. Stanford University)"
+                  required
+                  className="bg-secondary border border-white/10 rounded-xl px-4 py-2.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <input
+                  value={newCollegeDomain}
+                  onChange={e => setNewCollegeDomain(e.target.value)}
+                  placeholder="Domain (e.g. stanford.edu)"
+                  required
+                  className="bg-secondary border border-white/10 rounded-xl px-4 py-2.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={isAddingCollege || !newCollegeName.trim() || !newCollegeDomain.trim()}
+                className="w-full gradient-primary rounded-xl h-10 text-xs font-semibold glow-primary"
+              >
+                {isAddingCollege ? 'Adding Domain...' : 'Register Domain'}
+              </Button>
+            </form>
+
+            {/* Allowed colleges list */}
+            <div>
+              <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+                <Globe className="h-3.5 w-3.5 text-primary" /> Allowed Domains ({colleges.length})
+              </h2>
+
+              {collegesLoading ? (
+                <div className="flex justify-center py-12">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
+              ) : colleges.length === 0 ? (
+                <div className="glass-card p-10 text-center text-muted-foreground text-xs italic">
+                  No colleges registered yet.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {colleges.map((collegeItem) => (
+                    <div key={collegeItem._id} className="glass-card p-4 flex items-center justify-between border border-white/5">
+                      <div>
+                        <h4 className="text-xs font-bold text-foreground">{collegeItem.name}</h4>
+                        <span className="text-[10px] text-primary font-semibold">{collegeItem.domain}</span>
+                      </div>
+                      <span className="text-[9px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Approved</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Security Logs tab */}
+        {activeAdminTab === 'logs' && (
+          <motion.div
+            key="logs"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="px-5 space-y-4"
+          >
+            <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+              <Shield className="h-3.5 w-3.5 text-primary" /> System Security & Audit Log
+            </h2>
+
+            {logsLoading ? (
+              <div className="flex justify-center py-12">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            ) : securityLogs.length === 0 ? (
+              <div className="glass-card p-10 text-center text-muted-foreground text-xs italic">
+                No security events logged.
+              </div>
+            ) : (
+              <div className="glass-card overflow-hidden border border-white/5">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-secondary/40 border-b border-white/5 text-[10px] text-muted-foreground font-bold uppercase tracking-wider font-semibold">
+                        <th className="p-3">Time</th>
+                        <th className="p-3">User/Email</th>
+                        <th className="p-3">Event</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">IP Address</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {securityLogs.map((log) => (
+                        <tr key={log._id} className="hover:bg-secondary/20 transition-colors">
+                          <td className="p-3 text-[10px] whitespace-nowrap text-muted-foreground">
+                            {new Date(log.createdAt).toLocaleString()}
+                          </td>
+                          <td className="p-3">
+                            <span className="font-semibold text-foreground">{log.email || log.userId || 'system'}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className="text-[10px] bg-secondary px-2 py-0.5 rounded-full font-medium text-foreground/80">{log.event}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className={`text-[9px] font-bold uppercase ${log.status === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+                              {log.status}
+                            </span>
+                          </td>
+                          <td className="p-3 font-mono text-[10px] text-muted-foreground">
+                            {log.ipAddress || 'unknown'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
 

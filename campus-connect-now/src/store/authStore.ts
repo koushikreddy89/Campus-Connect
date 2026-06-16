@@ -19,9 +19,13 @@ interface AuthState {
   role: UserRole;
   college: string | null;
   otpRequest: AbortController | null;
+  activeSessions: any[];
   sendOtp: (email: string) => Promise<void>;
   verifyAlumni: (personalEmail: string, rollNumber: string, batch: string) => Promise<boolean>;
   verifyOtp: (code: string) => Promise<void>;
+  fetchActiveSessions: () => Promise<void>;
+  revokeSession: (sessionId: string) => Promise<void>;
+  revokeAllOtherSessions: () => Promise<void>;
   logout: () => void;
   cancelOtpRequest: () => void;
   setProfileComplete: (v: boolean) => void;
@@ -44,6 +48,7 @@ export const useAuthStore = create<AuthState>()(
       role: 'student' as UserRole,
       college: null,
       otpRequest: null,
+      activeSessions: [],
 
       cancelOtpRequest: () => {
         const state = get();
@@ -174,6 +179,56 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
+      fetchActiveSessions: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.getActiveSessions();
+          if (res.success && res.sessions) {
+            set({ activeSessions: res.sessions, isLoading: false });
+          } else {
+            set({ error: res.error || res.message || 'Failed to fetch active sessions', isLoading: false });
+          }
+        } catch (error: any) {
+          set({ error: error?.message || 'Failed to fetch active sessions', isLoading: false });
+        }
+      },
+
+      revokeSession: async (sessionId: string) => {
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.revokeSession(sessionId);
+          if (res.success) {
+            const currentSessions = get().activeSessions;
+            set({
+              activeSessions: currentSessions.filter((s: any) => s.sessionId !== sessionId),
+              isLoading: false
+            });
+          } else {
+            set({ error: res.error || res.message || 'Failed to revoke session', isLoading: false });
+          }
+        } catch (error: any) {
+          set({ error: error?.message || 'Failed to revoke session', isLoading: false });
+        }
+      },
+
+      revokeAllOtherSessions: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.revokeAllOtherSessions();
+          if (res.success) {
+            const currentSessions = get().activeSessions;
+            set({
+              activeSessions: currentSessions.filter((s: any) => s.isCurrentDevice),
+              isLoading: false
+            });
+          } else {
+            set({ error: res.error || res.message || 'Failed to revoke other sessions', isLoading: false });
+          }
+        } catch (error: any) {
+          set({ error: error?.message || 'Failed to revoke other sessions', isLoading: false });
+        }
+      },
+
 
 
       logout: async () => {
@@ -216,6 +271,7 @@ export const useAuthStore = create<AuthState>()(
             role: 'student', 
             college: null,
             isLoading: false,
+            activeSessions: [],
           });
           console.log('✅ [Auth] Auth state cleared');
           console.log('✅ [Auth] User data cleared successfully');
@@ -228,6 +284,7 @@ export const useAuthStore = create<AuthState>()(
             uid: null,
             isAuthenticated: false,
             isLoading: false,
+            activeSessions: [],
           });
         }
       },

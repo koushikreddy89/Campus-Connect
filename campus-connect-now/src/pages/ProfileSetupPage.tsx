@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useProfileStore } from '@/store/profileStore';
@@ -32,16 +32,43 @@ export default function ProfileSetupPage() {
   const steps = role === 'alumni' ? ALUMNI_STEPS : STUDENT_STEPS;
   const isAlumni = role === 'alumni';
 
-  const handleFinish = async () => {
-    await saveProfile();
-    setProfileComplete(true);
+  // Load saved onboarding step on mount
+  useEffect(() => {
+    if (profile && profile.onboardingStep) {
+      const targetStep = Math.max(0, Math.min(profile.onboardingStep - 1, steps.length - 1));
+      setStep(targetStep);
+      console.log('🔄 [ProfileSetup] Resuming onboarding from step:', targetStep);
+    }
+  }, [profile?.onboardingStep, steps.length]);
+
+  const handleStepChange = async (nextStepIndex: number) => {
+    const updatedStepNumber = nextStepIndex + 1; // 1-indexed for database
+    setStep(nextStepIndex);
+    updateProfile({ onboardingStep: updatedStepNumber });
+    try {
+      await saveProfile({ onboardingStep: updatedStepNumber });
+      console.log('💾 [ProfileSetup] Saved step progress in DB:', updatedStepNumber);
+    } catch (e) {
+      console.error('❌ [ProfileSetup] Failed to save step progress:', e);
+    }
   };
 
-  const handleSkip = () => {
+  const handleFinish = async () => {
+    updateProfile({ onboardingCompleted: true });
+    try {
+      await saveProfile({ onboardingCompleted: true });
+      setProfileComplete(true);
+      console.log('🎉 [ProfileSetup] Onboarding complete persisted');
+    } catch (e) {
+      console.error('❌ [ProfileSetup] Failed to save complete onboarding:', e);
+    }
+  };
+
+  const handleSkip = async () => {
     if (step < steps.length - 1) {
-      setStep(step + 1);
+      await handleStepChange(step + 1);
     } else {
-      handleFinish();
+      await handleFinish();
     }
   };
 
@@ -245,13 +272,13 @@ export default function ProfileSetupPage() {
 
         <div className="flex gap-3 mt-8">
           {step > 0 && (
-            <Button variant="outline" onClick={() => setStep(step - 1)} className="flex-1 rounded-2xl h-12 border-border">
+            <Button variant="outline" onClick={() => handleStepChange(step - 1)} className="flex-1 rounded-2xl h-12 border-border">
               Back
             </Button>
           )}
           {step < steps.length - 1 ? (
             <Button
-              onClick={() => setStep(step + 1)}
+              onClick={() => handleStepChange(step + 1)}
               disabled={!canProceed()}
               className="flex-1 gradient-primary rounded-2xl h-12 font-semibold disabled:opacity-50"
             >

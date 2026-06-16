@@ -43,6 +43,8 @@ export interface AlumniProfile {
   // Timestamps
   createdAt: string;
   updatedAt: string;
+  onboardingCompleted?: boolean;
+  onboardingStep?: number;
 }
 
 export interface AlumniPost {
@@ -201,6 +203,8 @@ export interface CreateAlumniProfileInput {
   portfolioUrl?: string;
   profileImageUrl?: string;
   galleryImages?: string[];
+  onboardingCompleted?: boolean;
+  onboardingStep?: number;
 }
 
 export interface UpdateAlumniProfileInput extends Partial<CreateAlumniProfileInput> {}

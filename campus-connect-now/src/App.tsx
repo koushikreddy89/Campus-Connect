@@ -82,6 +82,10 @@ const PrivacySafetyPage = lazy(() => import("./pages/PrivacySafetyPage.tsx").cat
   console.error('[Lazy Load Error] PrivacySafetyPage:', err);
   throw err;
 }));
+const SecuritySettings = lazy(() => import("./pages/SecuritySettings.tsx").catch(err => {
+  console.error('[Lazy Load Error] SecuritySettings:', err);
+  throw err;
+}));
 const HelpSupportPage = lazy(() => import("./pages/HelpSupportPage.tsx").catch(err => {
   console.error('[Lazy Load Error] HelpSupportPage:', err);
   throw err;
@@ -152,8 +156,12 @@ const PageLoader = () => (
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
+  const isProfileComplete = useAuthStore(s => s.isProfileComplete);
   const role = useAuthStore(s => s.role);
   if (!isAuthenticated) return <Navigate to="/" replace />;
+  
+  // If onboarding is not complete, redirect to /setup
+  if (!isProfileComplete) return <Navigate to="/setup" replace />;
   
   // If user is alumni or admin, they shouldn't access standard student routes (/home, /feed, etc.)
   if (role === 'alumni') return <Navigate to="/alumni/dashboard" replace />;
@@ -175,8 +183,13 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
 
 const AlumniRoute = ({ children }: { children: React.ReactNode }) => {
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
+  const isProfileComplete = useAuthStore(s => s.isProfileComplete);
   const role = useAuthStore(s => s.role);
   if (!isAuthenticated) return <Navigate to="/" replace />;
+  
+  // If onboarding is not complete, redirect to /setup
+  if (!isProfileComplete) return <Navigate to="/setup" replace />;
+  
   if (role !== 'alumni') {
     if (role === 'admin') return <Navigate to="/admin" replace />;
     return <Navigate to="/student/dashboard" replace />;
@@ -185,6 +198,14 @@ const AlumniRoute = ({ children }: { children: React.ReactNode }) => {
 };
 
 const AuthOnlyRoute = ({ children }: { children: React.ReactNode }) => {
+  const isAuthenticated = useAuthStore(s => s.isAuthenticated);
+  const isProfileComplete = useAuthStore(s => s.isProfileComplete);
+  if (!isAuthenticated) return <Navigate to="/" replace />;
+  if (!isProfileComplete) return <Navigate to="/setup" replace />;
+  return <>{children}</>;
+};
+
+const SetupRoute = ({ children }: { children: React.ReactNode }) => {
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   if (!isAuthenticated) return <Navigate to="/" replace />;
   return <>{children}</>;
@@ -247,14 +268,22 @@ const App = () => {
         try {
           if (state.role === 'alumni') {
             // Verify Alumni profile exists in MongoDB
-            const collegeName = state.college || 'MIT';
+            const collegeName = state.college || 'SR University';
             const alumniProfile = await alumniProfileService.getMyProfile(collegeName);
+            const exists = !!alumniProfile;
+            const onboardingCompleted = exists && alumniProfile.onboardingCompleted === true;
             
             useAuthStore.setState({
-              isNewUser: !alumniProfile,
-              isProfileComplete: !!alumniProfile,
+              isNewUser: !exists,
+              isProfileComplete: onboardingCompleted,
               role: 'alumni',
             });
+
+            if (exists) {
+              await useProfileStore.getState().loadProfile(state.uid);
+            } else {
+              useProfileStore.getState().resetProfile();
+            }
           } else if (state.role === 'admin') {
             // Verify Admin
             useAuthStore.setState({
@@ -266,12 +295,12 @@ const App = () => {
             // Student user - retrieve details from MongoDB backend
             const res = await userApi.getUserById(state.uid);
             const exists = res.success && !!res.data;
-            const isProfileComplete = exists && !!res.data.name;
+            const onboardingCompleted = exists && res.data.onboardingCompleted === true;
             const userRole = (exists && res.data.role) || 'student';
             
             useAuthStore.setState({
               isNewUser: !exists,
-              isProfileComplete,
+              isProfileComplete: onboardingCompleted,
               role: userRole === 'alumni' || userRole === 'admin' ? userRole : 'student',
             });
 
@@ -366,9 +395,14 @@ const App = () => {
                   path="/setup"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute>
-                        {isProfileComplete ? <Navigate to="/student/dashboard" replace /> : <ProfileSetupPage />}
-                      </ProtectedRoute>
+                      <SetupRoute>
+                        {isProfileComplete 
+                          ? role === 'alumni' 
+                            ? <Navigate to="/alumni/dashboard" replace /> 
+                            : <Navigate to="/student/dashboard" replace />
+                          : <ProfileSetupPage />
+                        }
+                      </SetupRoute>
                     </Suspense>
                   }
                 />
@@ -471,6 +505,14 @@ const App = () => {
                   element={
                     <Suspense fallback={<PageLoader />}>
                       <AuthOnlyRoute><PrivacySafetyPage /></AuthOnlyRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/settings/security"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <AuthOnlyRoute><SecuritySettings /></AuthOnlyRoute>
                     </Suspense>
                   }
                 />

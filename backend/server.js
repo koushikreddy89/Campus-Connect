@@ -30,6 +30,40 @@ mongoose.connect(MONGODB_URI)
   .then(async () => {
     console.log('✅ Connected to MongoDB');
     
+    // Auto-seed college domains
+    try {
+      const { CollegeDomain } = require('./models');
+      const domainCount = await CollegeDomain.countDocuments();
+      if (domainCount === 0) {
+        console.log('🌱 [Seeding] Seeding college domains from colleges.json...');
+        const path = require('path');
+        const fs = require('fs');
+        const collegesJsonPath = path.join(__dirname, '../campus-connect-now/public/data/colleges.json');
+        
+        if (fs.existsSync(collegesJsonPath)) {
+          const collegesData = JSON.parse(fs.readFileSync(collegesJsonPath, 'utf8'));
+          if (collegesData && Array.isArray(collegesData.colleges)) {
+            const recordsToInsert = collegesData.colleges.map(c => ({
+              name: c.name,
+              domain: c.domain.toLowerCase().trim()
+            }));
+            
+            // Also ensure SR University is included!
+            if (!recordsToInsert.some(r => r.domain === 'sru.edu.in')) {
+              recordsToInsert.push({ name: 'SR University', domain: 'sru.edu.in' });
+            }
+
+            await CollegeDomain.insertMany(recordsToInsert, { ordered: false }).catch(() => {});
+            console.log(`✅ [Seeding] Successfully seeded ${recordsToInsert.length} college domains`);
+          }
+        } else {
+          console.warn('⚠️ [Seeding] colleges.json not found at:', collegesJsonPath);
+        }
+      }
+    } catch (seedError) {
+      console.error('❌ [Seeding] Failed to seed college domains:', seedError.message);
+    }
+
     // Auto-migrate legacy 'MIT' college references to 'SR University'
     try {
       const { User, Alumni, AdminPost } = require('./models');

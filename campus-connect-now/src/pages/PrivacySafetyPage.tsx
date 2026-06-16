@@ -313,47 +313,22 @@ export default function PrivacySafetyPage() {
               <Laptop className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold">Active Sessions</h2>
+              <h2 className="text-sm font-semibold">Session Management</h2>
               <p className="text-[11px] text-muted-foreground">Devices currently logged into your account</p>
             </div>
           </div>
+          
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            You can view all devices currently logged into your Campus Connect account and revoke any active sessions.
+          </p>
 
-          <div className="space-y-3">
-            {/* Current Session */}
-            <div className="flex items-start justify-between p-3 bg-secondary/40 border border-white/5 rounded-xl">
-              <div className="flex gap-3">
-                <Laptop className="h-5 w-5 text-primary mt-0.5" />
-                <div className="flex flex-col">
-                  <span className="text-xs font-semibold">Chrome on Windows OS</span>
-                  <span className="text-[10px] text-muted-foreground">Active now • Hyderabad, India</span>
-                </div>
-              </div>
-              <span className="text-[9px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Current</span>
-            </div>
-
-            {/* Other Sessions */}
-            {otherSessions.map(sess => (
-              <div key={sess.id} className="flex items-start justify-between p-3 bg-secondary/40 border border-white/5 rounded-xl">
-                <div className="flex gap-3">
-                  <Smartphone className="h-5 w-5 text-muted-foreground mt-0.5" />
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold">{sess.device}</span>
-                    <span className="text-[10px] text-muted-foreground">{sess.time} • {sess.location}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {otherSessions.length > 0 && (
-            <Button
-              onClick={handleLogoutOthers}
-              variant="outline"
-              className="w-full bg-red-600/10 border border-red-600/20 hover:bg-red-600/20 text-red-400 rounded-xl h-11 text-xs font-semibold mt-2"
-            >
-              Logout of all other devices
-            </Button>
-          )}
+          <Button
+            onClick={() => navigate('/settings/security')}
+            variant="outline"
+            className="w-full flex items-center justify-center gap-2 border-white/10 bg-white/5 hover:bg-white/10 rounded-xl h-11 text-xs font-semibold"
+          >
+            <Shield className="h-4 w-4 text-primary" /> View & Manage Sessions
+          </Button>
         </div>
       </div>
     </div>

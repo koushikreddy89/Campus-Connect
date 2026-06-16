@@ -12,7 +12,7 @@ const ExperienceSchema = new mongoose.Schema({
 // Alumni Schema
 const AlumniSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
-  email: { type: String, required: true },
+  email: { type: String, required: true, index: true },
   name: { type: String, required: true },
   batch: { type: String, required: true },
   department: { type: String, required: true },
@@ -28,7 +28,7 @@ const AlumniSchema = new mongoose.Schema({
   location: { type: String, default: 'San Francisco, CA' },
   linkedinUrl: { type: String, default: '' },
   portfolioUrl: { type: String, default: '' },
-  approvalStatus: { type: String, default: 'approved' },
+  approvalStatus: { type: String, default: 'approved', index: true },
   isFeatured: { type: Boolean, default: false },
   viewCount: { type: Number, default: 0 },
   profileViewers: { type: [String], default: [] },
@@ -60,7 +60,9 @@ const AlumniSchema = new mongoose.Schema({
   showAchievements: { type: Boolean, default: true },
   referralAlerts: { type: Boolean, default: true },
   messageAlerts: { type: Boolean, default: true },
-  isSuspended: { type: Boolean, default: false }
+  isSuspended: { type: Boolean, default: false },
+  onboardingCompleted: { type: Boolean, default: false },
+  onboardingStep: { type: Number, default: 1 }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // Post Schema
@@ -247,7 +249,7 @@ module.exports = {
   // Student Networking collections
   User: mongoose.model('User', new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
-    email: { type: String, required: true },
+    email: { type: String, required: true, index: true },
     name: { type: String, default: '' },
     role: { type: String, default: 'student' },
     department: { type: String, default: '' },
@@ -260,8 +262,8 @@ module.exports = {
     profileImageUrl: { type: String, default: '' },
     college: { type: String, default: '' },
     photos: { type: [String], default: [] },
-    collegeEmail: { type: String, default: '' },
-    personalEmail: { type: String, default: '' },
+    collegeEmail: { type: String, default: '', index: true },
+    personalEmail: { type: String, default: '', index: true },
     rollNumber: { type: String, default: '' },
     linkedinUrl: { type: String, default: '' },
     githubUrl: { type: String, default: '' },
@@ -282,7 +284,9 @@ module.exports = {
     showAchievements: { type: Boolean, default: true },
     referralAlerts: { type: Boolean, default: true },
     messageAlerts: { type: Boolean, default: true },
-    isSuspended: { type: Boolean, default: false }
+    isSuspended: { type: Boolean, default: false },
+    onboardingCompleted: { type: Boolean, default: false },
+    onboardingStep: { type: Number, default: 1 }
   }, { timestamps: true }), 'users'),
 
   StudentPost: mongoose.model('StudentPost', new mongoose.Schema({
@@ -410,5 +414,71 @@ const FeatureRequestSchema = new mongoose.Schema({
 module.exports.SupportTicket = mongoose.model('SupportTicket', SupportTicketSchema, 'support_tickets');
 module.exports.FAQ = mongoose.model('FAQ', FAQSchema, 'faqs');
 module.exports.FeatureRequest = mongoose.model('FeatureRequest', FeatureRequestSchema, 'feature_requests');
+
+// New schemas for enterprise-grade authentication system
+const CollegeDomainSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  domain: { type: String, required: true, unique: true }
+}, { timestamps: true });
+CollegeDomainSchema.index({ domain: 1 });
+
+const SessionSchema = new mongoose.Schema({
+  sessionId: { type: String, required: true, unique: true },
+  userId: { type: String, required: true },
+  role: { type: String, required: true },
+  userAgent: { type: String, default: '' },
+  ipAddress: { type: String, default: '' },
+  deviceType: { type: String, default: 'desktop' },
+  location: { type: String, default: '' },
+  lastActiveAt: { type: Date, default: Date.now },
+  expiresAt: { type: Date, required: true }
+}, { timestamps: true });
+SessionSchema.index({ sessionId: 1 });
+SessionSchema.index({ userId: 1 });
+SessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // Auto-expire sessions
+
+const LoginAttemptSchema = new mongoose.Schema({
+  email: { type: String, required: true },
+  ipAddress: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  lockUntil: { type: Date },
+  lastAttemptAt: { type: Date, default: Date.now }
+}, { timestamps: true });
+LoginAttemptSchema.index({ email: 1 });
+LoginAttemptSchema.index({ ipAddress: 1 });
+
+const SecurityLogSchema = new mongoose.Schema({
+  userId: { type: String, default: '' },
+  email: { type: String, default: '' },
+  event: { type: String, required: true },
+  status: { type: String, enum: ['success', 'failure'], required: true },
+  ipAddress: { type: String, default: '' },
+  userAgent: { type: String, default: '' },
+  details: { type: mongoose.Schema.Types.Mixed, default: {} }
+}, { timestamps: true });
+SecurityLogSchema.index({ userId: 1 });
+SecurityLogSchema.index({ event: 1 });
+SecurityLogSchema.index({ createdAt: 1 });
+
+const AlumniVerificationSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  email: { type: String, required: true },
+  name: { type: String, default: '' },
+  rollNumber: { type: String, default: '' },
+  batch: { type: String, default: '' },
+  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  method: { type: String, default: 'email' },
+  verifiedAt: { type: Date },
+  verifiedBy: { type: String, default: '' }
+}, { timestamps: true });
+AlumniVerificationSchema.index({ userId: 1 });
+AlumniVerificationSchema.index({ email: 1 });
+AlumniVerificationSchema.index({ status: 1 });
+
+module.exports.CollegeDomain = mongoose.model('CollegeDomain', CollegeDomainSchema, 'college_domains');
+module.exports.Session = mongoose.model('Session', SessionSchema, 'sessions');
+module.exports.LoginAttempt = mongoose.model('LoginAttempt', LoginAttemptSchema, 'login_attempts');
+module.exports.SecurityLog = mongoose.model('SecurityLog', SecurityLogSchema, 'security_logs');
+module.exports.AlumniVerification = mongoose.model('AlumniVerification', AlumniVerificationSchema, 'alumni_verifications');
 
 

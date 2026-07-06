@@ -7,8 +7,23 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/campus-connect';
 
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
+
 // Middleware
-app.use(cors());
+app.use(helmet());
+app.use(cookieParser());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS 
+    ? process.env.ALLOWED_ORIGINS.split(',') 
+    : [
+        'http://localhost:5173', 'http://127.0.0.1:5173',
+        'http://localhost:3000', 'http://127.0.0.1:3000',
+        'http://localhost:8081', 'http://127.0.0.1:8081',
+        'http://localhost:8088', 'http://127.0.0.1:8088'
+      ],
+  credentials: true
+}));
 app.use(express.json());
 
 // Routes

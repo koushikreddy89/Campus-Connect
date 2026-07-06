@@ -24,6 +24,103 @@ function getHeaders(contentType = 'application/json') {
 // ============================================
 
 export const authApi = {
+  async getCaptcha() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/captcha`);
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to get CAPTCHA' };
+    }
+  },
+
+  async register(payload: any) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Registration failed' };
+    }
+  },
+
+  async verifyEmail(email: string, code: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/verify-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Email verification failed' };
+    }
+  },
+
+  async login(payload: any) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success && data.token) {
+        localStorage.setItem('jwt_token', data.token);
+        localStorage.setItem('auth_token', data.token);
+      }
+      return data;
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Login failed' };
+    }
+  },
+
+  async verifyMfa(email: string, code: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/mfa/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await res.json();
+      if (data.success && data.token) {
+        localStorage.setItem('jwt_token', data.token);
+        localStorage.setItem('auth_token', data.token);
+      }
+      return data;
+    } catch (error: any) {
+      return { error: true, message: error.message || 'MFA verification failed' };
+    }
+  },
+
+  async forgotPassword(email: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Forgot password failed' };
+    }
+  },
+
+  async resetPassword(payload: any) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Reset password failed' };
+    }
+  },
+
   async sendOtp(email: string, role: string = 'student') {
     try {
       const res = await fetch(`${getApiUrl()}/api/auth/send-otp`, {
@@ -78,9 +175,27 @@ export const authApi = {
   },
 
   async logout() {
+    try {
+      await fetch(`${getApiUrl()}/api/auth/logout`, {
+        method: 'POST'
+      });
+    } catch (e) {}
     localStorage.removeItem('jwt_token');
     localStorage.removeItem('auth_token');
     return { success: true };
+  },
+
+  async logoutAll() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/auth/logout-all`, {
+        method: 'POST'
+      });
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('auth_token');
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Logout all sessions failed' };
+    }
   },
 
   async getActiveSessions() {
@@ -169,6 +284,36 @@ export const adminApi = {
     }
   },
 
+  async getSecurityMetrics() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/admin/security/metrics`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch security metrics' };
+    }
+  },
+
+  async getSecurityLogsPaged(page = 1, limit = 50, event = '', status = '', search = '') {
+    try {
+      const query = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString()
+      });
+      if (event) query.append('event', event);
+      if (status) query.append('status', status);
+      if (search) query.append('search', search);
+
+      const res = await fetch(`${getApiUrl()}/api/admin/security/logs?${query.toString()}`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch security logs' };
+    }
+  },
+
   async getColleges() {
     try {
       const res = await fetch(`${getApiUrl()}/api/admin/colleges`, {
@@ -224,8 +369,28 @@ export const userApi = {
   async updateProfile(data: any) {
     try {
       const state = useAuthStore.getState();
-      const userId = state.uid;
-      const email = state.email;
+      let userId = state.uid;
+      let email = state.email;
+      if (!userId) {
+        const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+        if (token) {
+          try {
+            const base64Url = token.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+              return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join(''));
+            const decoded = JSON.parse(jsonPayload);
+            if (decoded && decoded.userId) {
+              userId = decoded.userId;
+              email = email || decoded.email;
+              useAuthStore.setState({ uid: userId, email: email, role: decoded.role || state.role });
+            }
+          } catch (e) {
+            console.error('Failed to parse JWT token to recover userId:', e);
+          }
+        }
+      }
       if (!userId) {
         throw new Error('User not authenticated');
       }

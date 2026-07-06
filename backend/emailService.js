@@ -1,74 +1,219 @@
+const nodemailer = require('nodemailer');
+
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'info@campusconnect.com';
+const BREVO_SENDER_EMAIL = process.env.FROM_EMAIL || process.env.BREVO_SENDER_EMAIL || 'info@campusconnect.com';
 const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'Campus Connect';
 
+// SMTP Configurations
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587;
+const SMTP_SECURE = process.env.SMTP_SECURE === 'true'; // secure: true for port 465, false for 587 (STARTTLS)
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+
+let transporter = null;
+let isSmtpActive = false;
 let lastEmailStatus = { status: 'none', timestamp: null, error: null, recipient: null };
 
+if (SMTP_HOST) {
+  console.log(`✉️ [Email Service] Initializing Nodemailer SMTP transporter for ${SMTP_HOST}:${SMTP_PORT}...`);
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS
+    },
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 5000
+  });
+
+  // Verify SMTP Connection on Startup
+  transporter.verify((error, success) => {
+    if (error) {
+      console.error('❌ [Email Service] Nodemailer SMTP connection verification failed on startup:', error.message);
+      console.error(error.stack);
+      console.warn('⚠️ [Email Service] Disabling SMTP relay route and falling back to Brevo HTTP API for all dispatches.');
+      isSmtpActive = false;
+    } else {
+      console.log('✅ [Email Service] Nodemailer SMTP connection verified successfully.');
+      isSmtpActive = true;
+    }
+  });
+}
+
 /**
- * Extensible email service using Brevo SMTP API v3
+ * Enterprise email service supporting SMTP and Brevo HTTP APIs
  */
 const emailService = {
   /**
-   * Generic method to send transactional email via Brevo
+   * Generic method to send transactional email
    */
   async sendEmail(toEmail, toName, subject, htmlContent) {
-    if (!BREVO_API_KEY) {
-      console.warn('⚠️ [Email Service] BREVO_API_KEY is not defined. Email dispatch skipped.');
-      console.log(`✉️ [Mock Email] To: ${toEmail}, Subject: ${subject}`);
-      lastEmailStatus = { status: 'mock_sent', timestamp: new Date(), error: null, recipient: toEmail };
-      return { success: true, mock: true };
-    }
+    console.log(`✉️ [Email Service] Initiating email dispatch:
+      - Recipient: ${toEmail}
+      - Subject: ${subject}
+      - SMTP Host: ${SMTP_HOST || 'Not Configured'}
+      - SMTP User: ${SMTP_USER || 'Not Configured'}
+      - SMTP Active: ${isSmtpActive ? 'Yes' : 'No'}`);
 
-    console.log(`✉️ [Email Service] Preparing Brevo API call to ${toEmail}...`);
-    try {
-      const payload = {
-        sender: {
-          name: BREVO_SENDER_NAME,
-          email: BREVO_SENDER_EMAIL
-        },
-        to: [
-          {
-            email: toEmail,
-            name: toName || toEmail
-          }
-        ],
-        subject: subject,
-        htmlContent: htmlContent
-      };
-      
-      console.log('✉️ [Email Service] Brevo Request payload:', JSON.stringify(payload, null, 2));
+    const sender = `"${BREVO_SENDER_NAME}" <${BREVO_SENDER_EMAIL}>`;
 
-      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'accept': 'application/json',
-          'api-key': BREVO_API_KEY,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
+    let smtpError = null;
+    let smtpStack = null;
 
-      const data = await response.json();
-      console.log(`✉️ [Email Service] Brevo Response received. Status: ${response.status} ${response.statusText}`, JSON.stringify(data, null, 2));
+    // 1. SMTP Transporter route
+    if (transporter && isSmtpActive) {
+      console.log(`✉️ [Email Service] Provider selected: SMTP Relay (Nodemailer). Dispatching...`);
+      try {
+        const mailOptions = {
+          from: sender,
+          to: `"${toName || toEmail}" <${toEmail}>`,
+          subject: subject,
+          html: htmlContent
+        };
 
-      if (!response.ok) {
-        throw new Error(data.message || `Brevo API returned status ${response.status}`);
+        const info = await transporter.sendMail(mailOptions);
+        console.log(`✅ [Email Service] SMTP delivery accepted:
+          - Message ID: ${info.messageId}
+          - Accepted Recipients: ${JSON.stringify(info.accepted)}
+          - Rejected Recipients: ${JSON.stringify(info.rejected)}
+          - Response: ${info.response}`);
+        
+        lastEmailStatus = { 
+          status: 'delivered', 
+          timestamp: new Date(), 
+          messageId: info.messageId, 
+          recipient: toEmail,
+          provider: 'smtp',
+          accepted: info.accepted,
+          rejected: info.rejected,
+          response: info.response
+        };
+        return { 
+          success: true, 
+          messageId: info.messageId, 
+          provider: 'smtp',
+          accepted: info.accepted,
+          rejected: info.rejected
+        };
+      } catch (error) {
+        console.warn(`⚠️ [Email Service] SMTP delivery failed.
+          - Error: ${error.message}
+          - Stack: ${error.stack}
+          Attempting fallback to HTTP API...`);
+        smtpError = error.message;
+        smtpStack = error.stack;
       }
-
-      console.log(`✅ [Email Service] Email sent successfully to ${toEmail}. Message ID:`, data.messageId);
-      lastEmailStatus = { status: 'delivered', timestamp: new Date(), messageId: data.messageId, recipient: toEmail };
-      return { success: true, messageId: data.messageId };
-    } catch (error) {
-      console.error(`❌ [Email Service] Failed to send email to ${toEmail}:`, error.message);
-      lastEmailStatus = { status: 'failed', timestamp: new Date(), error: error.message, recipient: toEmail };
-      return { success: false, error: error.message };
+    } else {
+      if (transporter) {
+        console.log(`✉️ [Email Service] SMTP transporter configured but inactive due to verification failure. Skipping SMTP route.`);
+      }
     }
+
+    // 2. HTTP Brevo API Fallback route
+    if (BREVO_API_KEY) {
+      console.log(`✉️ [Email Service] Provider selected: Brevo HTTP API. Dispatching...`);
+      try {
+        const payload = {
+          sender: {
+            name: BREVO_SENDER_NAME,
+            email: BREVO_SENDER_EMAIL
+          },
+          to: [
+            {
+              email: toEmail,
+              name: toName || toEmail
+            }
+          ],
+          subject: subject,
+          htmlContent: htmlContent
+        };
+        
+        console.log('✉️ [Email Service] HTTP API Request Payload:', JSON.stringify(payload, null, 2));
+
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'api-key': BREVO_API_KEY,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        console.log(`✉️ [Email Service] HTTP API Response Status: ${response.status} ${response.statusText}`);
+        console.log('✉️ [Email Service] HTTP API Response Body:', JSON.stringify(data, null, 2));
+
+        if (!response.ok) {
+          throw new Error(data.message || `Brevo HTTP API returned status ${response.status}`);
+        }
+
+        console.log(`✅ [Email Service] HTTP API delivery accepted. Message ID:`, data.messageId);
+        lastEmailStatus = { 
+          status: 'delivered', 
+          timestamp: new Date(), 
+          messageId: data.messageId, 
+          recipient: toEmail,
+          provider: 'brevo_api',
+          accepted: [toEmail],
+          rejected: [],
+          response: data
+        };
+        return { 
+          success: true, 
+          messageId: data.messageId, 
+          provider: 'brevo_api',
+          accepted: [toEmail],
+          rejected: []
+        };
+      } catch (error) {
+        console.error(`❌ [Email Service] HTTP API delivery failed:
+          - Error: ${error.message}
+          - Stack: ${error.stack}`);
+        const combinedError = smtpError 
+          ? `SMTP Error: ${smtpError}. HTTP API Error: ${error.message}` 
+          : error.message;
+        lastEmailStatus = { 
+          status: 'failed', 
+          timestamp: new Date(), 
+          error: combinedError, 
+          stack: error.stack,
+          recipient: toEmail,
+          provider: 'brevo_api'
+        };
+        return { 
+          success: false, 
+          error: combinedError, 
+          stack: error.stack,
+          smtpError: smtpError,
+          smtpStack: smtpStack
+        };
+      }
+    }
+
+    // 3. No configurations found
+    const missingCredsError = smtpError 
+      ? `SMTP Error: ${smtpError}. No Brevo API Key configured for fallback.` 
+      : 'No email service credentials configured.';
+    console.error(`❌ [Email Service] Failed: ${missingCredsError}`);
+    lastEmailStatus = { 
+      status: 'failed', 
+      timestamp: new Date(), 
+      error: missingCredsError, 
+      recipient: toEmail 
+    };
+    return { success: false, error: missingCredsError };
   },
 
   /**
    * Sends the OTP verification code to a user
    */
   async sendOTP(toEmail, code, expiresMinutes = 5) {
+    console.log(`🔑 [Email Service] Generating OTP [${code}] for recipient: [${toEmail}] (expiry: ${expiresMinutes} mins)`);
     const subject = 'Campus Connect Verification Code';
     const htmlContent = `
       <!DOCTYPE html>
@@ -225,67 +370,16 @@ const emailService = {
     return this.sendEmail(toEmail, toEmail, subject, htmlContent);
   },
 
-  /**
-   * Future email infrastructure placeholders
-   */
-  async sendPlacementNotification(toEmail, toName, details) {
-    const subject = `New Placement Opportunity: ${details.company} - ${details.role}`;
-    const htmlContent = `<h3>New Placement Opportunity</h3><p>Company: ${details.company}</p><p>Role: ${details.role}</p><p>Apply before: ${details.deadline}</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendInternshipAlert(toEmail, toName, details) {
-    const subject = `New Internship Alert: ${details.company}`;
-    const htmlContent = `<h3>New Internship Alert</h3><p>${details.company} is hiring for ${details.role}.</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendAdminAnnouncement(toEmail, toName, details) {
-    const subject = `Official Announcement: ${details.title}`;
-    const htmlContent = `<h3>${details.title}</h3><p>${details.content}</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendEventInvitation(toEmail, toName, details) {
-    const subject = `Event Invitation: ${details.title}`;
-    const htmlContent = `<h3>You're invited to ${details.title}</h3><p>Date: ${details.date}</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendEventNotification(toEmail, toName, details) {
-    const subject = `Event Notification: ${details.title}`;
-    const htmlContent = `<h3>Event Update</h3><p>${details.title}</p><p>Date: ${details.date}</p><p>${details.content || ''}</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendReferralNotification(toEmail, toName, details) {
-    const subject = `Referral Request Update`;
-    const htmlContent = `<h3>Referral Request</h3><p>Your referral status has been updated.</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendFriendRequestNotification(toEmail, toName, details) {
-    const subject = `New Connection Request on Campus Connect`;
-    const htmlContent = `<h3>Connection Request</h3><p>${details.senderName} wants to connect with you.</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendConnectionAlert(toEmail, toName, details) {
-    const subject = `You are now connected!`;
-    const htmlContent = `<h3>Connection Verified</h3><p>You are now connected with ${details.senderName}.</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendChatNotification(toEmail, toName, details) {
-    const subject = `New Message from ${details.senderName}`;
-    const htmlContent = `<h3>New Message</h3><p>${details.senderName} sent you a message: "${details.text}"</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
-  },
-
-  async sendAlumniInvitation(toEmail, toName, details) {
-    const subject = `Join Campus Connect Alumni Network`;
-    const htmlContent = `<h3>Alumni Invitation</h3><p>Join the official campus connect portal for alumni.</p>`;
-    return this.sendEmail(toEmail, toName, subject, htmlContent);
+  async verifySMTP() {
+    if (!transporter) {
+      return { success: false, error: 'SMTP transporter is not initialized.' };
+    }
+    try {
+      await transporter.verify();
+      return { success: true, message: 'SMTP connection verified successfully.' };
+    } catch (error) {
+      return { success: false, error: error.message, stack: error.stack };
+    }
   },
 
   getLastEmailStatus() {

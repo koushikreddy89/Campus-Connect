@@ -704,6 +704,50 @@ export default function ProfilePage() {
                     </div>
                   </div>
                   <div>
+                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Academic Year</label>
+                    <select 
+                      id="field-academicYear"
+                      value={profile.academicYear || ''} 
+                      onChange={e => updateProfile({ academicYear: e.target.value })} 
+                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow appearance-none"
+                    >
+                      <option value="">Select Academic Year</option>
+                      <option value="1st Year">1st Year</option>
+                      <option value="2nd Year">2nd Year</option>
+                      <option value="3rd Year">3rd Year</option>
+                      <option value="4th Year">4th Year</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">CGPA</label>
+                      <input 
+                        id="field-cgpa"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="10"
+                        value={profile.cgpa !== undefined ? profile.cgpa : ''} 
+                        onChange={e => updateProfile({ cgpa: e.target.value ? parseFloat(e.target.value) : 0 })} 
+                        placeholder="e.g. 8.5"
+                        className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Active Backlogs</label>
+                      <input 
+                        id="field-backlogs"
+                        type="number"
+                        min="0"
+                        max="50"
+                        value={profile.backlogs !== undefined ? profile.backlogs : ''} 
+                        onChange={e => updateProfile({ backlogs: e.target.value ? parseInt(e.target.value) : 0 })} 
+                        placeholder="e.g. 0"
+                        className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
+                      />
+                    </div>
+                  </div>
+                  <div>
                     <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Bio</label>
                     <textarea 
                       id="field-bio"

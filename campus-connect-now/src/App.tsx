@@ -21,6 +21,14 @@ const WelcomePage = lazy(() => import("./pages/WelcomePage.tsx").catch(err => {
   console.error('[Lazy Load Error] WelcomePage:', err);
   throw err;
 }));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] ResetPasswordPage:', err);
+  throw err;
+}));
+const SecurityDashboardPage = lazy(() => import("./pages/SecurityDashboardPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] SecurityDashboardPage:', err);
+  throw err;
+}));
 const ProfileSetupPage = lazy(() => import("./pages/ProfileSetupPage.tsx").catch(err => {
   console.error('[Lazy Load Error] ProfileSetupPage:', err);
   throw err;
@@ -266,49 +274,37 @@ const App = () => {
         }
 
         try {
-          if (state.role === 'alumni') {
-            // Verify Alumni profile exists in MongoDB
-            const collegeName = state.college || 'SR University';
-            const alumniProfile = await alumniProfileService.getMyProfile(collegeName);
-            const exists = !!alumniProfile;
-            const onboardingCompleted = exists && alumniProfile.onboardingCompleted === true;
-            
-            useAuthStore.setState({
-              isNewUser: !exists,
-              isProfileComplete: onboardingCompleted,
-              role: 'alumni',
+          const res = await userApi.getCurrentUser();
+          if (res.success && res.data) {
+            const dbUser = res.data;
+            const dbRole = dbUser.role || 'student';
+            // Determine if onboarding is complete
+            let onboardingCompleted = true;
+            if (dbRole === 'student' || dbRole === 'alumni') {
+              // We'll query onboardingCompleted status via profile store or assume true if profile is set
+              onboardingCompleted = dbUser.onboardingCompleted !== false;
+            }
+
+            console.log('✅ [App Init] Database validated session successfully:', {
+              id: dbUser.id,
+              role: dbRole,
+              onboardingCompleted
             });
 
-            if (exists) {
-              await useProfileStore.getState().loadProfile(state.uid);
-            } else {
-              useProfileStore.getState().resetProfile();
-            }
-          } else if (state.role === 'admin') {
-            // Verify Admin
             useAuthStore.setState({
               isNewUser: false,
-              isProfileComplete: true,
-              role: 'admin',
-            });
-          } else {
-            // Student user - retrieve details from MongoDB backend
-            const res = await userApi.getUserById(state.uid);
-            const exists = res.success && !!res.data;
-            const onboardingCompleted = exists && res.data.onboardingCompleted === true;
-            const userRole = (exists && res.data.role) || 'student';
-            
-            useAuthStore.setState({
-              isNewUser: !exists,
               isProfileComplete: onboardingCompleted,
-              role: userRole === 'alumni' || userRole === 'admin' ? userRole : 'student',
+              role: dbRole,
+              email: dbUser.email,
+              uid: dbUser.id
             });
 
-            if (exists) {
-              await useProfileStore.getState().loadProfile(state.uid);
-            } else {
-              useProfileStore.getState().resetProfile();
+            if (dbRole !== 'admin') {
+              await useProfileStore.getState().loadProfile(dbUser.id);
             }
+          } else {
+            console.warn('⚠️ [App Init] Server rejected session. Performing clean logout.');
+            await useAuthStore.getState().logout();
           }
         } catch (err) {
           console.error('❌ [App Init] Error checking user session:', err);
@@ -637,6 +633,22 @@ const App = () => {
                   element={
                     <Suspense fallback={<PageLoader />}>
                       <AdminRoute><AdminAlumniPanelPage /></AdminRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/admin/security"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <AdminRoute><SecurityDashboardPage /></AdminRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/reset-password"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <ResetPasswordPage />
                     </Suspense>
                   }
                 />

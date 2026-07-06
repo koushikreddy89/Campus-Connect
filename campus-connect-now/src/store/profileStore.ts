@@ -29,6 +29,9 @@ const DEFAULT_PROFILE: ProfileSetupData = {
   course: '',
   year: '',
   personalEmail: '',
+  academicYear: '',
+  cgpa: 0,
+  backlogs: 0,
   // Alumni fields
   passoutYear: '',
   batch: '',
@@ -81,12 +84,37 @@ export const useProfileStore = create<ProfileState>()(
 
         set({ isSaving: true, error: null });
         try {
-          const role = useAuthStore.getState().role;
+          const authState = useAuthStore.getState();
+          let currentUid = state.uid || authState.uid;
+          if (!currentUid) {
+            const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+            if (token) {
+              try {
+                const base64Url = token.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+                  return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                }).join(''));
+                const decoded = JSON.parse(jsonPayload);
+                if (decoded && decoded.userId) {
+                  currentUid = decoded.userId;
+                  useAuthStore.setState({ uid: currentUid, email: decoded.email || authState.email, role: decoded.role || authState.role });
+                }
+              } catch (e) {
+                console.error('Failed to parse token in saveProfile:', e);
+              }
+            }
+          }
+          if (currentUid && currentUid !== state.uid) {
+            set({ uid: currentUid });
+          }
+
+          const role = useAuthStore.getState().role || 'student';
           let res;
 
           if (role === 'alumni') {
             res = await alumniProfileService.updateProfile(
-              state.uid!,
+              currentUid!,
               {
                 name: state.profile.name,
                 batch: state.profile.batch || state.profile.passoutYear || state.profile.year || '',
@@ -114,15 +142,18 @@ export const useProfileStore = create<ProfileState>()(
               interests: state.profile.interests,
               photos: state.profile.photos,
               course: state.profile.course, // maps to department on backend
-              year: state.profile.year, // maps to batch on backend
+              year: state.profile.year, 
               department: state.profile.course,
-              batch: state.profile.year,
+              batch: state.profile.batch || state.profile.passoutYear || state.profile.year || '2026',
               personalEmail: state.profile.personalEmail,
               skills: state.profile.skills || [],
               clubs: state.profile.clubs || [],
               achievements: state.profile.achievements || [],
               linkedinUrl: state.profile.linkedinUrl || '',
               githubUrl: state.profile.githubUrl || '',
+              cgpa: state.profile.cgpa,
+              backlogs: state.profile.backlogs,
+              academicYear: state.profile.year || state.profile.academicYear || '',
               projects: state.profile.projects || [],
               careerGoals: state.profile.careerGoals || '',
               onboardingCompleted: onboardingData?.onboardingCompleted !== undefined 
@@ -191,6 +222,9 @@ export const useProfileStore = create<ProfileState>()(
                 course: dbProf.department || dbProf.course || '',
                 year: dbProf.batch || dbProf.year || '',
                 personalEmail: dbProf.personalEmail || dbProf.email || '',
+                academicYear: dbProf.academicYear || '',
+                cgpa: dbProf.cgpa || 0,
+                backlogs: dbProf.backlogs || 0,
                 passoutYear: dbProf.batch || '',
                 batch: dbProf.batch || '',
                 company: dbProf.company || '',

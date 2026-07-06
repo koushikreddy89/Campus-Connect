@@ -20,6 +20,8 @@ interface AuthState {
   college: string | null;
   otpRequest: AbortController | null;
   activeSessions: any[];
+  debugOtp: string | null;
+  debugResetLink: string | null;
   sendOtp: (email: string) => Promise<void>;
   verifyAlumni: (personalEmail: string, rollNumber: string, batch: string) => Promise<boolean>;
   verifyOtp: (code: string) => Promise<void>;
@@ -31,6 +33,16 @@ interface AuthState {
   setProfileComplete: (v: boolean) => void;
   setCollege: (c: string) => void;
   setRole: (role: UserRole) => void;
+  
+  // Enterprise hardeners
+  getCaptchaChallenge: () => Promise<any>;
+  registerUser: (payload: any) => Promise<any>;
+  verifyEmailCode: (code: string) => Promise<boolean>;
+  login: (payload: any) => Promise<any>;
+  verifyMfa: (code: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<any>;
+  resetPassword: (payload: any) => Promise<any>;
+  logoutAll: () => Promise<any>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -49,12 +61,229 @@ export const useAuthStore = create<AuthState>()(
       college: null,
       otpRequest: null,
       activeSessions: [],
+      debugOtp: null,
+      debugResetLink: null,
 
       cancelOtpRequest: () => {
         const state = get();
         if (state.otpRequest) {
           state.otpRequest.abort();
           set({ otpRequest: null, isLoading: false });
+        }
+      },
+
+      getCaptchaChallenge: async () => {
+        set({ error: null });
+        try {
+          const res = await authApi.getCaptcha();
+          if (res.success) {
+            return res;
+          } else {
+            set({ error: res.error || 'Failed to get CAPTCHA' });
+            return null;
+          }
+        } catch (error: any) {
+          set({ error: error.message || 'Failed to load CAPTCHA challenge' });
+          return null;
+        }
+      },
+
+      registerUser: async (payload: any) => {
+        set({ isLoading: true, error: null, debugOtp: null });
+        try {
+          const res = await authApi.register(payload);
+          set({ isLoading: false });
+          if (res.success) {
+            set({ email: payload.email.toLowerCase(), debugOtp: res.debugOtp || null });
+            if (res.debugOtp) {
+              console.log(`🔑 [OTP Debug] OTP code received from server: ${res.debugOtp}`);
+            }
+            return res;
+          } else {
+            set({ error: (typeof res.error === 'string' ? res.error : null) || res.message || 'Registration failed' });
+            return res;
+          }
+        } catch (error: any) {
+          set({ isLoading: false, error: error.message || 'Registration failed' });
+          return { success: false, error: error.message };
+        }
+      },
+
+      verifyEmailCode: async (code: string) => {
+        const state = get();
+        if (!state.email) {
+          set({ error: 'Email not set' });
+          return false;
+        }
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.verifyEmail(state.email, code);
+          if (res.success) {
+            let detectedCollege = 'SR University'; // Default fallback
+            if (res.email) {
+              const domain = res.email.split('@')[1] || '';
+              try {
+                const { findCollegeByDomainJSON } = require('@/utils/collegeDetectionJSON');
+                const found = await findCollegeByDomainJSON(domain);
+                if (found && found.name) {
+                  detectedCollege = found.name;
+                }
+              } catch (e) {
+                console.error('Failed to auto-detect college in verifyEmailCode:', e);
+              }
+            }
+
+            // Store token and mark as authenticated
+            localStorage.setItem('auth_token', res.token);
+            localStorage.setItem('jwt_token', res.token);
+
+            set({
+              token: res.token,
+              isAuthenticated: true,
+              isProfileComplete: res.profileComplete || false,
+              isNewUser: res.isNewUser || false,
+              isLoading: false,
+              role: res.role || res.user?.role || state.role,
+              email: res.email || res.user?.email || state.email,
+              uid: res.user?.id || res.userId || null,
+              college: res.college || detectedCollege,
+              error: null
+            });
+            return true;
+          } else {
+            set({ isLoading: false, error: (typeof res.error === 'string' ? res.error : null) || res.message || 'Verification failed' });
+            return false;
+          }
+        } catch (error: any) {
+          set({ isLoading: false, error: error.message || 'Verification failed' });
+          return false;
+        }
+      },
+
+      login: async (payload: any) => {
+        set({ isLoading: true, error: null, debugOtp: null });
+        try {
+          const res = await authApi.login(payload);
+          set({ isLoading: false });
+          
+          if (!res.success) {
+            set({ error: (typeof res.error === 'string' ? res.error : null) || res.message || 'Login failed' });
+            return res;
+          }
+
+          if (res.mfaRequired) {
+            set({ email: payload.email.toLowerCase(), debugOtp: res.debugOtp || null });
+            if (res.debugOtp) {
+              console.log(`🔑 [OTP Debug] MFA OTP code received from server: ${res.debugOtp}`);
+            }
+            return res; // Frontend will transition to MFA verify view
+          }
+
+          let detectedCollege = 'SR University'; // Default fallback
+          if (res.email) {
+            const domain = res.email.split('@')[1] || '';
+            try {
+              const { findCollegeByDomainJSON } = require('@/utils/collegeDetectionJSON');
+              const found = await findCollegeByDomainJSON(domain);
+              if (found && found.name) {
+                detectedCollege = found.name;
+              }
+            } catch (e) {}
+          }
+
+          set({
+            token: res.token,
+            isAuthenticated: true,
+            isProfileComplete: res.profileComplete,
+            isNewUser: res.isNewUser || false,
+            role: res.user?.role || res.role,
+            email: res.user?.email || res.email,
+            uid: res.user?.id || res.userId,
+            college: res.college || detectedCollege,
+            error: null
+          });
+          return res;
+        } catch (error: any) {
+          set({ isLoading: false, error: error.message || 'Login failed' });
+          return { success: false, error: error.message };
+        }
+      },
+
+      verifyMfa: async (code: string) => {
+        const state = get();
+        if (!state.email) {
+          set({ error: 'Email not set' });
+          return;
+        }
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.verifyMfa(state.email, code);
+          set({ isLoading: false });
+          if (res.success && res.token) {
+            let detectedCollege = 'SR University'; // Default fallback
+            const emailVal = res.user?.email || res.email;
+            if (emailVal) {
+              const domain = emailVal.split('@')[1] || '';
+              try {
+                const { findCollegeByDomainJSON } = require('@/utils/collegeDetectionJSON');
+                const found = await findCollegeByDomainJSON(domain);
+                if (found && found.name) {
+                  detectedCollege = found.name;
+                }
+              } catch (e) {}
+            }
+
+            set({
+              token: res.token,
+              isAuthenticated: true,
+              isProfileComplete: res.profileComplete,
+              isNewUser: res.isNewUser || false,
+              role: res.user?.role || res.role,
+              email: emailVal,
+              uid: res.user?.id || res.userId,
+              college: res.college || detectedCollege,
+              error: null
+            });
+          } else {
+            set({ error: (typeof res.error === 'string' ? res.error : null) || res.message || 'MFA verification failed' });
+          }
+        } catch (error: any) {
+          set({ isLoading: false, error: error.message || 'MFA verification failed' });
+        }
+      },
+
+      forgotPassword: async (email: string) => {
+        set({ isLoading: true, error: null, debugResetLink: null });
+        try {
+          const res = await authApi.forgotPassword(email);
+          set({ isLoading: false });
+          if (res.success) {
+            set({ resetSuccess: true, debugResetLink: res.debugResetLink || null });
+            if (res.debugResetLink) {
+              console.log(`🔑 [Reset Token Debug] Password reset link: ${res.debugResetLink}`);
+            }
+          } else {
+            set({ error: (typeof res.error === 'string' ? res.error : null) || res.message || 'Password reset request failed' });
+          }
+          return res;
+        } catch (error: any) {
+          set({ isLoading: false, error: error.message || 'Password reset request failed' });
+          return { success: false, error: error.message };
+        }
+      },
+
+      resetPassword: async (payload: any) => {
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.resetPassword(payload);
+          set({ isLoading: false });
+          if (!res.success) {
+            set({ error: (typeof res.error === 'string' ? res.error : null) || res.message || 'Password reset failed' });
+          }
+          return res;
+        } catch (error: any) {
+          set({ isLoading: false, error: error.message || 'Password reset failed' });
+          return { success: false, error: error.message };
         }
       },
 
@@ -166,9 +395,9 @@ export const useAuthStore = create<AuthState>()(
             isProfileComplete: res.profileComplete,
             isNewUser: res.isNewUser,
             isLoading: false,
-            role: res.role || state.role,
-            email: res.email || state.email,
-            uid: res.userId,
+            role: res.role || res.user?.role || state.role,
+            email: res.email || res.user?.email || state.email,
+            uid: res.user?.id || res.userId || null,
             college: detectedCollege
           });
           
@@ -229,8 +458,6 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-
-
       logout: async () => {
         console.log('🔒 [Auth] Logging out user - clearing all user data');
         
@@ -258,6 +485,9 @@ export const useAuthStore = create<AuthState>()(
           sessionStorage.clear();
           console.log('✅ [Auth] sessionStorage cleared');
 
+          // Clear cookies via backend hit
+          await authApi.logout();
+
           // ✅ STEP 5: Clear auth state
           set({
             token: null, 
@@ -272,6 +502,8 @@ export const useAuthStore = create<AuthState>()(
             college: null,
             isLoading: false,
             activeSessions: [],
+            debugOtp: null,
+            debugResetLink: null,
           });
           console.log('✅ [Auth] Auth state cleared');
           console.log('✅ [Auth] User data cleared successfully');
@@ -285,7 +517,31 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: false,
             isLoading: false,
             activeSessions: [],
+            debugOtp: null,
+            debugResetLink: null,
           });
+        }
+      },
+
+      logoutAll: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const res = await authApi.logoutAll();
+          useProfileStore.getState().resetProfile();
+          set({
+            token: null,
+            email: null,
+            uid: null,
+            isAuthenticated: false,
+            isLoading: false,
+            activeSessions: [],
+            debugOtp: null,
+            debugResetLink: null,
+          });
+          return res;
+        } catch (error: any) {
+          set({ error: error.message || 'Logout all failed', isLoading: false });
+          return { success: false, error: error.message };
         }
       },
 
@@ -296,3 +552,9 @@ export const useAuthStore = create<AuthState>()(
     { name: 'campus-connect-auth' }
   )
 );
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('cc-session-expired', () => {
+    useAuthStore.getState().logout();
+  });
+}

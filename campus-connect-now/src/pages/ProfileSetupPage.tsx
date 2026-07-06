@@ -7,6 +7,7 @@ import { INTERESTS } from '@/data/constants';
 import { Camera, Check, Upload, ChevronRight, Sparkles } from 'lucide-react';
 import StudentOnboardingStep from '@/components/onboarding/StudentOnboardingStep';
 import AlumniOnboardingStep from '@/components/onboarding/AlumniOnboardingStep';
+import { toast } from 'sonner';
 
 const STUDENT_STEPS = ['Photo', 'Interests', 'Academic Info'];
 const ALUMNI_STEPS = ['Photo', 'Interests', 'Professional Info'];
@@ -48,8 +49,9 @@ export default function ProfileSetupPage() {
     try {
       await saveProfile({ onboardingStep: updatedStepNumber });
       console.log('💾 [ProfileSetup] Saved step progress in DB:', updatedStepNumber);
-    } catch (e) {
+    } catch (e: any) {
       console.error('❌ [ProfileSetup] Failed to save step progress:', e);
+      toast.error(e.message || 'Failed to save setup progress. Please try again.');
     }
   };
 
@@ -59,8 +61,10 @@ export default function ProfileSetupPage() {
       await saveProfile({ onboardingCompleted: true });
       setProfileComplete(true);
       console.log('🎉 [ProfileSetup] Onboarding complete persisted');
-    } catch (e) {
+      toast.success('Profile setup completed successfully!');
+    } catch (e: any) {
       console.error('❌ [ProfileSetup] Failed to save complete onboarding:', e);
+      toast.error(e.message || 'Failed to complete profile onboarding. Please check your inputs.');
     }
   };
 

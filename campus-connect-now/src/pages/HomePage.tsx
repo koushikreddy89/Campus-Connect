@@ -21,6 +21,7 @@ import { useNotificationStore } from '@/store/notificationStore';
 import { formatDistanceToNow } from 'date-fns';
 import { useState, useEffect, useMemo } from 'react';
 import { Logo } from '@/components/Logo';
+import PlacementsDashboard from '@/components/placements/PlacementsDashboard';
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -33,9 +34,13 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
-  // Fetch announcements on mount and when college changes
+  // Fetch announcements on mount and when college changes (with real-time interval polling)
   useEffect(() => {
     fetchAnnouncements(college);
+    const interval = setInterval(() => {
+      fetchAnnouncements(college);
+    }, 10000); // Keep student feed in sync with Admin modifications automatically
+    return () => clearInterval(interval);
   }, [college, fetchAnnouncements]);
 
   // Filter announcements by college, category, and search query
@@ -168,36 +173,40 @@ export default function HomePage() {
       </motion.div>
 
       {/* Hero Header Card */}
-      <div className="px-5 mt-4">
-        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur-md">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Shield className="h-24 w-24 text-primary" />
-          </div>
-          <div className="relative z-10">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary-foreground border border-primary/30 mb-3 uppercase tracking-wider">
-              <Sparkles className="w-3 h-3 text-primary-foreground" />
-              Official Channel
-            </span>
-            <h2 className="text-xl font-bold text-white leading-tight">College Announcements</h2>
-            <p className="text-xs text-slate-400 mt-1.5 max-w-xs leading-relaxed">
-              Official academic notices, placements drives, events, and circulars directly from {college} administration.
-            </p>
+      {selectedCategory !== 'placement' && (
+        <div className="px-5 mt-4">
+          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur-md">
+            <div className="absolute top-0 right-0 p-4 opacity-10">
+              <Shield className="h-24 w-24 text-primary" />
+            </div>
+            <div className="relative z-10">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary-foreground border border-primary/30 mb-3 uppercase tracking-wider">
+                <Sparkles className="w-3 h-3 text-primary-foreground" />
+                Official Channel
+              </span>
+              <h2 className="text-xl font-bold text-white leading-tight">College Announcements</h2>
+              <p className="text-xs text-slate-400 mt-1.5 max-w-xs leading-relaxed">
+                Official academic notices, placements drives, events, and circulars directly from {college} administration.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Search and Category Filters */}
       <div className="px-5 mt-4 space-y-3">
-        <div className="relative">
-          <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search official notices..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-secondary/60 border border-border rounded-xl py-2 pl-10 pr-4 text-xs focus:outline-none focus:border-primary transition-colors text-white placeholder:text-muted-foreground"
-          />
-        </div>
+        {selectedCategory !== 'placement' && (
+          <div className="relative">
+            <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search official notices..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-secondary/60 border border-border rounded-xl py-2 pl-10 pr-4 text-xs focus:outline-none focus:border-primary transition-colors text-white placeholder:text-muted-foreground"
+            />
+          </div>
+        )}
 
         <div className="flex gap-1.5 overflow-x-auto scrollbar-none py-1">
           {[
@@ -224,7 +233,9 @@ export default function HomePage() {
 
       {/* Announcements Content Grid */}
       <div className="px-5 mt-5 flex-1 flex flex-col space-y-6">
-        {isLoading ? (
+        {selectedCategory === 'placement' ? (
+          <PlacementsDashboard />
+        ) : isLoading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             <span className="text-xs text-muted-foreground">Syncing with MongoDB...</span>

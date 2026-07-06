@@ -1,4 +1,40 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
+
+// Encryption keys and helpers for sensitive data
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'cc_secret_key_32_bytes_long_placeholder_12345'; // Must be 32 bytes
+
+function encryptDeterministic(text) {
+  if (!text) return '';
+  try {
+    const key = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
+    // Deriving IV deterministically from the key + text to maintain security while allowing matching
+    const iv = crypto.createHash('md5').update(text).digest(); // 16 bytes IV
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+  } catch (e) {
+    return text;
+  }
+}
+
+function decryptDeterministic(text) {
+  if (!text) return '';
+  if (!text.includes(':')) return text;
+  try {
+    const textParts = text.split(':');
+    const iv = Buffer.from(textParts.shift(), 'hex');
+    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+    const key = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  } catch (e) {
+    return text;
+  }
+}
 
 // Experience sub-schema
 const ExperienceSchema = new mongoose.Schema({
@@ -13,6 +49,15 @@ const ExperienceSchema = new mongoose.Schema({
 const AlumniSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
   email: { type: String, required: true, index: true },
+  password: { type: String, default: '' },
+  passwordHistory: { type: [String], default: [] },
+  isEmailVerified: { type: Boolean, default: false },
+  mfaSecret: { type: String, default: '' },
+  mfaEnabled: { type: Boolean, default: false },
+  mfaType: { type: String, default: 'email' },
+  failedLoginAttempts: { type: Number, default: 0 },
+  lockUntil: { type: Date },
+  college: { type: String, default: 'SR University', index: true },
   name: { type: String, required: true },
   batch: { type: String, required: true },
   department: { type: String, required: true },
@@ -76,6 +121,7 @@ const PostCommentSchema = new mongoose.Schema({
 
 const PostSchema = new mongoose.Schema({
   alumniId: { type: String, required: true }, // Refers to Alumni ID
+  college: { type: String, default: 'SR University', index: true },
   content: { type: String, required: true },
   type: { type: String, default: 'general' }, // job, referral, internship, tip, achievement, resource, roadmap, general
   imageUrls: [String],
@@ -129,6 +175,7 @@ const ReferralCommentSchema = new mongoose.Schema({
 const ReferralSchema = new mongoose.Schema({
   alumniId: { type: String, required: true },
   authorId: { type: String }, // duplicate of alumniId for consistency
+  college: { type: String, default: 'SR University', index: true },
   authorName: { type: String, default: 'Alumni Member' },
   company: { type: String, required: true },
   companyName: { type: String }, // duplicate of company for consistency
@@ -158,6 +205,7 @@ const ReferralSchema = new mongoose.Schema({
 // Resource Schema
 const ResourceSchema = new mongoose.Schema({
   alumniId: { type: String, required: true },
+  college: { type: String, default: 'SR University', index: true },
   title: { type: String, required: true },
   description: { type: String, default: '' },
   link: { type: String, default: '' },
@@ -173,6 +221,7 @@ const RoadmapStepSchema = new mongoose.Schema({
 
 const RoadmapSchema = new mongoose.Schema({
   alumniId: { type: String, required: true },
+  college: { type: String, default: 'SR University', index: true },
   title: { type: String, required: true },
   description: { type: String, default: '' },
   steps: [RoadmapStepSchema]
@@ -198,8 +247,98 @@ const AdminPostSchema = new mongoose.Schema({
   college: { type: String, default: 'SR University' },
   createdBy: { type: String, default: 'admin' },
   createdByName: { type: String, default: 'Campus Admin' },
-  isPinned: { type: Boolean, default: false }
+  isPinned: { type: Boolean, default: false },
+  
+  // Common Broadcast Controls
+  relatedId: { type: String, default: '' },
+  status: { type: String, enum: ['draft', 'active', 'paused', 'archived', 'trash'], default: 'active' },
+  publishDate: { type: Date },
+  expiryDate: { type: Date },
+  scheduledPublish: { type: Date },
+  visibility: { type: String, enum: ['Public', 'Restricted', 'Private'], default: 'Public' },
+  views: { type: Number, default: 0 },
+  clicks: { type: Number, default: 0 },
+  applications: { type: Number, default: 0 },
+  deletedAt: { type: Date },
+
+  // Announcements
+  summary: { type: String, default: '' },
+  subCategory: { type: String, default: '' },
+  priority: { type: String, enum: ['Low', 'Medium', 'High'], default: 'Medium' },
+  attachments: { type: [String], default: [] },
+
+  // Placements & Internships
+  companyName: { type: String, default: '' },
+  companyLogo: { type: String, default: '' },
+  companyWebsite: { type: String, default: '' },
+  jobRole: { type: String, default: '' },
+  employmentType: { type: String, default: '' },
+  workMode: { type: String, default: '' },
+  package: { type: String, default: '' },
+  stipend: { type: String, default: '' },
+  skillsRequired: { type: [String], default: [] },
+  eligibilityAcademicYears: { type: [String], default: [] },
+  eligibilityDepartments: { type: [String], default: [] },
+  eligibilitySpecializations: { type: [String], default: [] },
+  eligibilityCGPA: { type: Number, default: 0.0 },
+  eligibilityBacklogs: { type: Number, default: 0 },
+  eligibilityBatch: { type: String, default: '' },
+  eligibilityGender: { type: String, default: 'Everyone' },
+  eligibilityBatches: { type: [String], default: [] },
+  eligibilityCollegesSelection: { type: String, default: 'Current College' },
+  eligibilitySkills: { type: [String], default: [] },
+  placementType: { type: String, default: 'Full Time' },
+  registrationLink: { type: String, default: '' },
+  registrationDeadline: { type: Date },
+  interviewProcess: { type: String, default: '' },
+  selectionRounds: { type: [String], default: [] },
+  documentsRequired: { type: [String], default: [] },
+  duration: { type: String, default: '' },
+  isPaid: { type: Boolean, default: false },
+
+  // College Events
+  eventName: { type: String, default: '' },
+  eventBanner: { type: String, default: '' },
+  eventType: { type: String, default: '' },
+  organizingDepartment: { type: String, default: '' },
+  venue: { type: String, default: '' },
+  building: { type: String, default: '' },
+  hallNumber: { type: String, default: '' },
+  eventDate: { type: Date },
+  eventTime: { type: String, default: '' },
+  maxParticipants: { type: Number, default: 0 },
+  entryFee: { type: String, default: '' },
+  contactPerson: { type: String, default: '' },
+  contactNumber: { type: String, default: '' },
+
+  // Circular / Notice
+  circularNumber: { type: String, default: '' },
+  issuedBy: { type: String, default: '' },
+  subject: { type: String, default: '' },
+  effectiveDate: { type: Date },
+  pdfAttachment: { type: String, default: '' },
+  supportingDocuments: { type: [String], default: [] },
+
+  // Emergency Alert
+  alertCategory: { type: String, default: '' },
+  severity: { type: String, enum: ['Critical', 'High', 'Medium'], default: 'Medium' },
+  emergencyMessage: { type: String, default: '' },
+  instructions: { type: String, default: '' },
+  emergencyContacts: { type: [String], default: [] },
+  location: { type: String, default: '' },
+  affectedBuildings: { type: [String], default: [] },
+  alertStartTime: { type: Date },
+  alertEndTime: { type: Date },
+  sendPush: { type: Boolean, default: false },
+  sendEmail: { type: Boolean, default: false },
+  sendSMS: { type: Boolean, default: false },
+  requireAcknowledgement: { type: Boolean, default: false },
+  acknowledgedUsers: { type: [String], default: [] },
+  version: { type: Number, default: 1 },
+  updatedBy: { type: String, default: '' },
+  lastModifiedAt: { type: Date }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
+
 
 // College Alumni Record Schema
 const CollegeAlumniRecordSchema = new mongoose.Schema({
@@ -234,7 +373,56 @@ const ReportSchema = new mongoose.Schema({
   reason: { type: String, default: '' }
 }, { timestamps: true });
 
+// Placement Schema
+const PlacementSchema = new mongoose.Schema({
+  companyLogo: { type: String, default: '' },
+  companyName: { type: String, required: true },
+  jobRole: { type: String, required: true },
+  employmentType: { type: String, enum: ['Internship', 'Full Time', 'Full-Time', 'Internship + PPO', 'Contract', 'Apprenticeship'], required: true },
+  package: { type: String, default: '' },
+  packageVal: { type: Number, default: 0 },
+  location: { type: String, default: '' },
+  expiryDate: { type: Date, required: true },
+  description: { type: String, default: '' },
+  eligibility: { type: String, default: '' },
+  eligibleYears: { type: [String], default: [] },
+  eligibleDepartments: { type: [String], default: [] },
+  minimumCGPA: { type: Number, default: 0.0 },
+  maximumBacklogs: { type: Number, default: 0 },
+  eligibleBatches: { type: [String], default: [] },
+  eligibleSections: { type: [String], default: [] },
+  createdBy: { type: String, required: true },
+  createdByName: { type: String, default: '' },
+  createdByRole: { type: String, enum: ['Admin', 'Alumni'], required: true },
+  status: { type: String, enum: ['active', 'paused', 'archived', 'pending', 'trash'], default: 'active' },
+  isVerified: { type: Boolean, default: false },
+  referralAvailable: { type: Boolean, default: false },
+  contactAlumni: { type: String, default: '' },
+  college: { type: String, default: 'SR University', index: true },
+  
+  // Dynamic fields from broadcast system integration
+  companyWebsite: { type: String, default: '' },
+  workMode: { type: String, enum: ['Remote', 'Onsite', 'Hybrid'], default: 'Onsite' },
+  responsibilities: { type: String, default: '' },
+  requiredSkills: { type: [String], default: [] },
+  preferredSkills: { type: [String], default: [] },
+  registrationLink: { type: String, default: '' },
+  assessmentDate: { type: Date },
+  interviewDate: { type: Date },
+  joiningDate: { type: Date },
+  eligibleSpecializations: { type: [String], default: [] },
+  attachments: { type: [String], default: [] },
+  isPinned: { type: Boolean, default: false },
+  visibility: { type: String, enum: ['Public', 'Restricted', 'Private'], default: 'Public' },
+  views: { type: Number, default: 0 },
+  clicks: { type: Number, default: 0 },
+  applications: { type: Number, default: 0 },
+  savedCount: { type: Number, default: 0 },
+  deletedAt: { type: Date }
+}, { timestamps: true });
+
 module.exports = {
+  Placement: mongoose.model('Placement', PlacementSchema, 'placements'),
   AdminPost: mongoose.model('AdminPost', AdminPostSchema, 'admin_posts'),
   Alumni: mongoose.model('Alumni', AlumniSchema, 'alumni_profiles'),
   Post: mongoose.model('Post', PostSchema, 'alumni_posts'),
@@ -250,21 +438,32 @@ module.exports = {
   User: mongoose.model('User', new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     email: { type: String, required: true, index: true },
+    password: { type: String, default: '' },
+    passwordHistory: { type: [String], default: [] },
+    isEmailVerified: { type: Boolean, default: false },
+    mfaSecret: { type: String, default: '' },
+    mfaEnabled: { type: Boolean, default: false },
+    mfaType: { type: String, default: 'email' },
+    failedLoginAttempts: { type: Number, default: 0 },
+    lockUntil: { type: Date },
     name: { type: String, default: '' },
     role: { type: String, default: 'student' },
     department: { type: String, default: '' },
     batch: { type: String, default: '' },
+    cgpa: { type: Number, default: 0.0 },
+    backlogs: { type: Number, default: 0 },
+    academicYear: { type: String, default: '' },
     skills: { type: [String], default: [] },
     bio: { type: String, default: '' },
     interests: { type: [String], default: [] },
     clubs: { type: [String], default: [] },
     achievements: { type: [String], default: [] },
     profileImageUrl: { type: String, default: '' },
-    college: { type: String, default: '' },
+    college: { type: String, default: '', index: true },
     photos: { type: [String], default: [] },
     collegeEmail: { type: String, default: '', index: true },
-    personalEmail: { type: String, default: '', index: true },
-    rollNumber: { type: String, default: '' },
+    personalEmail: { type: String, default: '', index: true, get: decryptDeterministic, set: encryptDeterministic },
+    rollNumber: { type: String, default: '', get: decryptDeterministic, set: encryptDeterministic },
     linkedinUrl: { type: String, default: '' },
     githubUrl: { type: String, default: '' },
     projects: { type: [String], default: [] },
@@ -287,10 +486,11 @@ module.exports = {
     isSuspended: { type: Boolean, default: false },
     onboardingCompleted: { type: Boolean, default: false },
     onboardingStep: { type: Number, default: 1 }
-  }, { timestamps: true }), 'users'),
+  }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }), 'users'),
 
   StudentPost: mongoose.model('StudentPost', new mongoose.Schema({
     userId: { type: String, required: true },
+    college: { type: String, default: 'SR University', index: true },
     authorName: { type: String, default: '' },
     authorAvatar: { type: String, default: '' },
     isAnonymous: { type: Boolean, default: false },
@@ -338,6 +538,7 @@ module.exports = {
   Message: mongoose.model('Message', new mongoose.Schema({
     matchId: { type: String, required: true },
     senderId: { type: String, required: true },
+    college: { type: String, default: 'SR University', index: true },
     text: { type: String, required: true },
     timestamp: { type: Date, default: Date.now },
     read: { type: Boolean, default: false },
@@ -351,6 +552,7 @@ module.exports = {
 
   GroupChat: mongoose.model('GroupChat', new mongoose.Schema({
     name: { type: String, required: true },
+    college: { type: String, default: 'SR University', index: true },
     avatar: { type: String, default: '' },
     members: { type: [String], required: true },
     createdBy: { type: String, required: true },
@@ -368,6 +570,7 @@ module.exports = {
 
   Story: mongoose.model('Story', new mongoose.Schema({
     userId: { type: String, required: true },
+    college: { type: String, default: 'SR University', index: true },
     userName: { type: String, default: '' },
     userAvatar: { type: String, default: '' },
     image: { type: String, required: true },
@@ -418,7 +621,10 @@ module.exports.FeatureRequest = mongoose.model('FeatureRequest', FeatureRequestS
 // New schemas for enterprise-grade authentication system
 const CollegeDomainSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  domain: { type: String, required: true, unique: true }
+  domain: { type: String, required: true, unique: true },
+  status: { type: String, enum: ['active', 'disabled'], default: 'active' },
+  logoURL: { type: String, default: '' },
+  adminContact: { type: String, default: '' }
 }, { timestamps: true });
 CollegeDomainSchema.index({ domain: 1 });
 

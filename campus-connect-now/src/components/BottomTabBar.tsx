@@ -25,17 +25,17 @@ export const BottomTabBar = memo(() => {
   const navigate = useNavigate();
   const role = useAuthStore(s => s.role);
   const messages = useChatStore(s => s.messages);
-  const currentUserEmail = useChatStore(s => s.currentUserEmail);
+  const currentUserId = useAuthStore(s => s.uid);
 
   const tabs = role === 'alumni' ? alumniTabs : defaultTabs;
 
   const totalUnread = useMemo(() => {
     let count = 0;
     Object.values(messages).forEach(msgs => {
-      msgs.forEach(m => { if (!m.read && m.senderId !== currentUserEmail) count++; });
+      msgs.forEach(m => { if (!m.read && m.senderId !== currentUserId) count++; });
     });
     return count;
-  }, [messages, currentUserEmail]);
+  }, [messages, currentUserId]);
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 safe-bottom">
@@ -47,20 +47,16 @@ export const BottomTabBar = memo(() => {
               <motion.button
                 key={path}
                 onClick={() => navigate(path)}
-                whileTap={{ scale: 0.9 }}
+                whileTap={{ scale: 0.92 }}
                 className="relative flex flex-col items-center justify-center gap-1 px-4 py-2"
               >
-                {isActive && (
-                  <motion.div
-                    layoutId="tab-indicator"
-                    className="absolute top-0 left-1/2 h-1 w-6 rounded-full gradient-primary"
-                    style={{ transform: 'translateX(-50%)' }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  />
-                )}
                 <div className="relative flex items-center justify-center">
                   <Icon
-                    className={`h-[22px] w-[22px] transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
+                    className={`h-[22px] w-[22px] transition-all duration-200 ${
+                      isActive 
+                        ? 'text-primary scale-110 drop-shadow-[0_0_8px_rgba(109,95,245,0.45)]' 
+                        : 'text-muted-foreground hover:text-white'
+                    }`}
                     strokeWidth={isActive ? 2.5 : 1.8}
                   />
                   {label === 'Chat' && totalUnread > 0 && (
@@ -69,7 +65,7 @@ export const BottomTabBar = memo(() => {
                     </span>
                   )}
                 </div>
-                <span className={`text-[10px] font-medium transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground/70'}`}>
+                <span className={`text-[10px] font-semibold transition-all duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground/70'}`}>
                   {label}
                 </span>
               </motion.button>

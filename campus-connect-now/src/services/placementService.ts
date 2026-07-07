@@ -6,7 +6,7 @@ export interface PlacementOpportunity {
   companyLogo: string;
   companyName: string;
   jobRole: string;
-  employmentType: 'Internship' | 'Full Time' | 'Internship + PPO' | 'Contract';
+  employmentType: 'Internship' | 'Full Time' | 'Full-Time' | 'Internship + PPO' | 'Contract' | 'Apprenticeship';
   package: string;
   packageVal?: number;
   location: string;
@@ -21,13 +21,30 @@ export interface PlacementOpportunity {
   eligibleSections?: string[];
   createdBy: string;
   createdByName: string;
-  createdByRole: 'Admin' | 'Alumni';
-  status: 'active' | 'archived' | 'pending';
+  createdByRole: 'Admin' | 'Alumni' | 'ADMIN' | 'ALUMNI';
+  status: 'active' | 'archived' | 'pending' | 'trash';
   isVerified: boolean;
   referralAvailable: boolean;
   contactAlumni?: string;
   college: string;
   createdAt?: string;
+  updatedAt?: string;
+
+  // New production-grade fields
+  title?: string;
+  company?: string;
+  role?: string;
+  minCGPA?: number;
+  maxBacklogs?: number;
+  branches?: string[];
+  batches?: string[];
+  salary?: string;
+  registrationDeadline?: string;
+  driveDate?: string;
+  applyLink?: string;
+  placementType?: 'OFFICIAL' | 'ALUMNI_REFERRAL';
+  isEligible?: boolean;
+  ineligibilityReason?: string;
 }
 
 function getHeaders(contentType = 'application/json') {
@@ -47,7 +64,7 @@ export const placementService = {
    * Get eligible placements with search, filters, pagination
    */
   getPlacements: async (params: {
-    tab: 'admin' | 'alumni';
+    tab?: 'admin' | 'alumni';
     search?: string;
     filters?: string;
     page?: number;
@@ -55,7 +72,7 @@ export const placementService = {
   }) => {
     try {
       const queryParams = new URLSearchParams();
-      queryParams.append('tab', params.tab);
+      if (params.tab) queryParams.append('tab', params.tab);
       if (params.search) queryParams.append('search', params.search);
       if (params.filters) queryParams.append('filters', params.filters);
       if (params.page) queryParams.append('page', String(params.page));
@@ -69,6 +86,62 @@ export const placementService = {
       return result;
     } catch (error: any) {
       console.error('[PlacementService] Error fetching placements:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get official placements
+   */
+  getOfficialPlacements: async (params: {
+    search?: string;
+    filters?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params.search) queryParams.append('search', params.search);
+      if (params.filters) queryParams.append('filters', params.filters);
+      if (params.page) queryParams.append('page', String(params.page));
+      if (params.limit) queryParams.append('limit', String(params.limit));
+
+      const res = await fetch(`${getApiUrl()}/api/placements/official?${queryParams.toString()}`, {
+        headers: getHeaders()
+      });
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error || 'Failed to fetch official placements');
+      return result;
+    } catch (error: any) {
+      console.error('[PlacementService] Error fetching official placements:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get alumni referrals
+   */
+  getAlumniReferrals: async (params: {
+    search?: string;
+    filters?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params.search) queryParams.append('search', params.search);
+      if (params.filters) queryParams.append('filters', params.filters);
+      if (params.page) queryParams.append('page', String(params.page));
+      if (params.limit) queryParams.append('limit', String(params.limit));
+
+      const res = await fetch(`${getApiUrl()}/api/placements/referrals?${queryParams.toString()}`, {
+        headers: getHeaders()
+      });
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error || 'Failed to fetch alumni referrals');
+      return result;
+    } catch (error: any) {
+      console.error('[PlacementService] Error fetching alumni referrals:', error);
       throw error;
     }
   },

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
@@ -7,7 +7,8 @@ import { adminApi } from '@/services/api';
 import {
   Shield, AlertOctagon, Users, KeyRound, Monitor, Clock, 
   Search, Filter, ChevronLeft, ChevronRight, RefreshCw, 
-  ArrowLeft, Terminal, AlertTriangle, ShieldCheck
+  ArrowLeft, Terminal, AlertTriangle, ShieldCheck, Download,
+  Calendar, FileText, ChevronDown, User, Layers, Info, Trash2, X, Play
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,27 +40,50 @@ interface SecurityMetrics {
 export default function SecurityDashboardPage() {
   const role = useAuthStore(s => s.role);
   const college = useAuthStore(s => s.college) || 'SR University';
+  const currentAdminEmail = useAuthStore(s => s.email) || 'admin@sru.edu';
   const navigate = useNavigate();
 
   // Metrics state
   const [metrics, setMetrics] = useState<SecurityMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(true);
 
+  // Filter & Search states
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  
+  // Date states
+  const [datePreset, setDatePreset] = useState<string>('last-7-days');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
+
+  // Drawer / Filter options
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [eventFilter, setEventFilter] = useState<string>('');
+  const [roleFilter, setRoleFilter] = useState<string>('');
+  const [departmentFilter, setDepartmentFilter] = useState<string>('');
+  const [branchFilter, setBranchFilter] = useState<string>('');
+  const [batchFilter, setBatchFilter] = useState<string>('');
+  const [deviceFilter, setDeviceFilter] = useState<string>('');
+  const [browserFilter, setBrowserFilter] = useState<string>('');
+  const [osFilter, setOsFilter] = useState<string>('');
+  const [ipFilter, setIpFilter] = useState<string>('');
+  
+  // Sort states
+  const [sortField, setSortField] = useState<string>('createdAt');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
   // Logs table state
   const [logs, setLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(50);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
-  // Filter states
-  const [search, setSearch] = useState('');
-  const [eventFilter, setEventFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-
-  // Expandable row state
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  // UI state
+  const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
+  const [selectedSessionLog, setSelectedSessionLog] = useState<any | null>(null);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
 
   // Double check authorization
   useEffect(() => {
@@ -73,9 +97,46 @@ export default function SecurityDashboardPage() {
     const handler = setTimeout(() => {
       setDebouncedSearch(search);
       setPage(1); // Reset page on search change
-    }, 4000);
+    }, 400);
     return () => clearTimeout(handler);
   }, [search]);
+
+  // Handle preset date logic
+  useEffect(() => {
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    
+    let from = new Date();
+    from.setHours(0, 0, 0, 0);
+
+    if (datePreset === 'today') {
+      // today only
+    } else if (datePreset === 'yesterday') {
+      from.setDate(today.getDate() - 1);
+      const yesterdayEnd = new Date(from);
+      yesterdayEnd.setHours(23, 59, 59, 999);
+      setFromDate(from.toISOString().split('T')[0]);
+      setToDate(yesterdayEnd.toISOString().split('T')[0]);
+      return;
+    } else if (datePreset === 'last-7-days') {
+      from.setDate(today.getDate() - 7);
+    } else if (datePreset === 'last-30-days') {
+      from.setDate(today.getDate() - 30);
+    } else if (datePreset === 'this-month') {
+      from = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (datePreset === 'last-month') {
+      from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+      setFromDate(from.toISOString().split('T')[0]);
+      setToDate(lastMonthEnd.toISOString().split('T')[0]);
+      return;
+    } else if (datePreset === 'custom') {
+      return; // Do nothing, let user set it manually
+    }
+
+    setFromDate(from.toISOString().split('T')[0]);
+    setToDate(today.toISOString().split('T')[0]);
+  }, [datePreset]);
 
   const loadMetrics = async () => {
     setMetricsLoading(true);
@@ -93,14 +154,47 @@ export default function SecurityDashboardPage() {
     }
   };
 
+  const buildFilterParams = () => {
+    return {
+      page,
+      limit,
+      search: debouncedSearch || undefined,
+      status: statusFilter || undefined,
+      event: eventFilter || undefined,
+      fromDate: fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined,
+      toDate: toDate ? new Date(`${toDate}T23:59:59`).toISOString() : undefined,
+      sort: `${sortOrder === 'desc' ? '-' : ''}${sortField}`
+    };
+  };
+
   const loadLogs = async () => {
     setLogsLoading(true);
     try {
-      const res = await adminApi.getSecurityLogsPaged(page, 15, eventFilter, statusFilter, debouncedSearch);
+      const params = buildFilterParams();
+      const res = await adminApi.getEnterpriseSecurityLogs(params);
       if (res.success && res.data) {
-        setLogs(res.data.logs || []);
-        setTotalPages(res.data.pages || 1);
-        setTotalCount(res.data.total || 0);
+        // Apply frontend level advanced filters if any are set
+        let filteredData = res.data;
+        
+        if (roleFilter) {
+          filteredData = filteredData.filter((l: any) => l.userProfile?.role?.toLowerCase() === roleFilter.toLowerCase());
+        }
+        if (departmentFilter) {
+          filteredData = filteredData.filter((l: any) => l.userProfile?.department?.toLowerCase().includes(departmentFilter.toLowerCase()));
+        }
+        if (branchFilter) {
+          filteredData = filteredData.filter((l: any) => l.userProfile?.branch?.toLowerCase().includes(branchFilter.toLowerCase()));
+        }
+        if (batchFilter) {
+          filteredData = filteredData.filter((l: any) => l.userProfile?.batch?.toLowerCase() === batchFilter.toLowerCase());
+        }
+        if (ipFilter) {
+          filteredData = filteredData.filter((l: any) => l.ipAddress?.includes(ipFilter));
+        }
+
+        setLogs(filteredData);
+        setTotalPages(res.pagination?.pages || 1);
+        setTotalCount(res.pagination?.total || filteredData.length);
       } else {
         toast.error(res.error || 'Failed to load security logs');
       }
@@ -117,95 +211,184 @@ export default function SecurityDashboardPage() {
 
   useEffect(() => {
     loadLogs();
-  }, [page, eventFilter, statusFilter, debouncedSearch]);
+  }, [
+    page, 
+    limit, 
+    statusFilter, 
+    eventFilter, 
+    fromDate, 
+    toDate, 
+    debouncedSearch, 
+    sortField, 
+    sortOrder,
+    roleFilter,
+    departmentFilter,
+    branchFilter,
+    batchFilter,
+    ipFilter
+  ]);
 
   const handleRefreshAll = () => {
     loadMetrics();
     loadLogs();
-    toast.success('Security logs refreshed');
+    toast.success('Audit trail synchronized! 🔐');
   };
 
-  const getEventBadgeClass = (event: string) => {
-    if (event.includes('fail') || event.includes('lockout') || event.includes('block')) {
-      return 'bg-red-500/10 text-red-400 border border-red-500/20';
+  // Quick Action triggers
+  const triggerQuickFilter = (preset: string) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    setPage(1);
+    
+    // Reset all advanced filters
+    setStatusFilter('');
+    setEventFilter('');
+    setRoleFilter('');
+    setDepartmentFilter('');
+    setBranchFilter('');
+    setBatchFilter('');
+    setIpFilter('');
+    setSearch('');
+
+    if (preset === 'today-logins') {
+      setDatePreset('today');
+      setEventFilter('login_success');
+    } else if (preset === 'today-logouts') {
+      setDatePreset('today');
+      setEventFilter('logout');
+    } else if (preset === 'failed-logins') {
+      setStatusFilter('failure');
+      setEventFilter('login_fail_password');
+    } else if (preset === 'success-logins') {
+      setStatusFilter('success');
+      setEventFilter('login_success');
+    } else if (preset === 'mfa-events') {
+      setEventFilter('mfa_verify');
+    } else if (preset === 'suspicious') {
+      setStatusFilter('failure');
+      setSearch('lockout');
+    } else if (preset === 'locked') {
+      setEventFilter('account_locked');
+    } else if (preset === 'new-registers') {
+      setEventFilter('register_success');
     }
-    if (event.includes('mfa') || event.includes('reset') || event.includes('change')) {
-      return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
-    }
-    return 'bg-green-500/10 text-green-400 border border-green-500/20';
   };
 
-  const formatUserAgent = (ua?: string) => {
-    if (!ua) return 'Unknown';
-    if (ua.includes('Mobile') || ua.includes('Android') || ua.includes('iPhone')) {
-      return 'Mobile Device';
+  // Export handlers
+  const handleExport = (type: 'csv' | 'xlsx' | 'pdf') => {
+    setShowExportDropdown(false);
+    
+    const params = {
+      search: debouncedSearch || undefined,
+      status: statusFilter || undefined,
+      event: eventFilter || undefined,
+      fromDate: fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined,
+      toDate: toDate ? new Date(`${toDate}T23:59:59`).toISOString() : undefined
+    };
+
+    if (type === 'pdf') {
+      // Trigger a clean browser print mode formatted for security report
+      window.print();
+      return;
     }
-    if (ua.includes('Chrome')) return 'Chrome / Desktop';
-    if (ua.includes('Safari')) return 'Safari / Desktop';
-    if (ua.includes('Firefox')) return 'Firefox / Desktop';
-    return 'Desktop Client';
+
+    const exportUrl = adminApi.getEnterpriseSecurityLogsExportUrl(params);
+    
+    // Open in a new tab or trigger directly
+    toast.info(`Preparing ${type.toUpperCase()} security audit report... 📂`);
+    const link = document.createElement('a');
+    link.href = exportUrl;
+    link.download = `security_audit_report_${new Date().toISOString().split('T')[0]}.${type}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Session duration calculator helper
+  const calculateSessionDuration = (log: any) => {
+    if (!log.createdAt) return 'N/A';
+    // If login, look for a corresponding logout in the loaded logs
+    const logoutLog = logs.find(l => l.details?.sessionId === log.details?.sessionId && l.event === 'logout');
+    if (logoutLog) {
+      const diff = new Date(logoutLog.createdAt).getTime() - new Date(log.createdAt).getTime();
+      const minutes = Math.floor(diff / 60000);
+      if (minutes < 60) return `${minutes}m`;
+      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    }
+    return 'Active Session';
+  };
+
+  // Timeline computation
+  const userTimelineEvents = useMemo(() => {
+    if (!debouncedSearch) return [];
+    // Sort chronological (oldest to newest)
+    return [...logs]
+      .filter(l => l.email === debouncedSearch || l.userId === debouncedSearch)
+      .reverse();
+  }, [logs, debouncedSearch]);
+
+  const getFriendlyEventName = (ev: string) => {
+    return ev.replace(/_/g, ' ').toUpperCase();
   };
 
   return (
-    <div className="min-h-screen bg-[#09090B] pb-16 text-foreground font-sans select-none relative overflow-hidden">
+    <div className="min-h-screen bg-[#070709] pb-24 text-zinc-200 font-sans select-none relative overflow-x-hidden">
       
-      {/* Background Orbs */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.12),rgba(255,255,255,0))]" />
-      <div className="absolute top-1/3 right-1/4 h-[300px] w-[300px] rounded-full bg-violet-600/5 blur-[120px] pointer-events-none" />
+      {/* Entra ID styled glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_-10%,rgba(109,94,245,0.07),rgba(255,255,255,0))]" />
+      <div className="absolute top-1/4 -left-12 h-[350px] w-[350px] rounded-full bg-violet-600/5 blur-[130px] pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
         
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-zinc-900 pb-6 mb-8">
+        {/* Header Block */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 border-b border-zinc-900 pb-6 mb-8">
           <div className="flex items-center gap-4">
             <button
               onClick={() => navigate('/admin')}
-              className="h-10 w-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors"
+              className="h-10 w-10 rounded-xl bg-zinc-900 border border-zinc-800/80 flex items-center justify-center text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors"
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
             <div>
               <div className="flex items-center gap-2">
-                <Shield className="h-5 w-5 text-violet-400" />
-                <h1 className="text-2xl font-bold tracking-tight text-white">Security Guard & Audit Logs</h1>
+                <Shield className="h-5.5 w-5.5 text-violet-400 animate-pulse" />
+                <h1 className="text-2xl font-bold tracking-tight text-white font-sans">Security Audit & Event Logs</h1>
               </div>
-              <p className="text-xs text-zinc-400 mt-1 font-medium">{college} Enterprise Network Administration</p>
+              <p className="text-xs text-zinc-400 mt-1 font-medium">Enterprise Access, Authentication, and Session Investigation Center</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Button
               variant="outline"
               onClick={handleRefreshAll}
-              className="border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 h-10 px-4 rounded-xl flex items-center gap-2 text-xs font-semibold"
+              className="border-zinc-850 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 h-10 px-4 rounded-xl flex items-center gap-2 text-xs font-semibold"
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              <RefreshCw className="h-3.5 w-3.5" /> Synchronize Logs
             </Button>
-            <span className="text-[10px] px-3 py-1.5 rounded-full font-bold uppercase tracking-wider bg-violet-500/10 text-violet-400 border border-violet-500/20">
-              Active Shielding
+            <span className="text-[10px] px-3.5 py-1.5 rounded-full font-bold uppercase tracking-wider bg-violet-500/10 text-violet-400 border border-violet-500/20">
+              OKTA Shield Enabled
             </span>
           </div>
         </div>
 
-        {/* Quick Stats Summary Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-          
-          {/* Card 1: Active Sessions */}
-          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/40 min-h-[120px]">
+        {/* Audit Metrics */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4.5 mb-8">
+          {/* Card 1: Total Events */}
+          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/20 min-h-[120px] shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Active Sessions</span>
-              <div className="h-7 w-7 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
-                <Monitor className="h-4 w-4 text-green-400" />
+              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Security Events</span>
+              <div className="h-7 w-7 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                <Shield className="h-4 w-4 text-violet-400" />
               </div>
             </div>
             <div className="mt-4">
-              <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : metrics?.activeSessions}</h3>
-              <p className="text-[9px] text-zinc-500 font-medium mt-1">Hashed token validations</p>
+              <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : totalCount}</h3>
+              <p className="text-[9px] text-zinc-500 font-medium mt-1">Total filtered audit hits</p>
             </div>
           </div>
 
           {/* Card 2: Failed Logins */}
-          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/40 min-h-[120px]">
+          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/20 min-h-[120px]">
             <div className="flex items-center justify-between">
               <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Failed Logins</span>
               <div className="h-7 w-7 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center">
@@ -214,282 +397,281 @@ export default function SecurityDashboardPage() {
             </div>
             <div className="mt-4">
               <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : metrics?.totalFailedLogins}</h3>
-              <p className="text-[9px] text-zinc-500 font-medium mt-1">Total brute force indicators</p>
+              <p className="text-[9px] text-zinc-500 font-medium mt-1">Brute force indicators</p>
             </div>
           </div>
 
-          {/* Card 3: Active Lockouts */}
-          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/40 min-h-[120px]">
+          {/* Card 3: Active Sessions */}
+          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/20 min-h-[120px]">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Lockouts</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Active Sessions</span>
+              <div className="h-7 w-7 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+                <Monitor className="h-4 w-4 text-green-400" />
+              </div>
+            </div>
+            <div className="mt-4">
+              <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : metrics?.activeSessions}</h3>
+              <p className="text-[9px] text-zinc-500 font-medium mt-1">Active tokens verified</p>
+            </div>
+          </div>
+
+          {/* Card 4: Unique Logins */}
+          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/20 min-h-[120px]">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">MFA Verification</span>
               <div className="h-7 w-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
                 <KeyRound className="h-4 w-4 text-amber-400" />
               </div>
             </div>
             <div className="mt-4">
-              <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : metrics?.activeLockouts}</h3>
-              <p className="text-[9px] text-zinc-500 font-medium mt-1">Suspended IP range / accounts</p>
-            </div>
-          </div>
-
-          {/* Card 4: OTP Requests (24h) */}
-          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/40 min-h-[120px]">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">OTP Sent (24h)</span>
-              <div className="h-7 w-7 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                <Clock className="h-4 w-4 text-blue-400" />
-              </div>
-            </div>
-            <div className="mt-4">
               <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : metrics?.otpRequestsRecent}</h3>
-              <p className="text-[9px] text-zinc-500 font-medium mt-1">Verification / MFA prompts</p>
+              <p className="text-[9px] text-zinc-500 font-medium mt-1">MFA & login validations</p>
             </div>
           </div>
-
-          {/* Card 5: Registered Users */}
-          <div className="glass-card p-5 border border-zinc-900 rounded-2xl flex flex-col justify-between bg-zinc-950/40 min-h-[120px] col-span-2 lg:col-span-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Total Users</span>
-              <div className="h-7 w-7 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                <Users className="h-4 w-4 text-violet-400" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <h3 className="text-2xl font-extrabold text-white">{metricsLoading ? '...' : metrics?.totalUsers}</h3>
-              <p className="text-[9px] text-zinc-500 font-medium mt-1">Students + Alumni records</p>
-            </div>
-          </div>
-
         </div>
 
-        {/* Dashboard Visualizations */}
-        {!metricsLoading && metrics && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            
-            {/* Events Breakdown Chart (CSS Bars representation) */}
-            <div className="glass-card p-6 border border-zinc-900 rounded-2xl bg-zinc-950/40 lg:col-span-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-4 flex items-center gap-2">
-                <Terminal className="h-4 w-4 text-violet-400" /> 7-Day Event Distribution
-              </h3>
-              
-              <div className="space-y-4">
-                {metrics.eventsBreakdown.length === 0 ? (
-                  <p className="text-xs text-zinc-500 italic text-center py-6">No historical data available for this range.</p>
-                ) : (
-                  metrics.eventsBreakdown.map((item, idx) => {
-                    const total = item.count || 1;
-                    const successPct = Math.round((item.successCount / total) * 100);
-                    const failurePct = 100 - successPct;
-                    
-                    return (
-                      <div key={idx} className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs font-medium">
-                          <span className="text-zinc-300 capitalize font-mono text-[11px]">{item._id.replace(/_/g, ' ')}</span>
-                          <span className="text-zinc-500 text-[10px]">{item.count} hits ({successPct}% success)</span>
-                        </div>
-                        <div className="h-2 w-full bg-zinc-900 rounded-full flex overflow-hidden">
-                          <div 
-                            className="bg-green-500 h-full transition-all duration-300" 
-                            style={{ width: `${successPct}%` }}
-                            title={`Success: ${item.successCount}`}
-                          />
-                          <div 
-                            className="bg-red-500 h-full transition-all duration-300" 
-                            style={{ width: `${failurePct}%` }}
-                            title={`Failure: ${item.failureCount}`}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+        {/* Global Smart Search & Presets Grid */}
+        <div className="glass-card p-6 border border-zinc-900 rounded-2xl bg-zinc-950/30 mb-6 space-y-5">
+          <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
+            {/* Search inputs */}
+            <div className="relative w-full lg:flex-1">
+              <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Smart Search by user ID, roll number, email, IP address, session ID, device ID..."
+                className="w-full bg-[#0D0D11] border border-zinc-800 rounded-xl pl-10 pr-4 py-3 text-xs text-white placeholder:text-zinc-650 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 transition-all font-sans"
+              />
             </div>
 
-            {/* Critical Alerts / Recent Failures Log */}
-            <div className="glass-card p-6 border border-zinc-900 rounded-2xl bg-zinc-950/40">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-4 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-red-400" /> Security Critical Alerts
-              </h3>
+            {/* Date range selection */}
+            <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+              <select
+                value={datePreset}
+                onChange={e => setDatePreset(e.target.value)}
+                className="bg-[#0D0D11] border border-zinc-800 text-zinc-300 rounded-xl px-3 py-3 text-xs outline-none focus:ring-1 focus:ring-violet-500/30 font-medium shrink-0"
+              >
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="last-7-days">Last 7 Days</option>
+                <option value="last-30-days">Last 30 Days</option>
+                <option value="this-month">This Month</option>
+                <option value="last-month">Last Month</option>
+                <option value="custom">Custom Date Range</option>
+              </select>
 
-              <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1 scrollbar-thin">
-                {metrics.recentAlerts.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-8 text-zinc-500 text-xs gap-1.5">
-                    <ShieldCheck className="h-7 w-7 text-green-400" />
-                    <span>No critical failure events logged.</span>
+              {datePreset === 'custom' && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <input
+                    type="date"
+                    value={fromDate}
+                    onChange={e => setFromDate(e.target.value)}
+                    className="bg-[#0D0D11] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                  />
+                  <span className="text-zinc-650 text-xs">to</span>
+                  <input
+                    type="date"
+                    value={toDate}
+                    onChange={e => setToDate(e.target.value)}
+                    className="bg-[#0D0D11] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Advanced Filters Button */}
+              <Button
+                onClick={() => setShowFiltersDrawer(true)}
+                className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-3 text-xs rounded-xl hover:bg-zinc-800 flex items-center gap-2"
+              >
+                <Filter className="h-3.5 w-3.5 text-violet-400" /> Filters
+              </Button>
+
+              {/* Export Button */}
+              <div className="relative">
+                <Button
+                  onClick={() => setShowExportDropdown(!showExportDropdown)}
+                  className="bg-violet-650 text-white px-4.5 py-3 text-xs rounded-xl hover:bg-violet-755 flex items-center gap-2 font-semibold"
+                >
+                  <Download className="h-3.5 w-3.5" /> Export <ChevronDown className="h-3 w-3" />
+                </Button>
+
+                {showExportDropdown && (
+                  <div className="absolute right-0 mt-2 w-40 bg-[#0E0E12] border border-zinc-850 rounded-xl py-1.5 shadow-2xl z-50">
+                    <button
+                      onClick={() => handleExport('csv')}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-zinc-900 text-zinc-300 hover:text-white"
+                    >
+                      Export as CSV
+                    </button>
+                    <button
+                      onClick={() => handleExport('xlsx')}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-zinc-900 text-zinc-300 hover:text-white"
+                    >
+                      Export as Excel
+                    </button>
+                    <button
+                      onClick={() => handleExport('pdf')}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-zinc-900 text-zinc-300 hover:text-white"
+                    >
+                      Generate PDF Report
+                    </button>
                   </div>
-                ) : (
-                  metrics.recentAlerts.map((alert) => (
-                    <div key={alert._id} className="p-3 bg-red-950/10 border border-red-500/10 rounded-xl flex items-start gap-3">
-                      <div className="h-2.5 w-2.5 rounded-full bg-red-500 mt-1 animate-pulse shrink-0" />
-                      <div className="space-y-1">
-                        <div className="flex justify-between items-center gap-4">
-                          <span className="text-[10px] font-bold text-red-400 font-mono capitalize">{alert.event.replace(/_fail/g, '')} Fail</span>
-                          <span className="text-[9px] text-zinc-500">{new Date(alert.createdAt).toLocaleTimeString()}</span>
-                        </div>
-                        <p className="text-[10px] text-zinc-300 break-all">{alert.email || alert.userId || 'System Entity'}</p>
-                        <p className="text-[9px] text-zinc-500 font-mono">IP: {alert.ipAddress}</p>
-                      </div>
-                    </div>
-                  ))
                 )}
               </div>
             </div>
+          </div>
 
+          {/* Quick Filters Panel */}
+          <div className="border-t border-zinc-900/60 pt-4">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-2.5">Investigative Quick Actions</span>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: "Today's Logins", action: 'today-logins' },
+                { label: "Today's Logouts", action: 'today-logouts' },
+                { label: 'Failed Logins', action: 'failed-logins' },
+                { label: 'Successful Logins', action: 'success-logins' },
+                { label: 'MFA Events', action: 'mfa-events' },
+                { label: 'Suspicious Activity', action: 'suspicious' },
+                { label: 'Locked Accounts', action: 'locked' },
+                { label: 'New Registrations', action: 'new-registers' }
+              ].map((qf, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => triggerQuickFilter(qf.action)}
+                  className="px-3 py-1.5 bg-[#121217] border border-zinc-850 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white rounded-lg font-medium transition-colors"
+                >
+                  {qf.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* User Activity Chronological Timeline */}
+        {debouncedSearch && userTimelineEvents.length > 0 && (
+          <div className="glass-card p-6 border border-zinc-900 rounded-2xl bg-zinc-950/20 mb-6">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-4 flex items-center gap-2">
+              <Layers className="h-4 w-4 text-violet-400" /> User Chronological Activity Timeline ({debouncedSearch})
+            </h3>
+            
+            <div className="relative border-l border-zinc-900 ml-3 pl-6 space-y-4">
+              {userTimelineEvents.map((event, idx) => {
+                const isSuccess = event.status === 'success';
+                return (
+                  <div key={idx} className="relative">
+                    <div className={`absolute -left-[30px] top-1.5 h-3 w-3 rounded-full border border-[#070709] ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+                      <div>
+                        <span className="font-mono text-[10px] text-zinc-550 mr-3">{new Date(event.createdAt).toLocaleTimeString()}</span>
+                        <span className="font-semibold text-white font-mono">{getFriendlyEventName(event.event)}</span>
+                        <span className="text-zinc-450 ml-2">from IP {event.ipAddress}</span>
+                      </div>
+                      <span className={`text-[9px] uppercase font-bold ${isSuccess ? 'text-green-400' : 'text-red-400'}`}>
+                        {event.status}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
-        {/* Security Logs Filter Grid */}
-        <div className="glass-card p-6 border border-zinc-900 rounded-2xl bg-zinc-950/40 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-violet-400" /> Audit Trail Grid
-            </h3>
-
-            {/* Filter controls */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              
-              {/* Search */}
-              <div className="relative min-w-[200px] flex-1 md:flex-none">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-zinc-500" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Search IP, email, user ID..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder:text-zinc-600 outline-none focus:ring-2 focus:ring-violet-500/30"
-                />
-              </div>
-
-              {/* Event Filter */}
-              <div className="relative min-w-[120px]">
-                <Filter className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-500" />
-                <select
-                  value={eventFilter}
-                  onChange={e => { setEventFilter(e.target.value); setPage(1); }}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-8 pr-3 py-2 text-xs text-zinc-300 outline-none focus:ring-2 focus:ring-violet-500/30 appearance-none"
-                >
-                  <option value="">All Events</option>
-                  <option value="login">Login</option>
-                  <option value="login_fail_password">Password Fail</option>
-                  <option value="login_fail_no_user">User Not Found</option>
-                  <option value="mfa_initiated">MFA Sent</option>
-                  <option value="register_initiate">Register Init</option>
-                  <option value="register_attempt_duplicate">Duplicate Sign</option>
-                  <option value="password_reset_request_success">Reset Requested</option>
-                  <option value="password_reset_complete">Password Changed</option>
-                </select>
-              </div>
-
-              {/* Status Filter */}
+        {/* Table & Results Grid */}
+        <div className="glass-card border border-zinc-900 bg-zinc-950/40 rounded-2xl p-6 relative">
+          
+          <div className="flex items-center justify-between mb-4 text-xs text-zinc-500 font-medium">
+            <span>Showing logs with status {statusFilter || 'All'}</span>
+            <div className="flex items-center gap-2">
+              <span>Records per page:</span>
               <select
-                value={statusFilter}
-                onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
-                className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none focus:ring-2 focus:ring-violet-500/30"
+                value={limit}
+                onChange={e => { setLimit(Number(e.target.value)); setPage(1); }}
+                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1.5 py-0.5"
               >
-                <option value="">All Status</option>
-                <option value="success">Success</option>
-                <option value="failure">Failure</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={250}>250</option>
+                <option value={500}>500</option>
               </select>
-
             </div>
           </div>
 
-          {/* Audit Logs Table */}
           {logsLoading ? (
-            <div className="flex justify-center py-20">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+            <div className="space-y-3 py-10">
+              {[...Array(6)].map((_, idx) => (
+                <div key={idx} className="h-11 w-full bg-zinc-900/40 rounded-xl animate-pulse" />
+              ))}
             </div>
           ) : logs.length === 0 ? (
-            <div className="py-16 text-center text-zinc-500 italic text-xs border border-dashed border-zinc-800 rounded-xl">
-              No security log records match your filter criteria.
+            <div className="py-20 text-center rounded-2xl border border-dashed border-zinc-900 p-8">
+              <ShieldCheck className="h-10 w-10 text-zinc-650 mx-auto mb-3" />
+              <h3 className="text-sm font-semibold text-white">No Matching Security Records</h3>
+              <p className="text-xs text-zinc-500 mt-1.5 max-w-sm mx-auto">No security audits matched the selected search keyword or filtering criteria.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-zinc-900 text-[10px] text-zinc-500 font-bold uppercase tracking-wider bg-zinc-950/60">
-                    <th className="p-3.5">Timestamp</th>
-                    <th className="p-3.5">User Context</th>
-                    <th className="p-3.5">Security Event</th>
-                    <th className="p-3.5">Status</th>
-                    <th className="p-3.5">IP Address</th>
-                    <th className="p-3.5">Client Device</th>
-                    <th className="p-3.5">Actions</th>
+                  <tr className="border-b border-zinc-900 text-[10px] text-zinc-500 font-bold uppercase tracking-wider bg-zinc-950/60 sticky top-0 z-10 backdrop-blur-md">
+                    <th 
+                      onClick={() => { setSortField('createdAt'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Timestamp {sortField === 'createdAt' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
+                    <th className="p-4">User / Subject</th>
+                    <th className="p-4">Role</th>
+                    <th className="p-4">Event</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4">IP Address</th>
+                    <th className="p-4">Client Device</th>
+                    <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-900">
-                  {logs.map((log) => {
-                    const isExpanded = expandedLogId === log._id;
+                <tbody className="divide-y divide-zinc-900/60">
+                  {logs.map((log, idx) => {
+                    const isSuccess = log.status === 'success';
                     return (
-                      <React.Fragment key={log._id}>
-                        <tr 
-                          onClick={() => setExpandedLogId(isExpanded ? null : log._id)}
-                          className="hover:bg-zinc-900/40 transition-colors cursor-pointer"
-                        >
-                          <td className="p-3.5 text-[10px] text-zinc-400 whitespace-nowrap">
-                            {new Date(log.createdAt).toLocaleString()}
-                          </td>
-                          <td className="p-3.5 font-semibold text-white break-all max-w-[200px]">
-                            {log.email || log.userId || 'system'}
-                          </td>
-                          <td className="p-3.5">
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${getEventBadgeClass(log.event)}`}>
-                              {log.event}
-                            </span>
-                          </td>
-                          <td className="p-3.5">
-                            <span className={`text-[9px] font-extrabold uppercase ${log.status === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-                              {log.status}
-                            </span>
-                          </td>
-                          <td className="p-3.5 font-mono text-[10px] text-zinc-400">
-                            {log.ipAddress || 'unknown'}
-                          </td>
-                          <td className="p-3.5 text-zinc-400">
-                            {formatUserAgent(log.userAgent)}
-                          </td>
-                          <td className="p-3.5 text-violet-400 hover:text-violet-300 font-bold text-[10px] whitespace-nowrap">
-                            {isExpanded ? 'Hide Payload' : 'View Payload'}
-                          </td>
-                        </tr>
-
-                        {/* Expanded Payload Row */}
-                        <AnimatePresence>
-                          {isExpanded && (
-                            <tr>
-                              <td colSpan={7} className="p-0 bg-zinc-900/10">
-                                <motion.div
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  exit={{ opacity: 0, height: 0 }}
-                                  className="px-6 py-4 border-t border-b border-zinc-900"
-                                >
-                                  <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 font-mono text-[10px] text-zinc-300 overflow-x-auto space-y-2 max-w-full">
-                                    <div className="flex justify-between items-center text-zinc-500 border-b border-zinc-900 pb-2 mb-2 font-sans font-semibold">
-                                      <span>AUDIT PAYLOAD SPECIFICATION</span>
-                                      <span>ID: {log._id}</span>
-                                    </div>
-                                    <div><span className="text-violet-400">Timestamp:</span> {log.createdAt}</div>
-                                    <div><span className="text-violet-400">IP:</span> {log.ipAddress || 'Not Captured'}</div>
-                                    <div><span className="text-violet-400">UA:</span> {log.userAgent || 'Not Captured'}</div>
-                                    <div><span className="text-violet-400">Event:</span> {log.event}</div>
-                                    <div><span className="text-violet-400">Status:</span> {log.status}</div>
-                                    {log.details && Object.keys(log.details).length > 0 && (
-                                      <div>
-                                        <span className="text-violet-400">Metadata details:</span>
-                                        <pre className="mt-1 text-zinc-400 bg-zinc-900/60 p-2 rounded border border-zinc-900 overflow-x-auto">
-                                          {JSON.stringify(log.details, null, 2)}
-                                        </pre>
-                                      </div>
-                                    )}
-                                  </div>
-                                </motion.div>
-                              </td>
-                            </tr>
-                          )}
-                        </AnimatePresence>
-                      </React.Fragment>
+                      <tr 
+                        key={log._id || idx} 
+                        className="hover:bg-zinc-900/30 transition-colors cursor-pointer"
+                        onClick={() => setSelectedSessionLog(log)}
+                      >
+                        <td className="p-4 text-[10px] text-zinc-400 whitespace-nowrap">
+                          {new Date(log.createdAt).toLocaleString()}
+                        </td>
+                        <td className="p-4">
+                          <div className="flex flex-col">
+                            <span className="font-semibold text-white">{log.userProfile?.name || log.email || 'System'}</span>
+                            <span className="text-[10px] text-zinc-500 break-all">{log.email || log.userId}</span>
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <span className="text-[10px] uppercase font-bold text-zinc-450">{log.userProfile?.role || 'system'}</span>
+                        </td>
+                        <td className="p-4">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-zinc-900 text-zinc-300 border border-zinc-800">
+                            {log.event}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span className={`text-[9px] font-extrabold uppercase ${isSuccess ? 'text-green-400' : 'text-red-400'}`}>
+                            {log.status}
+                          </span>
+                        </td>
+                        <td className="p-4 font-mono text-[10px] text-zinc-400">
+                          {log.ipAddress || '127.0.0.1'}
+                        </td>
+                        <td className="p-4 text-zinc-450 whitespace-nowrap">
+                          {log.userAgent ? (log.userAgent.includes('Windows') ? 'Windows' : log.userAgent.includes('Mac') ? 'macOS' : 'Mobile') : 'Chrome'}
+                        </td>
+                        <td className="p-4 text-right text-violet-400 font-bold hover:text-violet-300">
+                          Inspect
+                        </td>
+                      </tr>
                     );
                   })}
                 </tbody>
@@ -501,21 +683,21 @@ export default function SecurityDashboardPage() {
           {!logsLoading && totalPages > 1 && (
             <div className="flex items-center justify-between border-t border-zinc-900 pt-5 mt-6">
               <span className="text-xs text-zinc-500">
-                Showing page <strong className="text-zinc-300">{page}</strong> of <strong className="text-zinc-300">{totalPages}</strong> ({totalCount} total events)
+                Page <strong className="text-zinc-300">{page}</strong> of <strong className="text-zinc-300">{totalPages}</strong> ({totalCount} entries)
               </span>
               
               <div className="flex items-center gap-2">
                 <button
                   disabled={page <= 1}
                   onClick={() => setPage(page - 1)}
-                  className="h-8 w-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed hover:border-zinc-700 transition-colors"
+                  className="h-8 w-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
                 <button
                   disabled={page >= totalPages}
                   onClick={() => setPage(page + 1)}
-                  className="h-8 w-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed hover:border-zinc-700 transition-colors"
+                  className="h-8 w-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -526,9 +708,257 @@ export default function SecurityDashboardPage() {
         </div>
 
       </div>
+
+      {/* FILTER DRAWER */}
+      <AnimatePresence>
+        {showFiltersDrawer && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowFiltersDrawer(false)}
+              className="fixed inset-0 bg-black z-40"
+            />
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-[#09090C] border-l border-zinc-900 p-6 z-50 shadow-2xl flex flex-col justify-between"
+            >
+              <div className="space-y-6 overflow-y-auto pr-1">
+                <div className="flex items-center justify-between pb-4 border-b border-zinc-900">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-violet-400" /> Advanced Filter Settings
+                  </h3>
+                  <button onClick={() => setShowFiltersDrawer(false)} className="text-zinc-500 hover:text-white">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Filters Forms */}
+                <div className="space-y-4">
+                  {/* Status */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Authentication Status</label>
+                    <select
+                      value={statusFilter}
+                      onChange={e => setStatusFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All Statuses</option>
+                      <option value="success">Success</option>
+                      <option value="failure">Failure</option>
+                    </select>
+                  </div>
+
+                  {/* Security Event */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Security Event</label>
+                    <select
+                      value={eventFilter}
+                      onChange={e => setEventFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All Events</option>
+                      <option value="login_success">Login Success</option>
+                      <option value="login_fail_password">Failed Login (Password)</option>
+                      <option value="login_fail_no_user">Failed Login (User Not Found)</option>
+                      <option value="mfa_initiated">MFA Initiated</option>
+                      <option value="mfa_verify">MFA Verified</option>
+                      <option value="logout">Logout</option>
+                      <option value="password_reset_request_success">Password Reset Requested</option>
+                      <option value="password_reset_complete">Password Reset Complete</option>
+                      <option value="account_locked">Account Locked</option>
+                      <option value="register_success">New Registration</option>
+                    </select>
+                  </div>
+
+                  {/* Subject Role */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">User Role</label>
+                    <select
+                      value={roleFilter}
+                      onChange={e => setRoleFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All Roles</option>
+                      <option value="student">Student</option>
+                      <option value="admin">Administrator</option>
+                      <option value="alumni">Alumni</option>
+                    </select>
+                  </div>
+
+                  {/* Academic Context */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Department / Branch</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. AIML, CSE"
+                      value={departmentFilter}
+                      onChange={e => setDepartmentFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    />
+                  </div>
+
+                  {/* Batch Year */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Graduation Batch</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 2026"
+                      value={batchFilter}
+                      onChange={e => setBatchFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    />
+                  </div>
+
+                  {/* IP Address */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">IP Filter</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 192.168.1."
+                      value={ipFilter}
+                      onChange={e => setIpFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-zinc-900 flex gap-2">
+                <Button
+                  onClick={() => {
+                    setStatusFilter('');
+                    setEventFilter('');
+                    setRoleFilter('');
+                    setDepartmentFilter('');
+                    setBranchFilter('');
+                    setBatchFilter('');
+                    setIpFilter('');
+                    toast.success('Filters cleared! 🧹');
+                  }}
+                  className="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 hover:bg-zinc-800 rounded-xl py-2 text-xs font-semibold"
+                >
+                  Clear Filters
+                </Button>
+                <Button
+                  onClick={() => setShowFiltersDrawer(false)}
+                  className="flex-1 bg-violet-650 hover:bg-violet-755 text-white rounded-xl py-2 text-xs font-semibold"
+                >
+                  Apply Filters
+                </Button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* SESSION INSPECTOR MODAL */}
+      <AnimatePresence>
+        {selectedSessionLog && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedSessionLog(null)}
+              className="fixed inset-0 bg-black z-40"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 m-auto max-h-[580px] w-full max-w-lg bg-[#09090C] border border-zinc-850 p-6 rounded-2xl z-50 shadow-2xl overflow-y-auto space-y-5"
+            >
+              <div className="flex justify-between items-center pb-3 border-b border-zinc-900">
+                <div className="flex items-center gap-2 text-zinc-300 font-bold text-sm">
+                  <ShieldCheck className="h-4.5 w-4.5 text-violet-400" />
+                  <span>Audit Session details</span>
+                </div>
+                <button onClick={() => setSelectedSessionLog(null)} className="text-zinc-550 hover:text-white">
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              {/* Session Meta */}
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div className="p-3 bg-zinc-900/20 border border-zinc-900 rounded-xl">
+                  <span className="text-[9px] uppercase font-bold text-zinc-550 block">Subject Context</span>
+                  <span className="font-semibold text-white block mt-0.5">{selectedSessionLog.userProfile?.name || 'System Operator'}</span>
+                  <span className="text-[10px] text-zinc-450 block break-all">{selectedSessionLog.email}</span>
+                </div>
+
+                <div className="p-3 bg-zinc-900/20 border border-zinc-900 rounded-xl">
+                  <span className="text-[9px] uppercase font-bold text-zinc-550 block">Session ID</span>
+                  <span className="font-mono text-[10px] text-violet-400 block mt-0.5 break-all">
+                    {selectedSessionLog.details?.sessionId || 'N/A'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Specifications List */}
+              <div className="bg-zinc-950 border border-zinc-900 p-4.5 rounded-xl space-y-3.5 text-xs">
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">Activity Type</span>
+                  <span className="font-mono text-zinc-300 font-semibold uppercase">{selectedSessionLog.event}</span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">Timestamp</span>
+                  <span className="text-zinc-300">{new Date(selectedSessionLog.createdAt).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">IP Address</span>
+                  <span className="text-zinc-300 font-mono">{selectedSessionLog.ipAddress || '127.0.0.1'}</span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">Session Status</span>
+                  <span className={`font-bold uppercase text-[10px] ${selectedSessionLog.status === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+                    {selectedSessionLog.status}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">Session Duration</span>
+                  <span className="text-zinc-350">{calculateSessionDuration(selectedSessionLog)}</span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">MFA Verified</span>
+                  <span className="text-zinc-300">{selectedSessionLog.userProfile?.mfaEnabled ? 'Yes' : 'No'}</span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-zinc-500 font-medium">Department context</span>
+                  <span className="text-zinc-300 font-semibold">{selectedSessionLog.userProfile?.department || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500 font-medium">Browser / Agent</span>
+                  <span className="text-zinc-350 text-[10px] max-w-[280px] break-words text-right">
+                    {selectedSessionLog.userAgent || 'Chrome Client'}
+                  </span>
+                </div>
+              </div>
+
+              {selectedSessionLog.details && Object.keys(selectedSessionLog.details).length > 0 && (
+                <div className="space-y-1.5 text-xs">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Extended payload JSON</span>
+                  <pre className="text-zinc-400 bg-zinc-950 p-3 rounded-xl border border-zinc-900 font-mono text-[9px] overflow-x-auto max-h-[140px] scrollbar-thin">
+                    {JSON.stringify(selectedSessionLog.details, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              <Button
+                onClick={() => setSelectedSessionLog(null)}
+                className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl py-2.5 text-xs font-semibold hover:bg-zinc-800"
+              >
+                Close Investigator
+              </Button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
-
-// Simple React.Fragment import fallback check for Vite builds
-import React from 'react';

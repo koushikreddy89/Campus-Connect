@@ -893,61 +893,89 @@ export default function ProfilePage() {
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }} 
-              className="space-y-3"
+              className="space-y-4"
             >
+              {/* Academic Metrics Row */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 flex flex-col justify-between shadow-lg">
+                  <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Academic CGPA</span>
+                  <div className="flex items-baseline gap-1 mt-3">
+                    <span className="text-3xl font-black text-[#16C784] tracking-tight">{profile.cgpa || '0.0'}</span>
+                    <span className="text-xs text-slate-400 font-semibold">/ 10.0</span>
+                  </div>
+                  <div className="w-full bg-white/5 h-1.5 rounded-full mt-4 overflow-hidden">
+                    <div className="bg-[#16C784] h-full rounded-full transition-all duration-500" style={{ width: `${(profile.cgpa || 0) * 10}%` }} />
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 flex flex-col justify-between shadow-lg">
+                  <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Active Backlogs</span>
+                  <div className="flex items-baseline gap-1 mt-3">
+                    <span className={`text-3xl font-black tracking-tight ${profile.backlogs > 0 ? 'text-[#F04438]' : 'text-slate-200'}`}>
+                      {profile.backlogs !== undefined ? profile.backlogs : '0'}
+                    </span>
+                    <span className="text-xs text-slate-400 font-semibold">Pending</span>
+                  </div>
+                  <div className="w-full bg-white/5 h-1.5 rounded-full mt-4 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${profile.backlogs > 0 ? 'bg-[#F04438]' : 'bg-white/10'}`} style={{ width: profile.backlogs > 0 ? '50%' : '0%' }} />
+                  </div>
+                </div>
+              </div>
+
               {profile.bio && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 text-primary" /> Bio
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-2">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 text-[#6D5EF5]" /> About Me
                   </p>
-                  <p className="text-sm text-foreground leading-relaxed">{profile.bio}</p>
+                  <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{profile.bio}</p>
                 </div>
               )}
 
               {profile.careerGoals && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <Target className="h-3.5 w-3.5 text-primary" /> Career Goals
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-2">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <Target className="h-3.5 w-3.5 text-[#6D5EF5]" /> Career Objectives
                   </p>
-                  <p className="text-sm text-foreground leading-relaxed">{profile.careerGoals}</p>
+                  <p className="text-xs text-slate-300 leading-relaxed">{profile.careerGoals}</p>
                 </div>
               )}
 
               {profile.skills && profile.skills.length > 0 && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <Briefcase className="h-3.5 w-3.5 text-primary" /> Skills
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <Briefcase className="h-3.5 w-3.5 text-[#6D5EF5]" /> Target Skills
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {profile.skills.map(s => (
-                      <span key={s} className="text-[11px] px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">{s}</span>
+                      <span key={s} className="text-[10px] px-3 py-1.5 rounded-xl bg-[#6D5EF5]/10 text-[#6D5EF5] border border-[#6D5EF5]/20 font-bold uppercase tracking-wide">{s}</span>
                     ))}
                   </div>
                 </div>
               )}
 
               {profile.interests && profile.interests.length > 0 && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-primary" /> Interests
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-[#6D5EF5]" /> Areas of Interest
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {profile.interests.map(i => (
-                      <span key={i} className="text-[11px] px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">{i}</span>
+                      <span key={i} className="text-[10px] px-3 py-1.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold uppercase tracking-wide">{i}</span>
                     ))}
                   </div>
                 </div>
               )}
 
               {profile.projects && profile.projects.length > 0 && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <GraduationCap className="h-3.5 w-3.5 text-primary" /> Projects
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <GraduationCap className="h-3.5 w-3.5 text-[#6D5EF5]" /> Academic Projects
                   </p>
                   <div className="space-y-2">
-                    {profile.projects.map((p, index) => (
-                      <div key={index} className="flex gap-2 items-start bg-secondary/20 p-2.5 rounded-xl border border-white/[0.02]">
-                        <span className="text-xs text-foreground font-semibold">• {p}</span>
+                    {profile.projects.map((proj, index) => (
+                      <div key={index} className="flex gap-2.5 items-center bg-white/[0.02] border border-white/[0.04] p-3.5 rounded-2xl">
+                        <span className="h-2 w-2 rounded-full bg-[#6D5EF5]" />
+                        <span className="text-xs text-slate-200 font-bold">{proj}</span>
                       </div>
                     ))}
                   </div>
@@ -955,14 +983,15 @@ export default function ProfilePage() {
               )}
 
               {profile.achievements && profile.achievements.length > 0 && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <Trophy className="h-3.5 w-3.5 text-primary" /> Achievements
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <Trophy className="h-3.5 w-3.5 text-[#6D5EF5]" /> Accomplishments & Awards
                   </p>
                   <div className="space-y-2">
-                    {profile.achievements.map((a, index) => (
-                      <div key={index} className="flex gap-2 items-start bg-secondary/20 p-2.5 rounded-xl border border-white/[0.02]">
-                        <span className="text-xs text-foreground font-semibold">• {a}</span>
+                    {profile.achievements.map((ach, index) => (
+                      <div key={index} className="flex gap-2.5 items-center bg-white/[0.02] border border-white/[0.04] p-3.5 rounded-2xl">
+                        <span className="h-2 w-2 rounded-full bg-[#16C784]" />
+                        <span className="text-xs text-slate-200 font-bold">{ach}</span>
                       </div>
                     ))}
                   </div>
@@ -970,13 +999,13 @@ export default function ProfilePage() {
               )}
 
               {profile.clubs && profile.clubs.length > 0 && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <Award className="h-3.5 w-3.5 text-primary" /> Clubs & Organizations
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <Award className="h-3.5 w-3.5 text-[#6D5EF5]" /> Clubs & Societies
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {profile.clubs.map(c => (
-                      <span key={c} className="text-[11px] px-2.5 py-1 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20 font-medium">{c}</span>
+                      <span key={c} className="text-[10px] px-3 py-1.5 rounded-xl bg-pink-500/10 text-pink-400 border border-pink-500/20 font-bold uppercase tracking-wide">{c}</span>
                     ))}
                   </div>
                 </div>
@@ -984,16 +1013,16 @@ export default function ProfilePage() {
 
               {/* Saved Referrals Section */}
               {savedReferrals && savedReferrals.length > 0 && (
-                <div className="glass-card p-4 border border-white/[0.05]">
-                  <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                    <Briefcase className="h-3.5 w-3.5 text-primary" /> Saved Referrals
+                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
+                    <Briefcase className="h-3.5 w-3.5 text-[#6D5EF5]" /> Bookmarked Referrals
                   </p>
                   <div className="space-y-3">
                     {savedReferrals.map((ref) => (
-                      <div key={ref.id || ref._id} className="flex flex-col bg-secondary/20 p-3.5 rounded-2xl border border-white/[0.02] relative group">
+                      <div key={ref.id || ref._id} className="flex flex-col bg-white/[0.02] p-4 rounded-2xl border border-white/[0.04] relative group">
                         <div className="flex justify-between items-start">
                           <div>
-                            <h4 className="text-xs font-bold text-foreground">{ref.jobTitle || ref.role}</h4>
+                            <h4 className="text-xs font-black text-white">{ref.jobTitle || ref.role}</h4>
                             <p className="text-[10px] text-slate-400 mt-0.5">{ref.companyName || ref.company} • {ref.location || 'Remote'}</p>
                           </div>
                           {(ref.applicationUrl || ref.applicationLink) && (
@@ -1003,17 +1032,17 @@ export default function ProfilePage() {
                                 alumniProfileService.trackReferralApply(ref.id || ref._id).catch(console.error);
                                 window.open(ref.applicationUrl || ref.applicationLink, '_blank');
                               }}
-                              className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline font-semibold"
+                              className="inline-flex items-center gap-1 text-[10px] text-[#6D5EF5] hover:underline font-black uppercase tracking-wider"
                             >
                               Apply Now
                             </button>
                           )}
                         </div>
                         {ref.description && (
-                          <p className="text-[11px] text-slate-400 mt-1.5 line-clamp-2">{ref.description}</p>
+                          <p className="text-xs text-slate-400 mt-2 line-clamp-2">{ref.description}</p>
                         )}
-                        <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-white/5 text-[10px] text-slate-500">
-                          <span>By {ref.authorName}</span>
+                        <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-white/[0.04] text-[10px] text-slate-500">
+                          <span className="font-medium">Shared by {ref.authorName}</span>
                           <button
                             onClick={async () => {
                               try {
@@ -1025,9 +1054,9 @@ export default function ProfilePage() {
                                 toast.error('Failed to unsave');
                               }
                             }}
-                            className="text-red-400 hover:text-red-300 font-semibold"
+                            className="text-[#F04438] hover:text-[#F04438]/80 font-bold uppercase tracking-wider"
                           >
-                            Unsave
+                            Remove
                           </button>
                         </div>
                       </div>

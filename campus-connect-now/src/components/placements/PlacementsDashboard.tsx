@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, Filter, Plus, Briefcase, MapPin, DollarSign, 
@@ -27,6 +28,7 @@ const PRESET_LOGOS = [
 ];
 
 export default function PlacementsDashboard() {
+  const navigate = useNavigate();
   const role = useAuthStore(s => s.role);
   const college = useAuthStore(s => s.college) || 'SR University';
   const userId = useAuthStore(s => s.uid);
@@ -63,14 +65,18 @@ export default function PlacementsDashboard() {
   
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch Placements via react-query
+  // Fetch Placements via react-query (separate endpoints for Official and Referrals)
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['placements', college, activeTab, searchQuery, selectedFilters.join(',')],
-    queryFn: () => placementService.getPlacements({
-      tab: activeTab,
-      search: searchQuery || undefined,
-      filters: selectedFilters.length > 0 ? selectedFilters.join(',') : undefined
-    }),
+    queryFn: () => {
+      const params = {
+        search: searchQuery || undefined,
+        filters: selectedFilters.length > 0 ? selectedFilters.join(',') : undefined
+      };
+      return activeTab === 'admin'
+        ? placementService.getOfficialPlacements(params)
+        : placementService.getAlumniReferrals(params);
+    },
     staleTime: 3000
   });
 
@@ -78,9 +84,9 @@ export default function PlacementsDashboard() {
 
   const handleFilterToggle = (filterName: string) => {
     // Mutual exclusivity for sorting filters
-    if (['Newest', 'Closing Soon', 'High Package'].includes(filterName)) {
+    if (['Newest', 'Closing Soon', 'High Package', 'Oldest'].includes(filterName)) {
       setSelectedFilters(prev => {
-        const cleaned = prev.filter(f => !['Newest', 'Closing Soon', 'High Package'].includes(f));
+        const cleaned = prev.filter(f => !['Newest', 'Closing Soon', 'High Package', 'Oldest'].includes(f));
         return prev.includes(filterName) ? cleaned : [...cleaned, filterName];
       });
     } else {
@@ -341,13 +347,26 @@ export default function PlacementsDashboard() {
                     Referral Available
                   </button>
                 )}
-              </div>
 
+                {role === 'student' && (
+                  <button
+                    onClick={() => handleFilterToggle('Eligible Only')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border ${
+                      selectedFilters.includes('Eligible Only')
+                        ? 'bg-blue-500 border-blue-500 text-white'
+                        : 'bg-slate-900/40 border-white/5 text-muted-foreground hover:text-white'
+                    }`}
+                  >
+                    Eligible Only
+                  </button>
+                )}
+              </div>
+ 
               {/* Sorting Filters */}
               <div className="pt-2 border-t border-white/5 space-y-1.5">
                 <span className="text-[10px] text-muted-foreground font-semibold">Sort By:</span>
                 <div className="flex gap-1.5">
-                  {['Newest', 'Closing Soon', 'High Package'].map(s => (
+                  {['Newest', 'Oldest', 'Closing Soon', 'High Package'].map(s => (
                     <button
                       key={s}
                       onClick={() => handleFilterToggle(s)}
@@ -402,96 +421,140 @@ export default function PlacementsDashboard() {
           </div>
         ) : (
           // Grid/List of Placement Opportunities
-          <div className="grid grid-cols-1 gap-4.5">
+          // Grid/List of Placement Opportunities
+          <div className="grid grid-cols-1 gap-6">
             {placements.map((placement: PlacementOpportunity) => {
-              const daysLeft = Math.ceil((new Date(placement.expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24));
+              const daysLeft = Math.ceil((new Date(placement.expiryDate || placement.registrationDeadline || '').getTime() - Date.now()) / (1000 * 3600 * 24));
               const isClosingSoon = daysLeft > 0 && daysLeft <= 3;
               const isExpired = daysLeft <= 0;
+
+              const resolvedCompany = placement.company || placement.companyName || '';
+              const resolvedRole = placement.role || placement.jobRole || '';
+              const resolvedSalary = placement.salary || placement.package || 'Not Specified';
+              const resolvedBranches = placement.branches && placement.branches.length > 0 ? placement.branches : (placement.eligibleDepartments || []);
+              const resolvedBatches = placement.batches && placement.batches.length > 0 ? placement.batches : (placement.eligibleBatches || []);
+              const resolvedCGPA = placement.minCGPA !== undefined ? placement.minCGPA : (placement.minimumCGPA || 0.0);
+              const resolvedBacklogs = placement.maxBacklogs !== undefined ? placement.maxBacklogs : (placement.maximumBacklogs || 0);
 
               return (
                 <motion.div
                   layoutId={`placement-card-${placement._id || placement.id}`}
                   key={placement._id || placement.id}
-                  onClick={() => setSelectedPlacement(placement)}
-                  className="glass-card hover-glow rounded-2xl p-4.5 border border-white/5 bg-slate-950/30 backdrop-blur-sm cursor-pointer flex flex-col justify-between gap-4.5 transition-all"
-                  whileHover={{ y: -3 }}
+                  onClick={() => navigate(`/placement/${placement._id || placement.id}`)}
+                  className="group relative overflow-hidden rounded-3xl border border-white/[0.06] bg-[#121826] p-6 shadow-xl transition-all duration-300 hover:border-[#6D5EF5]/30 hover:shadow-2xl hover:shadow-[#6D5EF5]/5 cursor-pointer"
+                  whileHover={{ y: -4 }}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex gap-3.5">
-                      {renderLogo(placement.companyLogo, placement.companyName)}
-                      <div>
-                        <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                          {placement.jobRole}
-                          {placement.createdByRole === 'Admin' ? (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                    {/* LEFT SECTION */}
+                    <div className="flex items-start gap-4.5 lg:max-w-[35%]">
+                      {renderLogo(placement.companyLogo, resolvedCompany, 'h-16 w-16 text-2xl')}
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-lg font-extrabold text-white tracking-tight leading-snug group-hover:text-[#6D5EF5] transition-colors">
+                            {resolvedRole}
+                          </h3>
+                          {placement.createdByRole === 'ADMIN' || placement.placementType === 'OFFICIAL' ? (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-wider">
                               <Shield className="w-2.5 h-2.5" />
                               Official
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-violet-500/10 text-violet-400 border border-violet-500/20 uppercase tracking-wider">
                               <UserCheck className="w-2.5 h-2.5" />
-                              Alumni
+                              Referral
                             </span>
                           )}
-                        </h3>
-                        <p className="text-xs text-muted-foreground mt-0.5 font-medium">{placement.companyName}</p>
+                        </div>
+                        <p className="text-sm font-semibold text-slate-300">{resolvedCompany}</p>
+                        
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground pt-1.5">
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5" />
+                            {placement.location}
+                          </span>
+                          <span>•</span>
+                          <span>{placement.employmentType}</span>
+                          <span>•</span>
+                          <span>{placement.workMode || 'Onsite'}</span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Delete capability */}
-                    {(role === 'admin' || userId === placement.createdBy) && (
-                      <button
-                        onClick={(e) => handleDeletePlacement(placement._id || placement.id || '', e)}
-                        className="p-1.5 rounded-lg hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+                    {/* CENTER SECTION */}
+                    <div className="flex-1 flex flex-col md:flex-row md:items-center justify-between gap-6 border-t border-b border-white/[0.04] lg:border-t-0 lg:border-b-0 py-4 lg:py-0">
+                      {/* Package/Salary */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest block">Estimated Package</span>
+                        <div className="text-2xl font-black text-[#16C784] tracking-tight">
+                          {resolvedSalary}
+                        </div>
+                      </div>
 
-                  {/* Highlights Grid */}
-                  <div className="grid grid-cols-3 gap-2 bg-slate-900/30 rounded-xl p-2.5 border border-white/5">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                      <span className="text-[10px] font-semibold truncate text-slate-300">{placement.location}</span>
+                      {/* Eligibility Chips */}
+                      <div className="flex flex-wrap gap-1.5 max-w-md">
+                        {resolvedBranches.slice(0, 2).map((b) => (
+                          <span key={b} className="px-2.5 py-1 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[10px] font-bold text-slate-300 uppercase">
+                            {b}
+                          </span>
+                        ))}
+                        {resolvedBranches.length > 2 && (
+                          <span className="px-2.5 py-1 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[10px] font-bold text-slate-400">
+                            +{resolvedBranches.length - 2} more
+                          </span>
+                        )}
+                        {resolvedBatches.map((b) => (
+                          <span key={b} className="px-2.5 py-1 rounded-xl bg-[#6D5EF5]/10 border border-[#6D5EF5]/20 text-[10px] font-bold text-[#6D5EF5] uppercase">
+                            {b}
+                          </span>
+                        ))}
+                        <span className="px-2.5 py-1 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[10px] font-bold text-blue-400">
+                          CGPA {resolvedCGPA}+
+                        </span>
+                        <span className="px-2.5 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-bold text-indigo-400">
+                          {resolvedBacklogs === 0 ? 'No Backlogs' : `Max Backlogs: ${resolvedBacklogs}`}
+                        </span>
+                        <span className={`px-2.5 py-1 rounded-xl text-[10px] font-bold ${isClosingSoon ? 'bg-[#FFB020]/10 border-[#FFB020]/20 text-[#FFB020]' : 'bg-white/5 border-white/10 text-slate-300'}`}>
+                          {isExpired ? 'Expired' : `${daysLeft} days left`}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <DollarSign className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                      <span className="text-[10px] font-semibold truncate text-slate-300">{placement.package || 'Not Specified'}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-muted-foreground justify-end">
-                      <Calendar className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                      <span className={`text-[10px] font-bold ${isClosingSoon ? 'text-amber-400' : 'text-slate-300'}`}>
-                        {isExpired ? 'Expired' : `${daysLeft}d left`}
-                      </span>
-                    </div>
-                  </div>
 
-                  {/* Eligibility Tags */}
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-white/5 justify-between">
-                    <div className="flex flex-wrap gap-1">
-                      {placement.employmentType && (
-                        <span className="px-2 py-0.5 rounded-lg text-[9px] font-bold bg-white/5 text-slate-300 border border-white/10 uppercase">
-                          {placement.employmentType}
-                        </span>
+                    {/* RIGHT SECTION */}
+                    <div className="flex items-center lg:flex-col lg:items-end justify-between lg:justify-center gap-3">
+                      {/* Eligibility Badge */}
+                      {role === 'student' && (
+                        placement.isEligible === false ? (
+                          <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-[#F04438]/10 text-[#F04438] border border-[#F04438]/20 uppercase tracking-wide">
+                            Not Eligible
+                          </span>
+                        ) : (
+                          <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-[#16C784]/10 text-[#16C784] border border-[#16C784]/20 uppercase tracking-wide">
+                            Eligible
+                          </span>
+                        )
                       )}
-                      {placement.minimumCGPA > 0 && (
-                        <span className="px-2 py-0.5 rounded-lg text-[9px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/25">
-                          Min CGPA: {placement.minimumCGPA}
-                        </span>
-                      )}
-                      {placement.maximumBacklogs !== undefined && (
-                        <span className="px-2 py-0.5 rounded-lg text-[9px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/25">
-                          Max Backlogs: {placement.maximumBacklogs}
-                        </span>
-                      )}
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="px-5 py-2.5 rounded-2xl bg-[#6D5EF5] hover:bg-[#6D5EF5]/90 text-white text-xs font-bold transition-all shadow-lg shadow-[#6D5EF5]/20 group-hover:scale-[1.02]"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/placement/${placement._id || placement.id}`);
+                          }}
+                        >
+                          View Details
+                        </button>
+                        
+                        {(role === 'admin' || userId === placement.createdBy) && (
+                          <button
+                            onClick={(e) => handleDeletePlacement(placement._id || placement.id || '', e)}
+                            className="p-2.5 rounded-2xl border border-white/5 bg-white/5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-all active:scale-95"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    
-                    {placement.referralAvailable && (
-                      <span className="px-2 py-0.5 rounded-lg text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 uppercase">
-                        Referral Available
-                      </span>
-                    )}
                   </div>
                 </motion.div>
               );
@@ -500,7 +563,7 @@ export default function PlacementsDashboard() {
         )}
       </div>
 
-      {/* Details Slide-up Drawer/Modal */}
+      {/* Details Slide-up Drawer/Modal (Simplified fallback) */}
       <AnimatePresence>
         {selectedPlacement && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">

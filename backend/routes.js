@@ -197,10 +197,12 @@ const requireAuth = async (req, res, next) => {
   try {
     let token = null;
     
-    // Support Auth header first, fallback to cookies
+    // Support Auth header first, fallback to query param, then to cookies
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
     } else if (req.cookies && req.cookies.access_token) {
       token = req.cookies.access_token;
     }
@@ -2614,7 +2616,7 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
     postData.createdByName = req.user.role === 'admin' ? 'Campus Admin' : 'Campus Admin';
     postData.college = req.user.college || 'SR University';
 
-    // If category is placement or internship, create a synced Placement document
+    // If category is placement or internship, save ONLY in the Placement collection (Single Source of Truth)
     if (postData.category === 'placement' || postData.category === 'internship') {
       const isIntern = postData.category === 'internship';
       
@@ -2629,23 +2631,23 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
 
       const placement = new Placement({
         companyLogo: postData.companyLogo || postData.imageURL || '',
-        companyName: postData.companyName || (postData.title && postData.title.includes(':') ? postData.title.split(':')[0].trim() : postData.title || ''),
-        jobRole: postData.jobRole || postData.internshipRole || postData.title,
+        company: postData.companyName || (postData.title && postData.title.includes(':') ? postData.title.split(':')[0].trim() : postData.title || ''),
+        role: postData.jobRole || postData.internshipRole || postData.title,
         employmentType: isIntern ? 'Internship' : (postData.employmentType || 'Full Time'),
-        package: String(pkgStr || ''),
+        salary: String(pkgStr || ''),
         packageVal: computedPackageVal,
         location: postData.location || postData.venue || 'Remote',
-        expiryDate: new Date(expDate),
+        registrationDeadline: new Date(expDate),
         description: postData.content || postData.description || postData.internshipDescription || '',
         eligibility: postData.eligibility || '',
-        eligibleYears: postData.eligibilityAcademicYears || postData.eligibleYears || [],
-        eligibleDepartments: postData.eligibilityDepartments || postData.eligibleDepartments || [],
-        minimumCGPA: postData.eligibilityCGPA || postData.minimumCGPA || 0.0,
-        maximumBacklogs: postData.eligibilityBacklogs || postData.maximumBacklogs || 0,
-        eligibleBatches: postData.eligibilityBatch ? [postData.eligibilityBatch] : (postData.eligibleBatches || []),
+        branches: postData.eligibilityDepartments || postData.eligibleDepartments || [],
+        minCGPA: postData.eligibilityCGPA || postData.minimumCGPA || 0.0,
+        maxBacklogs: postData.eligibilityBacklogs || postData.maximumBacklogs || 0,
+        batches: postData.eligibilityBatch ? [postData.eligibilityBatch] : (postData.eligibleBatches || []),
         createdBy: req.user.userId,
         createdByName: postData.createdByName,
-        createdByRole: 'Admin',
+        createdByRole: 'ADMIN',
+        placementType: 'OFFICIAL',
         status: postData.status || 'active',
         isVerified: true,
         college: postData.college,
@@ -2654,20 +2656,45 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
         workMode: postData.workMode || postData.internshipMode || 'Onsite',
         responsibilities: postData.responsibilities || '',
         requiredSkills: postData.skillsRequired || postData.requiredSkills || [],
-        registrationLink: postData.registrationLink || postData.applyLink || '',
+        applyLink: postData.registrationLink || postData.applyLink || '',
         assessmentDate: postData.assessmentDate ? new Date(postData.assessmentDate) : undefined,
         interviewDate: postData.interviewDate ? new Date(postData.interviewDate) : undefined,
         joiningDate: postData.joiningDate ? new Date(postData.joiningDate) : undefined,
         eligibleSpecializations: postData.eligibilitySpecializations || [],
         attachments: postData.attachments || (postData.pdfAttachment ? [postData.pdfAttachment] : []),
         isPinned: postData.isPinned || false,
-        visibility: postData.visibility || 'Public'
+        visibility: postData.visibility || 'Public',
+        eligibleYears: postData.eligibilityAcademicYears || []
       });
 
       await placement.save();
-      postData.relatedId = placement._id.toString();
+
+      // Return formatted post to satisfy client Expectations
+      const formattedPost = {
+        _id: placement._id,
+        id: placement._id.toString(),
+        title: placement.title || `Placement Drive: ${placement.companyName} - ${placement.jobRole}`,
+        content: placement.description,
+        description: placement.description,
+        category: postData.category,
+        imageURL: placement.companyLogo || '',
+        college: placement.college,
+        createdBy: placement.createdBy,
+        createdByName: 'Campus Admin',
+        isPinned: placement.isPinned || false,
+        status: placement.status,
+        relatedId: placement._id.toString(),
+        companyName: placement.companyName,
+        companyLogo: placement.companyLogo,
+        jobRole: placement.jobRole,
+        employmentType: placement.employmentType,
+        package: placement.package,
+        registrationDeadline: placement.expiryDate,
+        createdAt: placement.createdAt,
+        updatedAt: placement.updatedAt
+      };
       
-      // Asynchronously notify eligible students
+      // Notify only eligible students asynchronously
       process.nextTick(async () => {
         try {
           const students = await User.find({ role: 'student', college: postData.college });
@@ -2679,15 +2706,8 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
             const studentYear = s.academicYear || '';
             const studentBatch = s.batch || '';
 
-            const yearMatch = placement.eligibleYears.length === 0 || placement.eligibleYears.includes(studentYear);
-            const deptMatch = placement.eligibleDepartments.length === 0 || 
-                              placement.eligibleDepartments.includes("All Departments") || 
-                              getDepartmentEquivalents(studentDept).some(d => placement.eligibleDepartments.includes(d));
-            const cgpaMatch = studentCGPA >= placement.minimumCGPA;
-            const backlogsMatch = studentBacklogs <= placement.maximumBacklogs;
-            const batchMatch = placement.eligibleBatches.length === 0 || placement.eligibleBatches.includes(studentBatch);
-
-            if (yearMatch && deptMatch && cgpaMatch && backlogsMatch && batchMatch) {
+            const eligibilityInfo = checkPlacementEligibility(s, placement);
+            if (eligibilityInfo.eligible) {
               notifications.push({
                 userId: s.userId,
                 type: 'placement',
@@ -2705,6 +2725,8 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
           console.error('[Notification Engine] Error dispatching notifications:', err.message);
         }
       });
+
+      return res.status(201).json({ success: true, data: formattedPost });
     }
 
     const newPost = new AdminPost(postData);
@@ -2715,7 +2737,7 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/admin/posts - Get all admin posts (excluding trash)
+// GET /api/admin/posts - Get all admin posts and placements combined (excluding trash)
 router.get('/admin/posts', requireAuth, async (req, res) => {
   try {
     const { college } = req.query;
@@ -2724,169 +2746,248 @@ router.get('/admin/posts', requireAuth, async (req, res) => {
       query.college = new RegExp(college, 'i');
     }
     const posts = await AdminPost.find(query).sort({ isPinned: -1, createdAt: -1 });
-    res.json({ success: true, data: posts });
+    
+    // Fetch official placements
+    const placementQuery = { status: { $ne: 'trash' }, placementType: 'OFFICIAL' };
+    if (college) {
+      placementQuery.college = new RegExp(college, 'i');
+    }
+    const placements = await Placement.find(placementQuery).sort({ isPinned: -1, createdAt: -1 });
+    
+    // Map placements to match announcement fields
+    const formattedPlacements = placements.map(p => ({
+      _id: p._id,
+      id: p._id.toString(),
+      title: p.title || `Placement Drive: ${p.companyName} - ${p.jobRole}`,
+      content: p.description,
+      description: p.description,
+      category: p.employmentType === 'Internship' ? 'internship' : 'placement',
+      imageURL: p.companyLogo || '',
+      college: p.college,
+      createdBy: p.createdBy,
+      createdByName: 'Campus Admin',
+      isPinned: p.isPinned || false,
+      status: p.status,
+      relatedId: p._id.toString(),
+      companyName: p.companyName,
+      companyLogo: p.companyLogo,
+      jobRole: p.jobRole,
+      employmentType: p.employmentType,
+      package: p.package,
+      registrationDeadline: p.expiryDate,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt
+    }));
+
+    const combined = [...posts, ...formattedPlacements].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    res.json({ success: true, data: combined });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// GET /api/admin/posts/trash - Get soft-deleted admin posts
+// GET /api/admin/posts/trash - Get soft-deleted admin posts and placements
 router.get('/admin/posts/trash', requireAuth, async (req, res) => {
   try {
     const college = req.user.college || 'SR University';
     const query = { college, status: 'trash' };
     const posts = await AdminPost.find(query).sort({ deletedAt: -1 });
-    res.json({ success: true, data: posts });
+    const placements = await Placement.find({ college, status: 'trash', placementType: 'OFFICIAL' }).sort({ deletedAt: -1 });
+
+    const formattedPlacements = placements.map(p => ({
+      _id: p._id,
+      id: p._id.toString(),
+      title: p.title || `Placement Drive: ${p.company} - ${p.role}`,
+      content: p.description,
+      description: p.description,
+      category: p.employmentType === 'Internship' ? 'internship' : 'placement',
+      imageURL: p.companyLogo || '',
+      college: p.college,
+      createdBy: p.createdBy,
+      createdByName: 'Campus Admin',
+      isPinned: p.isPinned || false,
+      status: p.status,
+      relatedId: p._id.toString(),
+      companyName: p.companyName,
+      companyLogo: p.companyLogo,
+      jobRole: p.jobRole,
+      employmentType: p.employmentType,
+      package: p.package,
+      registrationDeadline: p.expiryDate,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      deletedAt: p.deletedAt
+    }));
+
+    const combined = [...posts, ...formattedPlacements].sort((a, b) => new Date(b.deletedAt || b.updatedAt).getTime() - new Date(a.deletedAt || a.updatedAt).getTime());
+    res.json({ success: true, data: combined });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// PUT /api/admin/posts/:id - Edit an admin post
+// PUT /api/admin/posts/:id - Edit an admin post or placement drive
 router.put('/admin/posts/:id', requireAuth, async (req, res) => {
   try {
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
     const updates = req.body;
+    let isPlacement = false;
+    let targetDoc = await Placement.findById(req.params.id);
+
+    if (targetDoc) {
+      isPlacement = true;
+    } else {
+      targetDoc = await AdminPost.findById(req.params.id);
+    }
+
+    if (!targetDoc) return res.status(404).json({ success: false, error: 'Broadcast or Placement not found' });
+
+    if (isPlacement) {
+      const isIntern = updates.category === 'internship';
+      let computedPackageVal = 0;
+      const pkgStr = isIntern ? updates.stipend : updates.package;
+      if (pkgStr) {
+        const match = String(pkgStr).match(/(\d+(\.\d+)?)/);
+        if (match) computedPackageVal = parseFloat(match[1]);
+      }
+
+      const expDate = updates.expiryDate || updates.registrationDeadline || updates.lastDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      const placementUpdates = {
+        companyLogo: updates.companyLogo || updates.imageURL || targetDoc.companyLogo || '',
+        company: updates.companyName || updates.company || targetDoc.company,
+        role: updates.jobRole || updates.role || updates.title || targetDoc.role,
+        employmentType: isIntern ? 'Internship' : (updates.employmentType || targetDoc.employmentType),
+        salary: String(pkgStr || updates.salary || targetDoc.salary || ''),
+        packageVal: computedPackageVal || targetDoc.packageVal,
+        location: updates.location || targetDoc.location,
+        registrationDeadline: new Date(expDate),
+        description: updates.content || updates.description || targetDoc.description || '',
+        eligibility: updates.eligibility || targetDoc.eligibility || '',
+        branches: updates.eligibilityDepartments || updates.branches || targetDoc.branches || [],
+        minCGPA: updates.eligibilityCGPA !== undefined ? parseFloat(updates.eligibilityCGPA) : (updates.minCGPA !== undefined ? parseFloat(updates.minCGPA) : targetDoc.minCGPA),
+        maxBacklogs: updates.eligibilityBacklogs !== undefined ? parseInt(updates.eligibilityBacklogs) : (updates.maxBacklogs !== undefined ? parseInt(updates.maxBacklogs) : targetDoc.maxBacklogs),
+        batches: updates.eligibleBatches || updates.batches || targetDoc.batches || [],
+        status: updates.status || targetDoc.status,
+        isPinned: updates.isPinned !== undefined ? updates.isPinned : targetDoc.isPinned,
+        visibility: updates.visibility || targetDoc.visibility || 'Public',
+        companyWebsite: updates.companyWebsite || targetDoc.companyWebsite || '',
+        workMode: updates.workMode || targetDoc.workMode || 'Onsite',
+        responsibilities: updates.responsibilities || targetDoc.responsibilities || '',
+        requiredSkills: updates.skillsRequired || updates.requiredSkills || targetDoc.requiredSkills || [],
+        applyLink: updates.registrationLink || updates.applyLink || targetDoc.applyLink || '',
+        assessmentDate: updates.assessmentDate ? new Date(updates.assessmentDate) : targetDoc.assessmentDate,
+        interviewDate: updates.interviewDate ? new Date(updates.interviewDate) : targetDoc.interviewDate,
+        joiningDate: updates.joiningDate ? new Date(updates.joiningDate) : targetDoc.joiningDate,
+        eligibleSpecializations: updates.eligibleSpecializations || targetDoc.eligibleSpecializations || [],
+        attachments: updates.attachments || targetDoc.attachments || [],
+        eligibleYears: updates.eligibilityAcademicYears || targetDoc.eligibleYears || []
+      };
+
+      Object.assign(targetDoc, placementUpdates);
+      await targetDoc.save();
+
+      const formattedPost = {
+        _id: targetDoc._id,
+        id: targetDoc._id.toString(),
+        title: targetDoc.title || `Placement Drive: ${targetDoc.companyName} - ${targetDoc.jobRole}`,
+        content: targetDoc.description,
+        description: targetDoc.description,
+        category: isIntern ? 'internship' : 'placement',
+        imageURL: targetDoc.companyLogo || '',
+        college: targetDoc.college,
+        createdBy: targetDoc.createdBy,
+        createdByName: 'Campus Admin',
+        isPinned: targetDoc.isPinned || false,
+        status: targetDoc.status,
+        relatedId: targetDoc._id.toString(),
+        companyName: targetDoc.companyName,
+        companyLogo: targetDoc.companyLogo,
+        jobRole: targetDoc.jobRole,
+        employmentType: targetDoc.employmentType,
+        package: targetDoc.package,
+        registrationDeadline: targetDoc.expiryDate,
+        createdAt: targetDoc.createdAt,
+        updatedAt: targetDoc.updatedAt
+      };
+      return res.json({ success: true, data: formattedPost });
+    }
+
     if (updates.description !== undefined) {
       updates.content = updates.content || updates.description || '';
     }
-    Object.assign(post, updates);
-    await post.save();
+    Object.assign(targetDoc, updates);
+    await targetDoc.save();
 
-    // If it's linked to a Placement document, update the placement too
-    if (post.relatedId) {
-      const placement = await Placement.findById(post.relatedId);
-      if (placement) {
-        const isIntern = post.category === 'internship';
-        let computedPackageVal = 0;
-        const pkgStr = isIntern ? post.stipend : post.package;
-        if (pkgStr) {
-          const match = String(pkgStr).match(/(\d+(\.\d+)?)/);
-          if (match) computedPackageVal = parseFloat(match[1]);
-        }
-
-        const expDate = post.expiryDate || post.registrationDeadline || post.lastDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-        Object.assign(placement, {
-          companyLogo: post.companyLogo || post.imageURL || '',
-          companyName: post.companyName || placement.companyName,
-          jobRole: post.jobRole || post.internshipRole || post.title,
-          employmentType: isIntern ? 'Internship' : (post.employmentType || placement.employmentType),
-          package: String(pkgStr || ''),
-          packageVal: computedPackageVal,
-          location: post.location || post.venue || placement.location,
-          expiryDate: new Date(expDate),
-          description: post.content || post.description || post.internshipDescription || '',
-          eligibility: post.eligibility || '',
-          eligibleYears: post.eligibilityAcademicYears || post.eligibleYears || [],
-          eligibleDepartments: post.eligibilityDepartments || post.eligibleDepartments || [],
-          minimumCGPA: post.eligibilityCGPA || post.minimumCGPA || 0.0,
-          maximumBacklogs: post.eligibilityBacklogs || post.maximumBacklogs || 0,
-          eligibleBatches: post.eligibilityBatch ? [post.eligibilityBatch] : (post.eligibleBatches || []),
-          status: post.status,
-          isPinned: post.isPinned || false,
-          visibility: post.visibility || 'Public',
-          companyWebsite: post.companyWebsite || '',
-          workMode: post.workMode || post.internshipMode || 'Onsite',
-          responsibilities: post.responsibilities || '',
-          requiredSkills: post.skillsRequired || post.requiredSkills || [],
-          registrationLink: post.registrationLink || post.applyLink || '',
-          assessmentDate: post.assessmentDate ? new Date(post.assessmentDate) : undefined,
-          interviewDate: post.interviewDate ? new Date(post.interviewDate) : undefined,
-          joiningDate: post.joiningDate ? new Date(post.joiningDate) : undefined,
-          eligibleSpecializations: post.eligibilitySpecializations || [],
-          attachments: post.attachments || (post.pdfAttachment ? [post.pdfAttachment] : [])
-        });
-        await placement.save();
-      }
-    }
-
-    // Increment version and record editor metadata
-    post.version = (post.version || 1) + 1;
-    post.updatedBy = req.user.userId;
-    post.lastModifiedAt = new Date();
-    await post.save();
-
-    // Asynchronously notify students of the update
-    process.nextTick(async () => {
-      try {
-        const students = await User.find({ role: 'student', college: post.college });
-        const notifications = students.map(s => ({
-          userId: s.userId,
-          type: post.category === 'placement' || post.category === 'internship' ? 'placement' : 'announcement',
-          title: 'Broadcast Updated 📝',
-          body: `The broadcast "${post.title}" has been updated. Check details!`,
-          read: false,
-          relatedId: post._id.toString()
-        }));
-        if (notifications.length > 0) {
-          await Notification.insertMany(notifications);
-        }
-      } catch (err) {
-        console.error('[Notification Engine] Error dispatching update notifications:', err.message);
-      }
-    });
-
-    res.json({ success: true, data: post });
+    res.json({ success: true, data: targetDoc });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// DELETE /api/admin/posts/:id - Soft delete an admin post
+// DELETE /api/admin/posts/:id - Soft delete an admin post or placement
 router.delete('/admin/posts/:id', requireAuth, async (req, res) => {
   try {
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
-    post.status = 'trash';
-    post.deletedAt = new Date();
-    await post.save();
+    let doc = await Placement.findById(req.params.id);
+    let isPlacement = false;
 
-    if (post.relatedId) {
-      await Placement.findByIdAndUpdate(post.relatedId, { status: 'trash', deletedAt: new Date() });
+    if (doc) {
+      isPlacement = true;
+    } else {
+      doc = await AdminPost.findById(req.params.id);
     }
 
-    res.json({ success: true, message: 'Broadcast moved to Trash successfully' });
+    if (!doc) return res.status(404).json({ success: false, error: 'Broadcast or Placement not found' });
+
+    doc.status = 'trash';
+    doc.deletedAt = new Date();
+    await doc.save();
+
+    res.json({ success: true, message: 'Broadcast or Placement moved to Trash successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// POST /api/admin/posts/:id/restore - Restore soft-deleted broadcast
+// POST /api/admin/posts/:id/restore - Restore soft-deleted broadcast or placement
 router.post('/admin/posts/:id/restore', requireAuth, async (req, res) => {
   try {
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
-    post.status = 'active';
-    post.deletedAt = undefined;
-    await post.save();
+    let doc = await Placement.findById(req.params.id);
+    let isPlacement = false;
 
-    if (post.relatedId) {
-      await Placement.findByIdAndUpdate(post.relatedId, { status: 'active', deletedAt: undefined });
+    if (doc) {
+      isPlacement = true;
+    } else {
+      doc = await AdminPost.findById(req.params.id);
     }
 
-    res.json({ success: true, data: post });
+    if (!doc) return res.status(404).json({ success: false, error: 'Broadcast or Placement not found' });
+
+    doc.status = 'active';
+    doc.deletedAt = undefined;
+    await doc.save();
+
+    res.json({ success: true, data: doc });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// POST /api/admin/posts/:id/permanent-delete - Hard delete broadcast
+// POST /api/admin/posts/:id/permanent-delete - Hard delete broadcast or placement
 router.post('/admin/posts/:id/permanent-delete', requireAuth, async (req, res) => {
   try {
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
-    await AdminPost.findByIdAndDelete(req.params.id);
-    if (post.relatedId) {
-      await Placement.findByIdAndDelete(post.relatedId);
+    let isPlacement = await Placement.findById(req.params.id);
+    if (isPlacement) {
+      await Placement.findByIdAndDelete(req.params.id);
+    } else {
+      await AdminPost.findByIdAndDelete(req.params.id);
     }
 
-    res.json({ success: true, message: 'Permanently deleted broadcast successfully' });
+    res.json({ success: true, message: 'Permanently deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2895,17 +2996,20 @@ router.post('/admin/posts/:id/permanent-delete', requireAuth, async (req, res) =
 // POST /api/admin/posts/:id/pin - Toggle pin status
 router.post('/admin/posts/:id/pin', requireAuth, async (req, res) => {
   try {
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
-    post.isPinned = !post.isPinned;
-    await post.save();
-
-    if (post.relatedId) {
-      await Placement.findByIdAndUpdate(post.relatedId, { isPinned: post.isPinned });
+    let doc = await Placement.findById(req.params.id);
+    if (doc) {
+      doc.isPinned = !doc.isPinned;
+      await doc.save();
+      return res.json({ success: true, data: doc });
     }
 
-    res.json({ success: true, data: post });
+    doc = await AdminPost.findById(req.params.id);
+    if (!doc) return res.status(404).json({ success: false, error: 'Broadcast not found' });
+
+    doc.isPinned = !doc.isPinned;
+    await doc.save();
+
+    res.json({ success: true, data: doc });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2914,50 +3018,52 @@ router.post('/admin/posts/:id/pin', requireAuth, async (req, res) => {
 // POST /api/admin/posts/:id/pause - Toggle pause status
 router.post('/admin/posts/:id/pause', requireAuth, async (req, res) => {
   try {
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
-    post.status = post.status === 'paused' ? 'active' : 'paused';
-    await post.save();
-
-    if (post.relatedId) {
-      await Placement.findByIdAndUpdate(post.relatedId, { status: post.status });
+    let doc = await Placement.findById(req.params.id);
+    if (doc) {
+      doc.status = doc.status === 'paused' ? 'active' : 'paused';
+      await doc.save();
+      return res.json({ success: true, data: doc });
     }
 
-    res.json({ success: true, data: post });
+    doc = await AdminPost.findById(req.params.id);
+    if (!doc) return res.status(404).json({ success: false, error: 'Broadcast not found' });
+
+    doc.status = doc.status === 'paused' ? 'active' : 'paused';
+    await doc.save();
+
+    res.json({ success: true, data: doc });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// POST /api/admin/posts/:id/duplicate - Duplicate broadcast
+// POST /api/admin/posts/:id/duplicate - Duplicate broadcast or placement
 router.post('/admin/posts/:id/duplicate', requireAuth, async (req, res) => {
   try {
+    let origPlacement = await Placement.findById(req.params.id);
+    if (origPlacement) {
+      const copyPlacement = new Placement(origPlacement.toObject());
+      copyPlacement._id = new mongoose.Types.ObjectId();
+      copyPlacement.isNew = true;
+      copyPlacement.company = `${origPlacement.company} (Copy)`;
+      copyPlacement.companyName = `${origPlacement.companyName} (Copy)`;
+      copyPlacement.createdAt = new Date();
+      copyPlacement.updatedAt = new Date();
+      await copyPlacement.save();
+      return res.json({ success: true, data: copyPlacement });
+    }
+
     const original = await AdminPost.findById(req.params.id);
     if (!original) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-    
+
     const copy = new AdminPost(original.toObject());
     copy._id = new mongoose.Types.ObjectId();
     copy.isNew = true;
     copy.title = `${copy.title} (Copy)`;
     copy.createdAt = new Date();
     copy.updatedAt = new Date();
-
-    if (original.relatedId) {
-      const origPlacement = await Placement.findById(original.relatedId);
-      if (origPlacement) {
-        const copyPlacement = new Placement(origPlacement.toObject());
-        copyPlacement._id = new mongoose.Types.ObjectId();
-        copyPlacement.isNew = true;
-        copyPlacement.companyName = `${copyPlacement.companyName} (Copy)`;
-        copyPlacement.createdAt = new Date();
-        copyPlacement.updatedAt = new Date();
-        await copyPlacement.save();
-        copy.relatedId = copyPlacement._id.toString();
-      }
-    }
-
     await copy.save();
+
     res.json({ success: true, data: copy });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -2968,32 +3074,31 @@ router.post('/admin/posts/:id/duplicate', requireAuth, async (req, res) => {
 router.post('/admin/posts/:id/track', requireAuth, async (req, res) => {
   try {
     const { action } = req.body;
-    const post = await AdminPost.findById(req.params.id);
-    if (!post) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-
-    if (action === 'view') post.views = (post.views || 0) + 1;
-    else if (action === 'click') post.clicks = (post.clicks || 0) + 1;
-    else if (action === 'apply') post.applications = (post.applications || 0) + 1;
-    await post.save();
-
-    if (post.relatedId) {
-      const placement = await Placement.findById(post.relatedId);
-      if (placement) {
-        if (action === 'view') placement.views = (placement.views || 0) + 1;
-        else if (action === 'click') placement.clicks = (placement.clicks || 0) + 1;
-        else if (action === 'apply') placement.applications = (placement.applications || 0) + 1;
-        await placement.save();
-      }
+    let doc = await Placement.findById(req.params.id);
+    if (doc) {
+      if (action === 'view') doc.views = (doc.views || 0) + 1;
+      else if (action === 'click') doc.clicks = (doc.clicks || 0) + 1;
+      else if (action === 'apply') doc.applications = (doc.applications || 0) + 1;
+      await doc.save();
+      return res.json({ success: true, data: doc });
     }
 
-    res.json({ success: true, data: post });
+    doc = await AdminPost.findById(req.params.id);
+    if (!doc) return res.status(404).json({ success: false, error: 'Broadcast not found' });
+
+    if (action === 'view') doc.views = (doc.views || 0) + 1;
+    else if (action === 'click') doc.clicks = (doc.clicks || 0) + 1;
+    else if (action === 'apply') doc.applications = (doc.applications || 0) + 1;
+    await doc.save();
+
+    res.json({ success: true, data: doc });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Student Home Routes
-// GET /api/student/home-feed - Get student home feed (admin posts only) with strict eligibility
+// GET /api/student/home-feed - Get student home feed (admin posts & placements combined) with strict eligibility
 router.get('/student/home-feed', requireAuth, async (req, res) => {
   try {
     const college = req.user.college || 'SR University';
@@ -3014,7 +3119,64 @@ router.get('/student/home-feed', requireAuth, async (req, res) => {
       }
     }
 
-    const feed = await AdminPost.find(query).sort({ isPinned: -1, createdAt: -1 });
+    let feed = [];
+
+    // Fetch normal admin posts (excluding placement/internship since those are in placements)
+    if (!category || category === 'all' || category === 'announcement' || category === 'event' || category === 'notice') {
+      const posts = await AdminPost.find({
+        ...query,
+        category: { $nin: ['placement', 'internship'] }
+      });
+      feed.push(...posts);
+    }
+
+    // Fetch placements (where placementType is OFFICIAL)
+    if (!category || category === 'all' || category === 'placement' || category === 'internship') {
+      const placementQuery = {
+        college: new RegExp(college, 'i'),
+        status: 'active',
+        placementType: 'OFFICIAL'
+      };
+
+      if (category === 'placement') {
+        placementQuery.employmentType = { $ne: 'Internship' };
+      } else if (category === 'internship') {
+        placementQuery.employmentType = 'Internship';
+      }
+
+      const placements = await Placement.find(placementQuery);
+
+      const formattedPlacements = placements.map(p => ({
+        _id: p._id,
+        id: p._id.toString(),
+        title: p.title || `Placement Drive: ${p.companyName} - ${p.jobRole}`,
+        content: p.description,
+        description: p.description,
+        category: p.employmentType === 'Internship' ? 'internship' : 'placement',
+        imageURL: p.companyLogo || '',
+        college: p.college,
+        createdBy: p.createdBy,
+        createdByName: 'Campus Admin',
+        isPinned: p.isPinned || false,
+        status: p.status,
+        relatedId: p._id.toString(),
+        companyName: p.companyName,
+        companyLogo: p.companyLogo,
+        jobRole: p.jobRole,
+        employmentType: p.employmentType,
+        package: p.package,
+        registrationDeadline: p.expiryDate,
+        eligibilityAcademicYears: p.eligibleYears || [],
+        eligibilityDepartments: p.eligibleDepartments || [],
+        eligibilityCGPA: p.minimumCGPA || 0.0,
+        eligibilityBacklogs: p.maximumBacklogs || 0,
+        eligibilityBatches: p.eligibleBatches || [],
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt
+      }));
+
+      feed.push(...formattedPlacements);
+    }
 
     if (req.user.role === 'student') {
       const student = await User.findOne({ userId: req.user.userId });
@@ -3032,33 +3194,34 @@ router.get('/student/home-feed', requireAuth, async (req, res) => {
         if (ann.category === 'emergency') return true;
 
         if (ann.category === 'placement' || ann.category === 'internship') {
-          const years = ann.eligibilityAcademicYears || [];
-          const depts = ann.eligibilityDepartments || [];
-          const minCGPA = ann.eligibilityCGPA || 0;
-          const maxBacklogs = ann.eligibilityBacklogs || 0;
-          const annBatch = ann.eligibilityBatch || '';
-          const annBatches = ann.eligibilityBatches || [];
-          const annGender = ann.eligibilityGender || 'Everyone';
-          const collegeSelect = ann.eligibilityCollegesSelection || 'Current College';
-
-          const yearMatch = years.length === 0 || years.includes('All Years') || years.includes(year);
-          const deptMatch = depts.length === 0 || 
-                            depts.includes("All Departments") || 
-                            getDepartmentEquivalents(student.department || '').some(d => depts.includes(d));
-          const cgpaMatch = cgpa >= minCGPA;
-          const backlogsMatch = backlogs <= maxBacklogs;
-          const batchMatch = (annBatches.length === 0 || annBatches.includes('All Batches') || annBatches.includes(batch)) && (!annBatch || annBatch === batch);
-          const genderMatch = annGender === 'Everyone' || annGender.toLowerCase() === (student.gender || '').toLowerCase();
-          const collegeMatch = collegeSelect === 'All Connected Colleges' || ann.college === student.college;
-
-          return yearMatch && deptMatch && cgpaMatch && backlogsMatch && batchMatch && genderMatch && collegeMatch;
+          const eligibilityInfo = checkPlacementEligibility(student, {
+            college: ann.college,
+            minCGPA: ann.eligibilityCGPA,
+            maxBacklogs: ann.eligibilityBacklogs,
+            branches: ann.eligibilityDepartments,
+            batches: ann.eligibilityBatches,
+            eligibleYears: ann.eligibilityAcademicYears
+          });
+          return eligibilityInfo.eligible;
         }
 
         return true;
       });
 
+      filteredFeed.sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+
       return res.json({ success: true, data: filteredFeed });
     }
+
+    feed.sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 
     res.json({ success: true, data: feed });
   } catch (error) {
@@ -3641,6 +3804,12 @@ router.get('/connections', requireAuth, async (req, res) => {
           continue;
         }
 
+        const unreadCount = await Message.countDocuments({
+          matchId: conn._id.toString(),
+          senderId: otherUserId,
+          read: false
+        });
+
         matches.push({
           id: conn._id.toString(),
           userId: otherUserId,
@@ -3661,7 +3830,7 @@ router.get('/connections', requireAuth, async (req, res) => {
             college: otherUser.college || ''
           },
           matchedAt: conn.createdAt.toISOString(),
-          unreadCount: 0,
+          unreadCount,
           isRevealed: conn.isRevealed
         });
       }
@@ -3707,6 +3876,12 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
     if (req.user.role !== 'super_admin' && (!otherUser || otherUser.college !== req.user.college)) {
       return res.status(403).json({ success: false, error: 'Access denied: Connection belongs to a different college.' });
     }
+
+    // Mark received messages in this match as read
+    await Message.updateMany(
+      { matchId, senderId: otherUserId, read: false },
+      { $set: { read: true, status: 'seen' } }
+    );
 
     const list = await Message.find({ matchId }).sort({ timestamp: 1 });
     res.json({ success: true, data: list });
@@ -5104,6 +5279,291 @@ router.get('/admin/security/metrics', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/security/logs/search - Global search autocomplete / helper
+router.get('/security/logs/search', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const { q = '' } = req.query;
+    const searchRegex = new RegExp(q, 'i');
+    const query = {
+      $or: [
+        { email: searchRegex },
+        { userId: searchRegex },
+        { event: searchRegex },
+        { ipAddress: searchRegex }
+      ]
+    };
+    const logs = await SecurityLog.find(query).sort({ createdAt: -1 }).limit(100);
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/security/logs/export - Export CSV of filtered data
+router.get('/security/logs/export', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+
+    const { 
+      email, 
+      userId, 
+      status, 
+      event, 
+      fromDate, 
+      toDate, 
+      search
+    } = req.query;
+
+    let query = {};
+    if (email) query.email = email;
+    if (userId) query.userId = userId;
+    if (status) query.status = status;
+    if (event) query.event = event;
+
+    if (fromDate || toDate) {
+      query.createdAt = {};
+      if (fromDate) query.createdAt.$gte = new Date(fromDate);
+      if (toDate) query.createdAt.$lte = new Date(toDate);
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { email: searchRegex },
+        { userId: searchRegex },
+        { event: searchRegex },
+        { ipAddress: searchRegex },
+        { userAgent: searchRegex },
+        { 'details.sessionId': searchRegex }
+      ];
+    }
+
+    const logs = await SecurityLog.find(query).sort({ createdAt: -1 });
+
+    const headers = [
+      'Timestamp',
+      'User ID',
+      'Email',
+      'Name',
+      'Role',
+      'Department',
+      'Branch',
+      'Batch',
+      'Event',
+      'Status',
+      'Login Time',
+      'Logout Time',
+      'Session Duration',
+      'IP Address',
+      'Location',
+      'Browser',
+      'Operating System',
+      'Device',
+      'MFA Enabled',
+      'Session ID'
+    ];
+
+    let csvContent = headers.join(',') + '\n';
+
+    for (const log of logs) {
+      let profile = null;
+      if (log.userId) {
+        profile = await User.findOne({ userId: log.userId });
+        if (!profile) {
+          profile = await Alumni.findOne({ userId: log.userId });
+        }
+      }
+
+      const name = profile?.name || (log.email === 'admin@sru.edu' ? 'Campus Admin' : 'Unknown User');
+      const role = profile?.role || (log.email === 'admin@sru.edu' ? 'admin' : 'unknown');
+      const department = profile?.department || 'N/A';
+      const branch = profile?.branch || 'N/A';
+      const batch = profile?.batch || 'N/A';
+      const mfaEnabled = profile?.mfaEnabled ? 'Yes' : 'No';
+
+      const ua = log.userAgent || '';
+      let os = 'Unknown OS';
+      if (ua.includes('Windows')) os = 'Windows';
+      else if (ua.includes('Macintosh')) os = 'MacOS';
+      else if (ua.includes('Linux')) os = 'Linux';
+      else if (ua.includes('Android')) os = 'Android';
+      else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+      let browser = 'Unknown Browser';
+      if (ua.includes('Chrome')) browser = 'Chrome';
+      else if (ua.includes('Safari')) browser = 'Safari';
+      else if (ua.includes('Firefox')) browser = 'Firefox';
+      else if (ua.includes('Edge')) browser = 'Edge';
+
+      let device = 'Desktop';
+      if (ua.includes('Mobi') || ua.includes('Android') || ua.includes('iPhone')) {
+        device = 'Mobile';
+      }
+
+      const sessionId = log.details?.sessionId || '';
+      const loginTime = log.event === 'login_success' ? log.createdAt.toISOString() : '';
+      const logoutTime = log.event === 'logout' ? log.createdAt.toISOString() : '';
+      const duration = ''; 
+
+      const row = [
+        log.createdAt.toISOString(),
+        log.userId || '',
+        log.email || '',
+        `"${name.replace(/"/g, '""')}"`,
+        role,
+        department,
+        branch,
+        batch,
+        log.event,
+        log.status,
+        loginTime,
+        logoutTime,
+        duration,
+        log.ipAddress,
+        log.details?.location || 'Remote',
+        browser,
+        os,
+        device,
+        mfaEnabled,
+        sessionId
+      ];
+
+      csvContent += row.join(',') + '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=security_logs.csv');
+    return res.send(csvContent);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/security/logs/:userId - Get security logs for a specific user
+router.get('/security/logs/:userId', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const { userId } = req.params;
+    const logs = await SecurityLog.find({ userId }).sort({ createdAt: -1 });
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/security/logs - Get filtered, paginated security audit logs
+router.get('/security/logs', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+
+    const { 
+      page = 1, 
+      limit = 50, 
+      email, 
+      userId, 
+      status, 
+      event, 
+      fromDate, 
+      toDate, 
+      sort = '-createdAt',
+      search
+    } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+
+    let query = {};
+    if (email) query.email = email;
+    if (userId) query.userId = userId;
+    if (status) query.status = status;
+    if (event) query.event = event;
+
+    if (fromDate || toDate) {
+      query.createdAt = {};
+      if (fromDate) query.createdAt.$gte = new Date(fromDate);
+      if (toDate) query.createdAt.$lte = new Date(toDate);
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { email: searchRegex },
+        { userId: searchRegex },
+        { event: searchRegex },
+        { ipAddress: searchRegex },
+        { userAgent: searchRegex },
+        { 'details.sessionId': searchRegex }
+      ];
+    }
+
+    let sortOptions = {};
+    if (sort) {
+      if (sort.startsWith('-')) {
+        sortOptions[sort.substring(1)] = -1;
+      } else {
+        sortOptions[sort] = 1;
+      }
+    } else {
+      sortOptions = { createdAt: -1 };
+    }
+
+    const total = await SecurityLog.countDocuments(query);
+    const logs = await SecurityLog.find(query)
+      .sort(sortOptions)
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum);
+
+    const enrichedLogs = await Promise.all(logs.map(async (log) => {
+      const logObj = log.toObject();
+      let profile = null;
+      if (log.userId) {
+        profile = await User.findOne({ userId: log.userId });
+        if (!profile) {
+          profile = await Alumni.findOne({ userId: log.userId });
+        }
+      }
+      logObj.userProfile = profile ? {
+        name: profile.name,
+        role: profile.role,
+        department: profile.department,
+        batch: profile.batch,
+        cgpa: profile.cgpa,
+        backlogs: profile.backlogs,
+        mfaEnabled: profile.mfaEnabled || false
+      } : {
+        name: log.email === 'admin@sru.edu' ? 'Campus Admin' : 'Unknown User',
+        role: log.email === 'admin@sru.edu' ? 'admin' : 'unknown',
+        department: 'N/A',
+        batch: 'N/A',
+        mfaEnabled: false
+      };
+      return logObj;
+    }));
+
+    res.json({
+      success: true,
+      data: enrichedLogs,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET /api/admin/security/logs - Get paged security audit logs
 router.get('/admin/security/logs', requireAuth, async (req, res) => {
   try {
@@ -5325,164 +5785,53 @@ async function archiveExpiredPlacements(college) {
 // 1. GET /api/placements - Get eligible placements with search, filters, sorting
 router.get('/placements', requireAuth, async (req, res) => {
   try {
-    const college = req.user.college || 'SR University';
-    
-    // Auto-archive expired ones first
-    await archiveExpiredPlacements(college);
-
-    const { tab, search, filters, page = 1, limit = 20 } = req.query;
-    if (!tab || (tab !== 'admin' && tab !== 'alumni')) {
-      return res.status(400).json({ success: false, error: 'Query parameter tab (admin or alumni) is required' });
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-
-    // Core query: restrict by college and status
-    const query = {
-      college,
-      status: 'active',
-      createdByRole: tab === 'admin' ? 'Admin' : 'Alumni'
-    };
-
-    // Strict Visibility Filtering for Students
-    if (req.user.role === 'student') {
-      const student = await User.findOne({ userId: req.user.userId });
-      if (!student) {
-        return res.status(404).json({ success: false, error: 'Student profile not found' });
-      }
-
-      const cgpa = student.cgpa || 0.0;
-      const backlogs = student.backlogs || 0;
-      const dept = student.department || '';
-      const year = student.academicYear || '';
-      const batch = student.batch || '';
-
-      query.$and = [
-        // Year match: empty means open to all, or exact match
-        {
-          $or: [
-            { eligibleYears: { $exists: false } },
-            { eligibleYears: { $size: 0 } },
-            { eligibleYears: year }
-          ]
-        },
-        // Department match: empty or "All Departments" means open to all
-        {
-          $or: [
-            { eligibleDepartments: { $exists: false } },
-            { eligibleDepartments: { $size: 0 } },
-            { eligibleDepartments: "All Departments" },
-            { eligibleDepartments: { $in: getDepartmentEquivalents(dept) } }
-          ]
-        },
-        // CGPA match
-        {
-          $or: [
-            { minimumCGPA: { $exists: false } },
-            { minimumCGPA: null },
-            { minimumCGPA: { $lte: cgpa } }
-          ]
-        },
-        // Backlogs match
-        {
-          $or: [
-            { maximumBacklogs: { $exists: false } },
-            { maximumBacklogs: null },
-            { maximumBacklogs: { $gte: backlogs } }
-          ]
-        },
-        // Batch match
-        {
-          $or: [
-            { eligibleBatches: { $exists: false } },
-            { eligibleBatches: { $size: 0 } },
-            { eligibleBatches: batch }
-          ]
-        }
-      ];
-    }
-
-    // Search query
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      const searchConditions = [
-        { companyName: searchRegex },
-        { jobRole: searchRegex },
-        { description: searchRegex },
-        { location: searchRegex }
-      ];
-      if (tab === 'alumni') {
-        searchConditions.push({ createdByName: searchRegex });
-      }
-      
-      if (query.$and) {
-        query.$and.push({ $or: searchConditions });
-      } else {
-        query.$or = searchConditions;
-      }
-    }
-
-    // Advanced Filters
-    if (filters) {
-      const filterArray = filters.split(',');
-      
-      // Employment type filters
-      const jobTypes = [];
-      if (filterArray.includes('Internship')) jobTypes.push('Internship');
-      if (filterArray.includes('Full Time')) jobTypes.push('Full Time');
-      if (filterArray.includes('Internship + PPO')) jobTypes.push('Internship + PPO');
-      if (filterArray.includes('Contract')) jobTypes.push('Contract');
-      if (jobTypes.length > 0) {
-        query.employmentType = { $in: jobTypes };
-      }
-
-      // Location filters
-      const locConditions = [];
-      if (filterArray.includes('Remote')) locConditions.push({ location: /remote/i });
-      if (filterArray.includes('Hybrid')) locConditions.push({ location: /hybrid/i });
-      if (filterArray.includes('Onsite')) locConditions.push({ location: /^(?!.*remote)(?!.*hybrid).*$/i }); // not remote/hybrid
-      if (locConditions.length > 0) {
-        if (query.$and) {
-          query.$and.push({ $or: locConditions });
-        } else {
-          query.$or = (query.$or || []).concat(locConditions);
-        }
-      }
-
-      // Referral availability
-      if (filterArray.includes('Referral Available')) {
-        query.referralAvailable = true;
-      }
-    }
-
-    // Sorting definition
-    let sortOptions = { createdAt: -1 }; // default newest
-    if (filters) {
-      const filterArray = filters.split(',');
-      if (filterArray.includes('Closing Soon')) {
-        sortOptions = { expiryDate: 1 };
-      } else if (filterArray.includes('High Package')) {
-        sortOptions = { packageVal: -1 };
-      } else if (filterArray.includes('Newest')) {
-        sortOptions = { createdAt: -1 };
-      }
-    }
-
-    const total = await Placement.countDocuments(query);
-    const placements = await Placement.find(query)
-      .sort(sortOptions)
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum);
-
+    const result = await getPlacementsWithEligibility(req);
     res.json({
       success: true,
-      data: placements,
+      data: result.placements,
       pagination: {
-        total,
-        page: pageNum,
-        limit: limitNum,
-        pages: Math.ceil(total / limitNum)
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        pages: result.pages
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/placements/official - Get official placements with eligibility check
+router.get('/placements/official', requireAuth, async (req, res) => {
+  try {
+    const result = await getPlacementsWithEligibility(req, 'OFFICIAL');
+    res.json({
+      success: true,
+      data: result.placements,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        pages: result.pages
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/placements/referrals - Get alumni referrals with eligibility check
+router.get('/placements/referrals', requireAuth, async (req, res) => {
+  try {
+    const result = await getPlacementsWithEligibility(req, 'ALUMNI_REFERRAL');
+    res.json({
+      success: true,
+      data: result.placements,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        pages: result.pages
       }
     });
   } catch (error) {
@@ -5498,33 +5847,25 @@ router.get('/placements/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Placement opportunity not found' });
     }
 
-    // Strict eligibility check for students trying to load details
+    let isEligible = true;
+    let ineligibilityReason = '';
+
     if (req.user.role === 'student') {
       const student = await User.findOne({ userId: req.user.userId });
       if (!student) {
         return res.status(404).json({ success: false, error: 'Student profile not found' });
       }
 
-      const cgpa = student.cgpa || 0.0;
-      const backlogs = student.backlogs || 0;
-      const dept = student.department || '';
-      const year = student.academicYear || '';
-      const batch = student.batch || '';
-
-      const yearMatch = placement.eligibleYears.length === 0 || placement.eligibleYears.includes(year);
-      const deptMatch = placement.eligibleDepartments.length === 0 || 
-                        placement.eligibleDepartments.includes("All Departments") || 
-                        getDepartmentEquivalents(dept).some(d => placement.eligibleDepartments.includes(d));
-      const cgpaMatch = placement.minimumCGPA === undefined || placement.minimumCGPA === null || cgpa >= placement.minimumCGPA;
-      const backlogsMatch = placement.maximumBacklogs === undefined || placement.maximumBacklogs === null || backlogs <= placement.maximumBacklogs;
-      const batchMatch = placement.eligibleBatches.length === 0 || placement.eligibleBatches.includes(batch);
-
-      if (!yearMatch || !deptMatch || !cgpaMatch || !backlogsMatch || !batchMatch) {
-        return res.status(403).json({ success: false, error: 'Access denied: You are not eligible for this placement opportunity' });
-      }
+      const eligibilityInfo = checkPlacementEligibility(student, placement);
+      isEligible = eligibilityInfo.eligible;
+      ineligibilityReason = eligibilityInfo.reason || '';
     }
 
-    res.json({ success: true, data: placement });
+    const plainObj = placement.toObject();
+    plainObj.isEligible = isEligible;
+    plainObj.ineligibilityReason = ineligibilityReason;
+
+    res.json({ success: true, data: plainObj });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -5578,6 +5919,198 @@ router.post('/placements/preview-count', requireAuth, async (req, res) => {
   }
 });
 
+// Helper query function for eligible placements
+async function getPlacementsWithEligibility(req, typeFilter = null) {
+  const college = req.user.college || 'SR University';
+  console.log('📡 [Backend - Placements Query] Initiating query for user:', {
+    userId: req.user.userId,
+    role: req.user.role,
+    college: req.user.college,
+    derivedCollege: college
+  });
+  await archiveExpiredPlacements(college);
+
+  const { tab, search, filters, page = 1, limit = 20 } = req.query;
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+
+  // Core query: restrict by college and status
+  const query = {
+    college,
+    status: 'active'
+  };
+
+  // Filter by placementType
+  if (typeFilter) {
+    query.placementType = typeFilter;
+  } else if (tab) {
+    query.placementType = tab === 'admin' ? 'OFFICIAL' : 'ALUMNI_REFERRAL';
+  }
+
+  // Search query
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    query.$or = [
+      { company: searchRegex },
+      { companyName: searchRegex },
+      { role: searchRegex },
+      { jobRole: searchRegex },
+      { location: searchRegex },
+      { requiredSkills: { $in: [searchRegex] } },
+      { branches: { $in: [searchRegex] } },
+      { eligibleDepartments: { $in: [searchRegex] } }
+    ];
+  }
+
+  // Advanced Filters
+  if (filters) {
+    const filterArray = filters.split(',');
+    
+    // Check for employment type filters
+    const jobTypes = [];
+    if (filterArray.includes('Internship')) jobTypes.push('Internship');
+    if (filterArray.includes('Full Time') || filterArray.includes('Full-Time')) {
+      jobTypes.push('Full Time');
+      jobTypes.push('Full-Time');
+    }
+    if (filterArray.includes('Internship + PPO')) jobTypes.push('Internship + PPO');
+    if (filterArray.includes('Contract')) jobTypes.push('Contract');
+    if (jobTypes.length > 0) {
+      query.employmentType = { $in: jobTypes };
+    }
+
+    // Workplace / Location filters
+    const locConditions = [];
+    if (filterArray.includes('Remote')) locConditions.push({ location: /remote/i });
+    if (filterArray.includes('Hybrid')) locConditions.push({ location: /hybrid/i });
+    if (filterArray.includes('Onsite')) locConditions.push({ location: /^(?!.*remote)(?!.*hybrid).*$/i });
+    if (locConditions.length > 0) {
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: locConditions }];
+        delete query.$or;
+      } else {
+        query.$or = locConditions;
+      }
+    }
+  }
+
+  // Sorting definition
+  let sortOptions = { createdAt: -1 }; // default newest
+  if (filters) {
+    const filterArray = filters.split(',');
+    if (filterArray.includes('Closing Soon')) {
+      sortOptions = { expiryDate: 1 };
+    } else if (filterArray.includes('High Package')) {
+      sortOptions = { packageVal: -1 };
+    } else if (filterArray.includes('Newest')) {
+      sortOptions = { createdAt: -1 };
+    } else if (filterArray.includes('Oldest')) {
+      sortOptions = { createdAt: 1 };
+    }
+  }
+
+  console.log('📡 [Backend - Placements Query] Executing Mongo query:', JSON.stringify(query));
+  const placements = await Placement.find(query).sort(sortOptions);
+  console.log(`📡 [Backend - Placements Query] Found ${placements.length} raw placements in DB`);
+
+  let processedPlacements = placements;
+  const isStudent = req.user.role === 'student';
+  let student = null;
+  if (isStudent) {
+    student = await User.findOne({ userId: req.user.userId });
+    console.log('📡 [Backend - Placements Query] Student profile parsed:', {
+      name: student?.name,
+      cgpa: student?.cgpa,
+      backlogs: student?.backlogs,
+      dept: student?.department,
+      batch: student?.batch
+    });
+  }
+
+  if (isStudent && student) {
+    processedPlacements = placements.map(p => {
+      const eligibilityInfo = checkPlacementEligibility(student, p);
+      console.log(`📡 [Backend - Eligibility Engine] Placement "${p.company} - ${p.role}" eligible=${eligibilityInfo.eligible}, reason="${eligibilityInfo.reason || ''}"`);
+      const plainObj = p.toObject();
+      plainObj.isEligible = eligibilityInfo.eligible;
+      plainObj.ineligibilityReason = eligibilityInfo.reason || '';
+      return plainObj;
+    });
+
+    if (filters && (filters.split(',').includes('Eligible Only') || filters.split(',').includes('EligibleOnly'))) {
+      processedPlacements = processedPlacements.filter(p => p.isEligible);
+    }
+  } else {
+    processedPlacements = placements.map(p => {
+      const plainObj = p.toObject();
+      plainObj.isEligible = true;
+      plainObj.ineligibilityReason = '';
+      return plainObj;
+    });
+  }
+
+  const total = processedPlacements.length;
+  const paginatedPlacements = processedPlacements.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+  return {
+    placements: paginatedPlacements,
+    total,
+    pages: Math.ceil(total / limitNum),
+    page: pageNum,
+    limit: limitNum
+  };
+}
+
+function checkPlacementEligibility(student, placement) {
+  const cgpa = student.cgpa || 0.0;
+  const backlogs = student.backlogs || 0;
+  const dept = student.department || '';
+  const year = student.academicYear || '';
+  const batch = student.batch || '';
+  const college = student.college || 'SR University';
+
+  if (placement.college && placement.college.toLowerCase() !== college.toLowerCase()) {
+    return { eligible: false, reason: `This drive is for ${placement.college} students.` };
+  }
+
+  const minCGPA = placement.minCGPA !== undefined ? placement.minCGPA : (placement.minimumCGPA !== undefined ? placement.minimumCGPA : 0.0);
+  if (cgpa < minCGPA) {
+    return { eligible: false, reason: `Minimum CGPA required is ${minCGPA}. Your CGPA is ${cgpa}.` };
+  }
+
+  const maxBacklogs = placement.maxBacklogs !== undefined ? placement.maxBacklogs : (placement.maximumBacklogs !== undefined ? placement.maximumBacklogs : 0);
+  if (backlogs > maxBacklogs) {
+    return { eligible: false, reason: `Maximum backlogs allowed is ${maxBacklogs}. You have ${backlogs} active backlogs.` };
+  }
+
+  const branches = placement.branches && placement.branches.length > 0 ? placement.branches : (placement.eligibleDepartments && placement.eligibleDepartments.length > 0 ? placement.eligibleDepartments : []);
+  if (branches.length > 0 && !branches.includes("All Departments")) {
+    const studentEquivalents = getDepartmentEquivalents(dept);
+    const hasBranchMatch = studentEquivalents.some(d => branches.some(b => b.toLowerCase() === d.toLowerCase()));
+    if (!hasBranchMatch) {
+      return { eligible: false, reason: `Eligible branches are: ${branches.join(', ')}.` };
+    }
+  }
+
+  const batches = placement.batches && placement.batches.length > 0 ? placement.batches : (placement.eligibleBatches && placement.eligibleBatches.length > 0 ? placement.eligibleBatches : []);
+  if (batches.length > 0) {
+    const hasBatchMatch = batches.some(b => b.toString() === batch.toString());
+    if (!hasBatchMatch) {
+      return { eligible: false, reason: `Eligible batches are: ${batches.join(', ')}.` };
+    }
+  }
+
+  const years = placement.eligibleYears || [];
+  if (years.length > 0 && !years.includes("All Years")) {
+    const hasYearMatch = years.includes(year);
+    if (!hasYearMatch) {
+      return { eligible: false, reason: `Eligible academic years are: ${years.join(', ')}.` };
+    }
+  }
+
+  return { eligible: true };
+}
+
 // 3. POST /api/placements - Create placement post (Admins & Verified Alumni)
 router.post('/placements', requireAuth, async (req, res) => {
   try {
@@ -5589,7 +6122,6 @@ router.post('/placements', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied: Only Admins and Alumni can post placement opportunities' });
     }
 
-    // If alumni, check verification status
     let createdByName = 'Campus Admin';
     if (role === 'alumni') {
       const alumni = await Alumni.findOne({ userId });
@@ -5601,112 +6133,85 @@ router.post('/placements', requireAuth, async (req, res) => {
 
     const {
       companyName,
+      company,
       companyLogo,
       jobRole,
+      role: roleName,
+      title,
       employmentType,
       package: packageStr,
+      salary,
       packageVal,
       location,
       expiryDate,
+      registrationDeadline,
+      driveDate,
       description,
       eligibility,
       eligibleYears,
       eligibleDepartments,
+      branches,
       minimumCGPA,
+      minCGPA,
       maximumBacklogs,
+      maxBacklogs,
       eligibleBatches,
+      batches,
       eligibleSections,
-      contactAlumni
+      contactAlumni,
+      applyLink,
+      registrationLink,
+      workMode
     } = req.body;
 
-    if (!companyName || !jobRole || !employmentType || !expiryDate) {
-      return res.status(400).json({ success: false, error: 'CompanyName, JobRole, EmploymentType, and ExpiryDate are required' });
+    const finalCompany = company || companyName;
+    const finalRole = roleName || jobRole || title;
+    const finalDeadline = registrationDeadline || expiryDate;
+
+    if (!finalCompany || !finalRole || !employmentType || !finalDeadline) {
+      return res.status(400).json({ success: false, error: 'Company, Role, EmploymentType, and Deadline are required' });
     }
 
-    // Auto-calculate numeric package value for sorting
     let computedPackageVal = 0;
     if (packageVal) {
       computedPackageVal = parseFloat(packageVal);
-    } else if (packageStr) {
-      const match = packageStr.match(/(\d+(\.\d+)?)/);
+    } else if (salary || packageStr) {
+      const match = String(salary || packageStr).match(/(\d+(\.\d+)?)/);
       if (match) computedPackageVal = parseFloat(match[1]);
     }
 
     const placement = new Placement({
-      companyName,
+      company: finalCompany,
+      role: finalRole,
       companyLogo: companyLogo || '',
-      jobRole,
       employmentType,
-      package: packageStr || '',
+      salary: salary || packageStr || '',
       packageVal: computedPackageVal,
       location: location || 'Onsite',
-      expiryDate: new Date(expiryDate),
+      registrationDeadline: new Date(finalDeadline),
+      driveDate: driveDate ? new Date(driveDate) : undefined,
       description: description || '',
       eligibility: eligibility || '',
-      eligibleYears: eligibleYears || [],
-      eligibleDepartments: eligibleDepartments || [],
-      minimumCGPA: minimumCGPA ? parseFloat(minimumCGPA) : 0.0,
-      maximumBacklogs: maximumBacklogs ? parseInt(maximumBacklogs) : 0,
-      eligibleBatches: eligibleBatches || [],
+      branches: branches || eligibleDepartments || [],
+      minCGPA: minCGPA !== undefined ? parseFloat(minCGPA) : (minimumCGPA ? parseFloat(minimumCGPA) : 0.0),
+      maxBacklogs: maxBacklogs !== undefined ? parseInt(maxBacklogs) : (maximumBacklogs ? parseInt(maximumBacklogs) : 0),
+      batches: batches || eligibleBatches || [],
       eligibleSections: eligibleSections || [],
       createdBy: userId,
       createdByName,
-      createdByRole: role === 'admin' ? 'Admin' : 'Alumni',
-      isVerified: true, // Auto-verified since posting requires correct role authorization
-      referralAvailable: role === 'alumni', // Alumni post defaults to Referral Available
+      createdByRole: role === 'admin' ? 'ADMIN' : 'ALUMNI',
+      placementType: role === 'admin' ? 'OFFICIAL' : 'ALUMNI_REFERRAL',
+      isVerified: true,
+      referralAvailable: role === 'alumni',
       contactAlumni: contactAlumni || '',
+      applyLink: applyLink || registrationLink || '',
       college,
-      status: 'active'
+      status: 'active',
+      workMode: workMode || 'Onsite',
+      eligibleYears: eligibleYears || []
     });
 
     await placement.save();
-
-    // Notify only eligible students asynchronously
-    process.nextTick(async () => {
-      try {
-        const studentQuery = {
-          role: 'student',
-          college
-        };
-
-        const students = await User.find(studentQuery);
-        const notificationsToInsert = [];
-
-        for (const student of students) {
-          const studentCGPA = student.cgpa || 0.0;
-          const studentBacklogs = student.backlogs || 0;
-          const studentDept = student.department || '';
-          const studentYear = student.academicYear || '';
-          const studentBatch = student.batch || '';
-
-          const yearMatch = placement.eligibleYears.length === 0 || placement.eligibleYears.includes(studentYear);
-          const deptMatch = placement.eligibleDepartments.length === 0 || 
-                            placement.eligibleDepartments.includes("All Departments") || 
-                            getDepartmentEquivalents(studentDept).some(d => placement.eligibleDepartments.includes(d));
-          const cgpaMatch = placement.minimumCGPA === undefined || placement.minimumCGPA === null || studentCGPA >= placement.minimumCGPA;
-          const backlogsMatch = placement.maximumBacklogs === undefined || placement.maximumBacklogs === null || studentBacklogs <= placement.maximumBacklogs;
-          const batchMatch = placement.eligibleBatches.length === 0 || placement.eligibleBatches.includes(studentBatch);
-
-          if (yearMatch && deptMatch && cgpaMatch && backlogsMatch && batchMatch) {
-            notificationsToInsert.push({
-              userId: student.userId,
-              type: role === 'admin' ? 'placement' : 'referral',
-              title: role === 'admin' ? 'New Placement Drive' : 'New Referral Opportunity',
-              body: `${placement.companyName} is hiring for a ${placement.jobRole} (${placement.employmentType}). Click to apply!`,
-              read: false,
-              relatedId: placement._id.toString()
-            });
-          }
-        }
-
-        if (notificationsToInsert.length > 0) {
-          await Notification.insertMany(notificationsToInsert);
-          console.log(`[Notification Engine] Dispatched ${notificationsToInsert.length} eligible notifications for Placement ID: ${placement._id}`);
-        }
-      } catch (err) {
-        console.error('[Notification Engine] Failed to dispatch notifications:', err.message);
-      }
-    });
 
     res.status(201).json({ success: true, data: placement });
   } catch (error) {
@@ -5730,12 +6235,6 @@ router.delete('/placements/:id', requireAuth, async (req, res) => {
     placement.deletedAt = new Date();
     await placement.save();
 
-    // Soft delete corresponding announcement if it exists
-    await AdminPost.updateMany(
-      { relatedId: placement._id.toString() },
-      { $set: { status: 'trash', deletedAt: new Date() } }
-    );
-
     res.json({ success: true, message: 'Placement opportunity moved to Trash successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -5757,41 +6256,15 @@ router.put('/placements/:id', requireAuth, async (req, res) => {
     const updates = req.body;
     
     // Recalculate package value
-    if (updates.package && !updates.packageVal) {
+    if (updates.salary && !updates.packageVal) {
       let computedPackageVal = 0;
-      const match = String(updates.package).match(/(\d+(\.\d+)?)/);
+      const match = String(updates.salary).match(/(\d+(\.\d+)?)/);
       if (match) computedPackageVal = parseFloat(match[1]);
       updates.packageVal = computedPackageVal;
     }
 
     Object.assign(placement, updates);
     await placement.save();
-
-    // Sync with corresponding AdminPost if exists
-    await AdminPost.updateMany(
-      { relatedId: placement._id.toString() },
-      {
-        $set: {
-          title: `Placement Drive: ${placement.companyName} - ${placement.jobRole}`,
-          content: placement.description,
-          imageURL: placement.companyLogo || '',
-          isPinned: placement.isPinned || false,
-          status: placement.status,
-          companyName: placement.companyName,
-          companyLogo: placement.companyLogo,
-          jobRole: placement.jobRole,
-          employmentType: placement.employmentType,
-          workMode: placement.workMode,
-          package: placement.package,
-          eligibilityCGPA: placement.minimumCGPA,
-          eligibilityBacklogs: placement.maximumBacklogs,
-          eligibilityAcademicYears: placement.eligibleYears,
-          eligibilityDepartments: placement.eligibleDepartments,
-          registrationDeadline: placement.expiryDate,
-          registrationLink: placement.registrationLink
-        }
-      }
-    );
 
     res.json({ success: true, data: placement });
   } catch (error) {
@@ -5811,23 +6284,11 @@ router.post('/placements/:id/duplicate', requireAuth, async (req, res) => {
     const copy = new Placement(original.toObject());
     copy._id = new mongoose.Types.ObjectId();
     copy.isNew = true;
-    copy.companyName = `${copy.companyName} (Copy)`;
+    copy.company = `${original.company} (Copy)`;
+    copy.companyName = `${original.companyName} (Copy)`;
     copy.createdAt = new Date();
     copy.updatedAt = new Date();
     await copy.save();
-
-    // Duplicate matching AdminPost if exists
-    const relatedPost = await AdminPost.findOne({ relatedId: original._id.toString() });
-    if (relatedPost) {
-      const copyPost = new AdminPost(relatedPost.toObject());
-      copyPost._id = new mongoose.Types.ObjectId();
-      copyPost.isNew = true;
-      copyPost.title = `${copyPost.title} (Copy)`;
-      copyPost.relatedId = copy._id.toString();
-      copyPost.createdAt = new Date();
-      copyPost.updatedAt = new Date();
-      await copyPost.save();
-    }
 
     res.json({ success: true, data: copy });
   } catch (error) {
@@ -5844,11 +6305,6 @@ router.post('/placements/:id/pin', requireAuth, async (req, res) => {
 
     placement.isPinned = !placement.isPinned;
     await placement.save();
-
-    await AdminPost.updateMany(
-      { relatedId: placement._id.toString() },
-      { $set: { isPinned: placement.isPinned } }
-    );
 
     res.json({ success: true, data: placement });
   } catch (error) {
@@ -5867,11 +6323,6 @@ router.post('/placements/:id/pause', requireAuth, async (req, res) => {
 
     placement.status = placement.status === 'paused' ? 'active' : 'paused';
     await placement.save();
-
-    await AdminPost.updateMany(
-      { relatedId: placement._id.toString() },
-      { $set: { status: placement.status } }
-    );
 
     res.json({ success: true, data: placement });
   } catch (error) {
@@ -5892,11 +6343,6 @@ router.post('/placements/:id/restore', requireAuth, async (req, res) => {
     placement.deletedAt = undefined;
     await placement.save();
 
-    await AdminPost.updateMany(
-      { relatedId: placement._id.toString() },
-      { $set: { status: 'active', deletedAt: undefined } }
-    );
-
     res.json({ success: true, data: placement });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -5913,7 +6359,6 @@ router.post('/placements/:id/permanent-delete', requireAuth, async (req, res) =>
     }
 
     await Placement.findByIdAndDelete(req.params.id);
-    await AdminPost.deleteMany({ relatedId: req.params.id });
 
     res.json({ success: true, message: 'Permanently deleted placement drive successfully' });
   } catch (error) {
@@ -5932,18 +6377,6 @@ router.post('/placements/:id/track', requireAuth, async (req, res) => {
     else if (action === 'click') placement.clicks = (placement.clicks || 0) + 1;
     else if (action === 'apply') placement.applications = (placement.applications || 0) + 1;
     await placement.save();
-
-    // Track in linked AdminPost as well if exists
-    await AdminPost.updateMany(
-      { relatedId: placement._id.toString() },
-      {
-        $inc: {
-          views: action === 'view' ? 1 : 0,
-          clicks: action === 'click' ? 1 : 0,
-          applications: action === 'apply' ? 1 : 0
-        }
-      }
-    );
 
     res.json({ success: true, data: placement });
   } catch (error) {

@@ -79,16 +79,27 @@ mongoose.connect(MONGODB_URI)
       console.error('❌ [Seeding] Failed to seed college domains:', seedError.message);
     }
 
-    // Auto-migrate legacy 'MIT' college references to 'SR University'
+    // Auto-migrate legacy 'MIT' college references and update placement types
     try {
-      const { User, Alumni, AdminPost } = require('./models');
-      const [uRes, aRes, apRes] = await Promise.all([
+      const { User, Alumni, AdminPost, Placement } = require('./models');
+      const [uRes, aRes, apRes, pMigRes] = await Promise.all([
         User.updateMany({ college: 'MIT' }, { college: 'SR University' }),
         Alumni.updateMany({ college: 'MIT' }, { college: 'SR University' }),
-        AdminPost.updateMany({ college: 'MIT' }, { college: 'SR University' })
+        AdminPost.updateMany({ college: 'MIT' }, { college: 'SR University' }),
+        Placement.updateMany({ college: 'MIT' }, { college: 'SR University' })
       ]);
-      if (uRes.modifiedCount > 0 || aRes.modifiedCount > 0 || apRes.modifiedCount > 0) {
-        console.log(`🔄 [Migration] Renamed legacy 'MIT' college to 'SR University': Users: ${uRes.modifiedCount}, Alumni: ${aRes.modifiedCount}, AdminPosts: ${apRes.modifiedCount}`);
+      
+      // Populate missing placementType and ensure fields are synced
+      const unclassifiedPlacements = await Placement.find({ placementType: { $exists: false } });
+      let updatedCount = 0;
+      for (const p of unclassifiedPlacements) {
+        p.placementType = p.createdByRole === 'ALUMNI' || p.createdByRole === 'Alumni' ? 'ALUMNI_REFERRAL' : 'OFFICIAL';
+        await p.save();
+        updatedCount++;
+      }
+      
+      if (uRes.modifiedCount > 0 || aRes.modifiedCount > 0 || apRes.modifiedCount > 0 || pMigRes.modifiedCount > 0 || updatedCount > 0) {
+        console.log(`🔄 [Migration] Renamed legacy 'MIT' college to 'SR University' & classified ${updatedCount} legacy placements.`);
       }
     } catch (migError) {
       console.error('❌ [Migration] Failed to run database college migration:', migError.message);

@@ -392,8 +392,7 @@ const PlacementSchema = new mongoose.Schema({
   eligibleBatches: { type: [String], default: [] },
   eligibleSections: { type: [String], default: [] },
   createdBy: { type: String, required: true },
-  createdByName: { type: String, default: '' },
-  createdByRole: { type: String, enum: ['Admin', 'Alumni'], required: true },
+  createdByRole: { type: String, enum: ['Admin', 'Alumni', 'ADMIN', 'ALUMNI'], required: true },
   status: { type: String, enum: ['active', 'paused', 'archived', 'pending', 'trash'], default: 'active' },
   isVerified: { type: Boolean, default: false },
   referralAvailable: { type: Boolean, default: false },
@@ -418,8 +417,93 @@ const PlacementSchema = new mongoose.Schema({
   clicks: { type: Number, default: 0 },
   applications: { type: Number, default: 0 },
   savedCount: { type: Number, default: 0 },
-  deletedAt: { type: Date }
-}, { timestamps: true });
+  deletedAt: { type: Date },
+
+  // New requested production schema fields
+  title: { type: String },
+  company: { type: String },
+  role: { type: String },
+  minCGPA: { type: Number },
+  maxBacklogs: { type: Number },
+  branches: { type: [String], default: [] },
+  batches: { type: [String], default: [] },
+  salary: { type: String },
+  registrationDeadline: { type: Date },
+  driveDate: { type: Date },
+  applyLink: { type: String },
+  placementType: { type: String, enum: ['OFFICIAL', 'ALUMNI_REFERRAL'] }
+}, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
+
+// Pre-save hook to synchronize new and old fields
+PlacementSchema.pre('save', function (next) {
+  // Sync title / role
+  if (this.role) this.jobRole = this.role;
+  else if (this.jobRole) this.role = this.jobRole;
+  if (this.title) {
+    if (!this.jobRole) this.jobRole = this.title;
+    if (!this.role) this.role = this.title;
+  } else if (this.jobRole) {
+    this.title = this.jobRole;
+  }
+
+  // Sync company
+  if (this.company) this.companyName = this.company;
+  else if (this.companyName) this.company = this.companyName;
+
+  // Sync salary
+  if (this.salary) this.package = this.salary;
+  else if (this.package) this.salary = this.package;
+
+  // Sync deadline
+  if (this.registrationDeadline) this.expiryDate = this.registrationDeadline;
+  else if (this.expiryDate) this.registrationDeadline = this.expiryDate;
+
+  // Sync driveDate
+  if (this.driveDate) {
+    if (!this.interviewDate) this.interviewDate = this.driveDate;
+    if (!this.assessmentDate) this.assessmentDate = this.driveDate;
+  } else if (this.interviewDate) {
+    this.driveDate = this.interviewDate;
+  }
+
+  // Sync eligibility criteria
+  if (this.minCGPA !== undefined) this.minimumCGPA = this.minCGPA;
+  else if (this.minimumCGPA !== undefined) this.minCGPA = this.minimumCGPA;
+
+  if (this.maxBacklogs !== undefined) this.maximumBacklogs = this.maxBacklogs;
+  else if (this.maximumBacklogs !== undefined) this.maxBacklogs = this.maximumBacklogs;
+
+  if (this.branches && this.branches.length > 0) this.eligibleDepartments = this.branches;
+  else if (this.eligibleDepartments && this.eligibleDepartments.length > 0) this.branches = this.eligibleDepartments;
+
+  if (this.batches && this.batches.length > 0) this.eligibleBatches = this.batches;
+  else if (this.eligibleBatches && this.eligibleBatches.length > 0) this.batches = this.eligibleBatches;
+
+  // Sync applyLink
+  if (this.applyLink) this.registrationLink = this.applyLink;
+  else if (this.registrationLink) this.applyLink = this.registrationLink;
+
+  // Normalize createdByRole
+  if (this.createdByRole) {
+    const roleUpper = this.createdByRole.toUpperCase();
+    if (roleUpper === 'ADMIN') {
+      this.createdByRole = 'ADMIN';
+    } else if (roleUpper === 'ALUMNI') {
+      this.createdByRole = 'ALUMNI';
+    }
+  }
+
+  // Normalize placementType
+  if (!this.placementType) {
+    if (this.createdByRole === 'ADMIN') {
+      this.placementType = 'OFFICIAL';
+    } else {
+      this.placementType = 'ALUMNI_REFERRAL';
+    }
+  }
+
+  next();
+});
 
 module.exports = {
   Placement: mongoose.model('Placement', PlacementSchema, 'placements'),
@@ -665,6 +749,10 @@ const SecurityLogSchema = new mongoose.Schema({
 SecurityLogSchema.index({ userId: 1 });
 SecurityLogSchema.index({ event: 1 });
 SecurityLogSchema.index({ createdAt: 1 });
+SecurityLogSchema.index({ email: 1 });
+SecurityLogSchema.index({ status: 1 });
+SecurityLogSchema.index({ 'details.sessionId': 1 });
+SecurityLogSchema.index({ ipAddress: 1 });
 
 const AlumniVerificationSchema = new mongoose.Schema({
   userId: { type: String, required: true },

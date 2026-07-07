@@ -314,6 +314,79 @@ export const adminApi = {
     }
   },
 
+  async getEnterpriseSecurityLogs(params: {
+    page?: number;
+    limit?: number;
+    email?: string;
+    userId?: string;
+    status?: string;
+    event?: string;
+    fromDate?: string;
+    toDate?: string;
+    sort?: string;
+    search?: string;
+  }) {
+    try {
+      const query = new URLSearchParams();
+      Object.entries(params).forEach(([key, val]) => {
+        if (val !== undefined && val !== null && val !== '') {
+          query.append(key, String(val));
+        }
+      });
+      const res = await fetch(`${getApiUrl()}/api/security/logs?${query.toString()}`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch enterprise security logs' };
+    }
+  },
+
+  async getEnterpriseSecurityLogsSearch(q: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/security/logs/search?q=${encodeURIComponent(q)}`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to search security logs' };
+    }
+  },
+
+  async getEnterpriseSecurityLogsForUser(userId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/security/logs/${userId}`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { error: true, message: error.message || 'Failed to fetch user security logs' };
+    }
+  },
+
+  getEnterpriseSecurityLogsExportUrl(params: {
+    email?: string;
+    userId?: string;
+    status?: string;
+    event?: string;
+    fromDate?: string;
+    toDate?: string;
+    search?: string;
+  }) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, val]) => {
+      if (val !== undefined && val !== null && val !== '') {
+        query.append(key, String(val));
+      }
+    });
+    const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+    if (token) {
+      query.append('token', token); // For server auth fallback in browser downloads
+      query.append('Authorization', `Bearer ${token}`);
+    }
+    return `${getApiUrl()}/api/security/logs/export?${query.toString()}`;
+  },
+
   async getColleges() {
     try {
       const res = await fetch(`${getApiUrl()}/api/admin/colleges`, {

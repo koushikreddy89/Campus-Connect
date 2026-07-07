@@ -50,24 +50,20 @@ const AlumniBottomTabBar: React.FC = memo(() => {
                 key={id}
                 onClick={() => !disabled && navigate(path)}
                 disabled={disabled}
-                whileTap={disabled ? {} : { scale: 0.9 }}
+                whileTap={disabled ? {} : { scale: 0.92 }}
                 className={`relative flex flex-col items-center justify-center gap-1 px-3 py-2 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
               >
-                {isActive && (
-                  <motion.div
-                    layoutId="alumni-tab-indicator"
-                    className="absolute top-0 left-1/2 h-1 w-6 rounded-full gradient-primary"
-                    style={{ transform: 'translateX(-50%)' }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  />
-                )}
                 <div className="relative flex items-center justify-center">
                   <Icon
-                    className={`h-[22px] w-[22px] transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
+                    className={`h-[22px] w-[22px] transition-all duration-200 ${
+                      isActive 
+                        ? 'text-primary scale-110 drop-shadow-[0_0_8px_rgba(109,95,245,0.45)]' 
+                        : 'text-muted-foreground hover:text-white'
+                    }`}
                     strokeWidth={isActive ? 2.5 : 1.8}
                   />
                 </div>
-                <span className={`text-[10px] font-medium transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground/70'}`}>
+                <span className={`text-[10px] font-semibold transition-all duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground/70'}`}>
                   {label}
                 </span>
               </motion.button>

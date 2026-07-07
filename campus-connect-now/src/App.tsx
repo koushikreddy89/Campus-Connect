@@ -85,6 +85,10 @@ const StudentProfileDetailPage = lazy(() => import("./pages/StudentProfileDetail
   console.error('[Lazy Load Error] StudentProfileDetailPage:', err);
   throw err;
 }));
+const PlacementDetailPage = lazy(() => import("./pages/PlacementDetailPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] PlacementDetailPage:', err);
+  throw err;
+}));
 
 const PrivacySafetyPage = lazy(() => import("./pages/PrivacySafetyPage.tsx").catch(err => {
   console.error('[Lazy Load Error] PrivacySafetyPage:', err);
@@ -315,7 +319,15 @@ const App = () => {
       setIsInitialized(true);
     };
 
-    checkPersistedSession();
+    // Hydration check loop to prevent race condition before state is rehydrated
+    const checkHydration = () => {
+      if (useAuthStore.persist?.hasHydrated && useAuthStore.persist.hasHydrated()) {
+        checkPersistedSession();
+      } else {
+        setTimeout(checkHydration, 25);
+      }
+    };
+    checkHydration();
 
     return () => {
       clearTimeout(initTimeout);
@@ -340,8 +352,9 @@ const App = () => {
   // Show loading screen during initialization
   if (!isInitialized) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader size="lg" />
+      <div className="min-h-screen bg-[#0B0F19] flex flex-col items-center justify-center gap-4 text-slate-300">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#6D5EF5]" />
+        <span className="text-xs font-bold text-slate-400 animate-pulse">Restoring your session...</span>
       </div>
     );
   }
@@ -437,6 +450,14 @@ const App = () => {
                   element={
                     <Suspense fallback={<PageLoader />}>
                       <ProtectedRoute><StudentProfileDetailPage /></ProtectedRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/placement/:id"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <ProtectedRoute><PlacementDetailPage /></ProtectedRoute>
                     </Suspense>
                   }
                 />

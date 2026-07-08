@@ -731,18 +731,72 @@ export const chatApi = {
     }
   },
 
-  async sendMessage(chatId: string, text: string) {
+  async sendMessage(chatId: string, text: string, messageType: 'text' | 'image' | 'file' = 'text', attachments: any[] = []) {
     try {
       const senderId = useAuthStore.getState().uid;
       const res = await fetch(`${getApiUrl()}/api/chats/${chatId}/messages`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ senderId, text })
+        body: JSON.stringify({ senderId, text, messageType, attachments })
       });
       const result = await res.json();
       return result;
     } catch (error: any) {
       console.error('Error sending message:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async uploadFile(chatId: string, file: File, onProgress?: (pct: number) => void): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('files', file);
+
+      xhr.open('POST', `${getApiUrl()}/api/chats/${chatId}/upload`);
+      
+      const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+
+      if (onProgress && xhr.upload) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            onProgress(pct);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        try {
+          const res = JSON.parse(xhr.responseText);
+          resolve(res);
+        } catch (err) {
+          reject(new Error('Failed to parse server upload response.'));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Network error during file upload.'));
+      };
+
+      xhr.send(formData);
+    });
+  },
+
+  async forwardMessage(targetRoomIds: string[], messageId: string, caption?: string, messageType?: 'text' | 'image' | 'file', attachments?: any[]) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/chats/forward`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ targetRoomIds, messageId, caption, messageType, attachments })
+      });
+      const result = await res.json();
+      return result;
+    } catch (error: any) {
+      console.error('Error forwarding message:', error);
       return { success: false, error: error.message };
     }
   },

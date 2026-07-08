@@ -135,10 +135,10 @@ export default function ChatListPage() {
   }, [selectedChat, matches, groups]);
 
   return (
-    <div className="min-h-screen bg-[#070709] pb-20 page-transition flex flex-col h-screen overflow-hidden text-zinc-300">
+    <div className="bg-[#070709] page-transition flex flex-col h-screen w-full overflow-hidden text-zinc-300">
       
-      {/* 3-Column Split Pane Workspace */}
-      <div className="flex flex-row flex-1 min-h-0 w-full relative overflow-hidden">
+      {/* 3-Column Split Pane Workspace (padding reserves space for the bottom tab bar) */}
+      <div className="flex flex-row flex-1 min-h-0 w-full relative overflow-hidden pb-[64px]">
         
         {/* COLUMN 1: Conversation List (Left Sidebar) */}
         <div className="w-full lg:w-[320px] lg:min-w-[320px] lg:max-w-[320px] flex flex-col border-r border-zinc-900 h-full overflow-hidden bg-[#0A0A0F] shrink-0">

@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/campus-connect';
 
@@ -11,7 +12,9 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(cookieParser());
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS 
@@ -20,6 +23,7 @@ app.use(cors({
         'http://localhost:5173', 'http://127.0.0.1:5173',
         'http://localhost:3000', 'http://127.0.0.1:3000',
         'http://localhost:8081', 'http://127.0.0.1:8081',
+        'http://localhost:8082', 'http://127.0.0.1:8082',
         'http://localhost:8088', 'http://127.0.0.1:8088'
       ],
   credentials: true
@@ -27,6 +31,17 @@ app.use(cors({
 app.use(express.json());
 
 // Routes
+const path = require('path');
+const fs = require('fs');
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+app.use('/uploads', express.static(uploadsDir));
+
 const routes = require('./routes');
 app.use('/api', routes);
 
@@ -105,7 +120,50 @@ mongoose.connect(MONGODB_URI)
       console.error('❌ [Migration] Failed to run database college migration:', migError.message);
     }
 
-    app.listen(PORT, () => {
+    const http = require('http');
+    const server = http.createServer(app);
+    const { Server } = require('socket.io');
+    const io = new Server(server, {
+      cors: {
+        origin: process.env.ALLOWED_ORIGINS 
+          ? process.env.ALLOWED_ORIGINS.split(',') 
+          : [
+              'http://localhost:5173', 'http://127.0.0.1:5173',
+              'http://localhost:3000', 'http://127.0.0.1:3000',
+              'http://localhost:8081', 'http://127.0.0.1:8081',
+              'http://localhost:8082', 'http://127.0.0.1:8082',
+              'http://localhost:8088', 'http://127.0.0.1:8088'
+            ],
+        credentials: true
+      }
+    });
+
+    // Share io globally so routes can emit events
+    global.io = io;
+
+    io.on('connection', (socket) => {
+      console.log('🔌 Socket connected:', socket.id);
+
+      socket.on('join_room', ({ roomId }) => {
+        socket.join(roomId);
+        console.log(`👤 Socket ${socket.id} joined room: ${roomId}`);
+      });
+
+      socket.on('leave_room', ({ roomId }) => {
+        socket.leave(roomId);
+        console.log(`👤 Socket ${socket.id} left room: ${roomId}`);
+      });
+
+      socket.on('typing', ({ roomId, userId, isTyping }) => {
+        socket.to(roomId).emit('typing', { roomId, userId, isTyping });
+      });
+
+      socket.on('disconnect', () => {
+        console.log('🔌 Socket disconnected:', socket.id);
+      });
+    });
+
+    server.listen(PORT, () => {
       console.log(`📡 Server running on http://localhost:${PORT}`);
     });
   })

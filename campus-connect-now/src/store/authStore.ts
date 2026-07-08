@@ -10,6 +10,7 @@ interface AuthState {
   token: string | null;
   email: string | null;
   uid: string | null;
+  _id: string | null;
   isNewUser: boolean;
   isAuthenticated: boolean;
   isProfileComplete: boolean;
@@ -51,6 +52,7 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       email: null,
       uid: null,
+      _id: null,
       isNewUser: false,
       isAuthenticated: false,
       isProfileComplete: false,
@@ -146,6 +148,7 @@ export const useAuthStore = create<AuthState>()(
               role: res.role || res.user?.role || state.role,
               email: res.email || res.user?.email || state.email,
               uid: res.user?.id || res.userId || null,
+              _id: res.user?._id || res.userOid || null,
               college: res.college || detectedCollege,
               error: null
             });
@@ -191,6 +194,13 @@ export const useAuthStore = create<AuthState>()(
             } catch (e) {}
           }
 
+          if (res.token) {
+            localStorage.setItem('token', res.token);
+            localStorage.setItem('auth_token', res.token);
+            localStorage.setItem('jwt_token', res.token);
+            localStorage.setItem('userId', res.user?.id || res.userId || '');
+          }
+
           set({
             token: res.token,
             isAuthenticated: true,
@@ -199,6 +209,7 @@ export const useAuthStore = create<AuthState>()(
             role: res.user?.role || res.role,
             email: res.user?.email || res.email,
             uid: res.user?.id || res.userId,
+            _id: res.user?._id || res.userOid || null,
             college: res.college || detectedCollege,
             error: null
           });
@@ -233,6 +244,13 @@ export const useAuthStore = create<AuthState>()(
               } catch (e) {}
             }
 
+            if (res.token) {
+              localStorage.setItem('token', res.token);
+              localStorage.setItem('auth_token', res.token);
+              localStorage.setItem('jwt_token', res.token);
+              localStorage.setItem('userId', res.user?.id || res.userId || '');
+            }
+
             set({
               token: res.token,
               isAuthenticated: true,
@@ -241,6 +259,7 @@ export const useAuthStore = create<AuthState>()(
               role: res.user?.role || res.role,
               email: emailVal,
               uid: res.user?.id || res.userId,
+              _id: res.user?._id || res.userOid || null,
               college: res.college || detectedCollege,
               error: null
             });
@@ -398,6 +417,7 @@ export const useAuthStore = create<AuthState>()(
             role: res.role || res.user?.role || state.role,
             email: res.email || res.user?.email || state.email,
             uid: res.user?.id || res.userId || null,
+            _id: res.user?._id || res.userOid || null,
             college: detectedCollege
           });
           

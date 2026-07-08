@@ -58,14 +58,25 @@ export interface Reaction {
   timestamp: string;
 }
 
+export interface Attachment {
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  downloadUrl: string;
+  thumbnailUrl?: string;
+}
+
 export interface Message {
   id: string;
   matchId: string;
   senderId: string;
+  messageType?: 'text' | 'image' | 'file';
   text: string;
+  attachments?: Attachment[];
   timestamp: string;
   read: boolean;
   status?: 'sent' | 'delivered' | 'seen';
+  resonanceState?: 'dormant' | 'bridged' | 'harmonized' | 'vibrant' | 'resonating' | 'absorbed';
   reactions?: Reaction[];
 }
 

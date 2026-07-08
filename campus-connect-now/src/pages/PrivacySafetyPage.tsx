@@ -26,6 +26,7 @@ interface PrivacySettings {
   showAchievements: boolean;
   referralAlerts: boolean;
   messageAlerts: boolean;
+  resonanceEnabled?: boolean;
 }
 
 export default function PrivacySafetyPage() {
@@ -39,7 +40,8 @@ export default function PrivacySafetyPage() {
     showReferrals: true,
     showAchievements: true,
     referralAlerts: true,
-    messageAlerts: true
+    messageAlerts: true,
+    resonanceEnabled: true
   });
   const [isSaving, setIsSaving] = useState(false);
   const [showPasswordAlert, setShowPasswordAlert] = useState(false);
@@ -264,6 +266,18 @@ export default function PrivacySafetyPage() {
                 type="checkbox"
                 checked={settings.messageAlerts}
                 onChange={(e) => handleUpdateField({ messageAlerts: e.target.checked })}
+                className="rounded border-white/10 bg-secondary text-accent focus:ring-accent/30 h-4 w-4"
+              />
+            </label>
+            <label className="flex items-center justify-between cursor-pointer py-1">
+              <div className="flex flex-col">
+                <span className="text-xs text-foreground/90">Resonance System (Read Awareness)</span>
+                <span className="text-[9px] text-muted-foreground">Share reading and channel focus presence indicator</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.resonanceEnabled ?? true}
+                onChange={(e) => handleUpdateField({ resonanceEnabled: e.target.checked })}
                 className="rounded border-white/10 bg-secondary text-accent focus:ring-accent/30 h-4 w-4"
               />
             </label>

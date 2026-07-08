@@ -21,22 +21,44 @@ const ACCESS_COOKIE_OPTIONS = {
   ...COOKIE_OPTIONS,
   maxAge: 15 * 60 * 1000 // 15 minutes (access token)
 };
+const multer = require('multer');
+const path = require('path');
 
-// Rate limiting configurations
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20,
-  message: { success: false, error: 'Too many authentication attempts from this IP, please try again after 15 minutes.' },
-  standardHeaders: true,
-  legacyHeaders: false,
+// Multer setup for file/image attachments
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, 'uploads'));
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB size limit
+});
+// Rate limiting configurations (Lightweight IP-based protection for abuse prevention)
 const apiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100,
-  message: { success: false, error: 'Too many requests, please slow down.' },
+  windowMs: 60 * 60 * 1000, // 1 hour window
+  max: 10000, // High request threshold (10,000 requests/hour/IP) to prevent blocking shared campus Wi-Fi
+  message: { success: false, error: 'Too many requests from this network, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Exclude logout endpoint from rate limiting completely
+    const isLogout = req.path === '/auth/logout' || req.path === '/api/auth/logout';
+    if (isLogout) {
+      console.log(`ℹ️ [Rate Limit Skip] Skipping rate limit for logout request: [${req.method} ${req.path}]`);
+    }
+    return isLogout;
+  },
+  handler: (req, res, next, options) => {
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    console.warn(`⚠️ [Rate Limit Triggered] IP Limit reached! Client IP: [${clientIp}], Path: [${req.method} ${req.path}]`);
+    res.status(options.statusCode).send(options.message);
+  }
 });
 
 router.use(apiLimiter);
@@ -103,47 +125,155 @@ const isApprovedCollegeDomain = async (email) => {
 };
 
 // Brute force lockout helper functions
-const checkLockout = async (email, ipAddress) => {
-  const query = { $or: [] };
-  if (email) query.$or.push({ email: email.toLowerCase().trim() });
-  if (ipAddress) query.$or.push({ ipAddress });
-  
-  if (query.$or.length === 0) return { locked: false };
-  
-  const attempts = await LoginAttempt.find(query);
-  for (const attempt of attempts) {
-    if (attempt.lockUntil && attempt.lockUntil > new Date()) {
-      const waitMinutes = Math.ceil((attempt.lockUntil.getTime() - Date.now()) / 60000);
-      return { locked: true, waitMinutes, lockUntil: attempt.lockUntil };
-    }
+const getOrCreateAuthTracker = async (email) => {
+  const lowerEmail = email.toLowerCase().trim();
+  let tracker = await LoginAttempt.findOne({ email: lowerEmail });
+  if (!tracker) {
+    tracker = new LoginAttempt({ email: lowerEmail });
+    await tracker.save();
+  }
+  return tracker;
+};
+
+const checkLockout = async (email) => {
+  if (!email) return { locked: false };
+  const lowerEmail = email.toLowerCase().trim();
+  const tracker = await LoginAttempt.findOne({ email: lowerEmail });
+  if (tracker && tracker.lockUntil && tracker.lockUntil > new Date()) {
+    const waitMinutes = Math.ceil((tracker.lockUntil.getTime() - Date.now()) / 60000);
+    return { locked: true, waitMinutes, lockUntil: tracker.lockUntil };
   }
   return { locked: false };
 };
 
-const recordFailedAttempt = async (email, ipAddress) => {
+const recordFailedAttempt = async (email) => {
   const lowerEmail = email.toLowerCase().trim();
-  let attempt = await LoginAttempt.findOne({ email: lowerEmail, ipAddress });
-  if (!attempt) {
-    attempt = new LoginAttempt({ email: lowerEmail, ipAddress, attempts: 0 });
+  let tracker = await LoginAttempt.findOne({ email: lowerEmail });
+  if (!tracker) {
+    tracker = new LoginAttempt({ email: lowerEmail });
   }
-  attempt.attempts += 1;
-  attempt.lastAttemptAt = new Date();
-  
-  if (attempt.attempts >= 5) {
-    attempt.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 min lock
+  tracker.failedAttempts += 1;
+  tracker.loginAttempts += 1;
+  if (tracker.failedAttempts >= 5) {
+    tracker.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins lock
   }
-  await attempt.save();
-  return attempt;
+  await tracker.save();
+  return tracker;
 };
 
-const resetAttempts = async (email, ipAddress) => {
+const resetAttempts = async (email) => {
   const lowerEmail = email.toLowerCase().trim();
-  await LoginAttempt.deleteMany({
-    $or: [
-      { email: lowerEmail },
-      { ipAddress }
-    ]
-  });
+  let tracker = await LoginAttempt.findOne({ email: lowerEmail });
+  if (tracker) {
+    tracker.failedAttempts = 0;
+    tracker.lockUntil = null;
+    
+    // Rolling 24h window check for successful logins limit (max 10 logins/day)
+    const rollingLimitMs = 24 * 60 * 60 * 1000;
+    if (Date.now() - new Date(tracker.successfulLoginsWindowStart).getTime() > rollingLimitMs) {
+      tracker.successfulLoginsToday = 0;
+      tracker.successfulLoginsWindowStart = new Date();
+    }
+    tracker.successfulLoginsToday += 1;
+    tracker.lastLogin = new Date();
+    await tracker.save();
+  }
+};
+
+// Middleware: Account-level login and OTP limiters
+const checkAccountLoginLimit = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) return next();
+
+    const lowerEmail = email.toLowerCase().trim();
+    const tracker = await getOrCreateAuthTracker(lowerEmail);
+
+    console.log(`🔍 [Account Login Limit Check] Email: [${lowerEmail}], Failed Attempts: [${tracker.failedAttempts}], Successful Logins Today: [${tracker.successfulLoginsToday}], Lock Until: [${tracker.lockUntil}]`);
+
+    // Lockout check
+    if (tracker.lockUntil && tracker.lockUntil > new Date()) {
+      const remainingMs = tracker.lockUntil.getTime() - Date.now();
+      const remainingMins = Math.ceil(remainingMs / 60000);
+      console.warn(`⚠️ [Account Lockout Active] Locked account: [${lowerEmail}]. Try again in ${remainingMins} minutes.`);
+      return res.status(423).json({
+        success: false,
+        error: `Account is temporarily locked due to failed attempts. Try again in ${remainingMins} minutes.`
+      });
+    }
+
+    // Rolling 24h window check for successful logins
+    const rollingLimitMs = 24 * 60 * 60 * 1000;
+    if (Date.now() - new Date(tracker.successfulLoginsWindowStart).getTime() > rollingLimitMs) {
+      tracker.successfulLoginsToday = 0;
+      tracker.successfulLoginsWindowStart = new Date();
+      await tracker.save();
+    }
+
+    if (tracker.successfulLoginsToday >= 10) {
+      const resetTime = new Date(new Date(tracker.successfulLoginsWindowStart).getTime() + rollingLimitMs);
+      const remainingHrs = Math.ceil((resetTime.getTime() - Date.now()) / (3600 * 1000));
+      console.warn(`⚠️ [Account Login Limit Reached] Limit reached for account: [${lowerEmail}]. Try again in ${remainingHrs} hours.`);
+      return res.status(429).json({
+        success: false,
+        error: `Maximum 10 successful logins per 24-hour window exceeded for this account. Try again in ${remainingHrs} hours.`
+      });
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+const checkAccountOtpLimit = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) return next();
+
+    const lowerEmail = email.toLowerCase().trim();
+    const tracker = await getOrCreateAuthTracker(lowerEmail);
+
+    console.log(`🔍 [Account OTP Limit Check] Email: [${lowerEmail}], OTP Requests: [${tracker.otpRequests}], Last OTP Request: [${tracker.lastOtpRequest}]`);
+
+    // Cooldown check (60 seconds)
+    if (tracker.lastOtpRequest) {
+      const elapsedSeconds = Math.floor((Date.now() - new Date(tracker.lastOtpRequest).getTime()) / 1000);
+      if (elapsedSeconds < 60) {
+        console.warn(`⚠️ [OTP Cooldown Triggered] Cooldown active for: [${lowerEmail}]. Wait ${60 - elapsedSeconds} seconds.`);
+        return res.status(429).json({
+          success: false,
+          error: `Please wait ${60 - elapsedSeconds} seconds before requesting another OTP.`
+        });
+      }
+    }
+
+    // Rolling 1 hour window check for OTP requests
+    const rollingOtpWindowMs = 60 * 60 * 1000;
+    if (Date.now() - new Date(tracker.otpRequestsWindowStart).getTime() > rollingOtpWindowMs) {
+      tracker.otpRequests = 0;
+      tracker.otpRequestsWindowStart = new Date();
+    }
+
+    if (tracker.otpRequests >= 5) {
+      const resetTime = new Date(new Date(tracker.otpRequestsWindowStart).getTime() + rollingOtpWindowMs);
+      const remainingMins = Math.ceil((resetTime.getTime() - Date.now()) / 60000);
+      console.warn(`⚠️ [OTP Limit Reached] Limit reached for account: [${lowerEmail}]. Try again in ${remainingMins} minutes.`);
+      return res.status(429).json({
+        success: false,
+        error: `Maximum 5 OTP requests per hour exceeded for this account. Try again in ${remainingMins} minutes.`
+      });
+    }
+
+    // Increment OTP requests count
+    tracker.otpRequests += 1;
+    tracker.lastOtpRequest = new Date();
+    await tracker.save();
+
+    next();
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Email-Name uniqueness constraint helper (Product Requirement)
@@ -241,6 +371,7 @@ const requireAuth = async (req, res, next) => {
       return res.status(401).json({ success: false, error: 'Session tracking is required. Please log in again.', isSessionInvalid: true });
     }
 
+    let userOid = '';
     // Check if user or alumni is suspended and derive college
     if (decoded.role === 'student' || decoded.role === 'alumni') {
       const Model = decoded.role === 'alumni' ? Alumni : User;
@@ -250,12 +381,14 @@ const requireAuth = async (req, res, next) => {
           return res.status(403).json({ success: false, error: 'Your account has been suspended. Please contact support.', isSuspended: true });
         }
         college = account.college;
+        userOid = account._id.toString();
       }
     } else if (decoded.role === 'admin') {
       college = 'SR University'; // Admin college fallback
+      userOid = 'admin-id';
     }
 
-    req.user = { ...decoded, college };
+    req.user = { ...decoded, _id: userOid, college };
     next();
   } catch (err) {
     return res.status(401).json({ success: false, error: 'Unauthorized: Invalid token' });
@@ -440,7 +573,7 @@ const createSessionAndTokens = async (req, res, userId, role, email) => {
 };
 
 // 1. REGISTER Endpoint (Password-based signup)
-router.post('/auth/register', authLimiter, async (req, res) => {
+router.post('/auth/register', checkAccountOtpLimit, async (req, res) => {
   try {
     const { email, password, name, role, department, batch, rollNumber } = req.body;
     
@@ -450,12 +583,6 @@ router.post('/auth/register', authLimiter, async (req, res) => {
     
     const lowerEmail = email.toLowerCase().trim();
     const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-    
-    // Lockout check
-    const lockout = await checkLockout(lowerEmail, currentIp);
-    if (lockout.locked) {
-      return res.status(423).json({ success: false, error: 'Too many attempts. Account temporarily locked.' });
-    }
 
     // Disposable email prevention
     if (isDisposableEmail(lowerEmail)) {
@@ -593,7 +720,7 @@ router.post('/auth/register', authLimiter, async (req, res) => {
 });
 
 // 2. VERIFY-EMAIL Endpoint
-router.post('/auth/verify-email', authLimiter, async (req, res) => {
+router.post('/auth/verify-email', checkAccountLoginLimit, async (req, res) => {
   try {
     const { email, code } = req.body;
     if (!email || !code) {
@@ -604,9 +731,9 @@ router.post('/auth/verify-email', authLimiter, async (req, res) => {
     const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
 
     // Lockout check
-    const lockout = await checkLockout(lowerEmail, currentIp);
+    const lockout = await checkLockout(lowerEmail);
     if (lockout.locked) {
-      return res.status(423).json({ success: false, error: 'Account temporarily locked. Please try again later.' });
+      return res.status(423).json({ success: false, error: `Account is temporarily locked due to failed attempts. Try again in ${lockout.waitMinutes} minutes.` });
     }
 
     const otpRecord = await OTP.findOne({ email: lowerEmail });
@@ -620,7 +747,7 @@ router.post('/auth/verify-email', authLimiter, async (req, res) => {
     if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
       otpRecord.attempts += 1;
       await otpRecord.save();
-      await recordFailedAttempt(lowerEmail, currentIp);
+      await recordFailedAttempt(lowerEmail);
 
       if (otpRecord.attempts >= 5) {
         await OTP.deleteOne({ _id: otpRecord._id });
@@ -631,7 +758,7 @@ router.post('/auth/verify-email', authLimiter, async (req, res) => {
 
     // Success
     await OTP.deleteOne({ _id: otpRecord._id });
-    await resetAttempts(lowerEmail, currentIp);
+    await resetAttempts(lowerEmail);
 
     // Verify User/Alumni
     const isAlumni = otpRecord.role === 'alumni';
@@ -653,6 +780,7 @@ router.post('/auth/verify-email', authLimiter, async (req, res) => {
       token,
       user: {
         id: account.userId,
+        _id: account._id.toString(),
         name: account.name || '',
         email: lowerEmail,
         role: account.role
@@ -666,7 +794,7 @@ router.post('/auth/verify-email', authLimiter, async (req, res) => {
 });
 
 // 3. LOGIN Endpoint (Password-based login with CAPTCHA / Lockouts / MFA verification)
-router.post('/auth/login', authLimiter, async (req, res) => {
+router.post('/auth/login', checkAccountLoginLimit, async (req, res) => {
   try {
     const { email, password, captchaId, captchaAnswer, captchaExpiresAt, captchaSignature } = req.body;
     
@@ -679,21 +807,21 @@ router.post('/auth/login', authLimiter, async (req, res) => {
     const ua = req.headers['user-agent'] || '';
 
     // 1. Lockout Check
-    const lockout = await checkLockout(lowerEmail, currentIp);
+    const lockout = await checkLockout(lowerEmail);
     if (lockout.locked) {
-      return res.status(423).json({ success: false, error: `Account is temporarily locked. Try again after ${lockout.waitMinutes} minutes.` });
+      return res.status(423).json({ success: false, error: `Account is temporarily locked. Try again in ${lockout.waitMinutes} minutes.` });
     }
 
-    // 2. CAPTCHA Check (Required if failed attempts from IP or account >= 3)
-    const attempts = await LoginAttempt.findOne({ $or: [{ email: lowerEmail }, { ipAddress: currentIp }] });
-    const requireCaptcha = attempts && attempts.attempts >= 3;
+    // 2. CAPTCHA Check (Required if failed attempts from account >= 3)
+    const attempts = await LoginAttempt.findOne({ email: lowerEmail });
+    const requireCaptcha = attempts && attempts.failedAttempts >= 3;
     if (requireCaptcha) {
       if (!captchaId || captchaAnswer === undefined || !captchaSignature) {
         return res.status(422).json({ success: false, error: 'CAPTCHA required due to multiple failed attempts.', requireCaptcha: true });
       }
       const captchaValid = verifyCaptcha(captchaId, captchaAnswer, captchaExpiresAt, captchaSignature);
       if (!captchaValid) {
-        await recordFailedAttempt(lowerEmail, currentIp);
+        await recordFailedAttempt(lowerEmail);
         return res.status(400).json({ success: false, error: 'CAPTCHA verification failed.', requireCaptcha: true });
       }
     }
@@ -708,7 +836,7 @@ router.post('/auth/login', authLimiter, async (req, res) => {
     }
 
     if (!account && role !== 'admin') {
-      await recordFailedAttempt(lowerEmail, currentIp);
+      await recordFailedAttempt(lowerEmail);
       await SecurityLog.create({
         email: lowerEmail,
         event: 'login_fail_no_user',
@@ -734,7 +862,7 @@ router.post('/auth/login', authLimiter, async (req, res) => {
     }
 
     if (!passwordValid) {
-      await recordFailedAttempt(lowerEmail, currentIp);
+      await recordFailedAttempt(lowerEmail);
       await SecurityLog.create({
         userId: account ? account.userId : '',
         email: lowerEmail,
@@ -747,7 +875,7 @@ router.post('/auth/login', authLimiter, async (req, res) => {
     }
 
     // Credentials valid: reset failed attempts
-    await resetAttempts(lowerEmail, currentIp);
+    await resetAttempts(lowerEmail);
 
     // 5. MFA / OTP Verification Check
     const mfaRequired = role === 'admin' || (account && account.mfaEnabled);
@@ -803,6 +931,7 @@ router.post('/auth/login', authLimiter, async (req, res) => {
       token,
       user: {
         id: account.userId,
+        _id: account._id.toString(),
         name: account.name || '',
         email: lowerEmail,
         role: account.role
@@ -816,7 +945,7 @@ router.post('/auth/login', authLimiter, async (req, res) => {
 });
 
 // 4. MFA-VERIFY Endpoint
-router.post('/auth/mfa/verify', authLimiter, async (req, res) => {
+router.post('/auth/mfa/verify', checkAccountLoginLimit, async (req, res) => {
   try {
     const { email, code } = req.body;
     if (!email || !code) {
@@ -828,9 +957,9 @@ router.post('/auth/mfa/verify', authLimiter, async (req, res) => {
     const ua = req.headers['user-agent'] || '';
 
     // Lockout check
-    const lockout = await checkLockout(lowerEmail, currentIp);
+    const lockout = await checkLockout(lowerEmail);
     if (lockout.locked) {
-      return res.status(423).json({ success: false, error: 'Lockout active. Try again later.' });
+      return res.status(423).json({ success: false, error: `Account is temporarily locked due to failed attempts. Try again in ${lockout.waitMinutes} minutes.` });
     }
 
     const otpRecord = await OTP.findOne({ email: lowerEmail });
@@ -844,7 +973,7 @@ router.post('/auth/mfa/verify', authLimiter, async (req, res) => {
     if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
       otpRecord.attempts += 1;
       await otpRecord.save();
-      await recordFailedAttempt(lowerEmail, currentIp);
+      await recordFailedAttempt(lowerEmail);
 
       if (otpRecord.attempts >= 5) {
         await OTP.deleteOne({ _id: otpRecord._id });
@@ -855,7 +984,7 @@ router.post('/auth/mfa/verify', authLimiter, async (req, res) => {
 
     // Success
     await OTP.deleteOne({ _id: otpRecord._id });
-    await resetAttempts(lowerEmail, currentIp);
+    await resetAttempts(lowerEmail);
 
     let userId = 'admin-user-id';
     let profileComplete = true;
@@ -875,12 +1004,17 @@ router.post('/auth/mfa/verify', authLimiter, async (req, res) => {
     const { token } = await createSessionAndTokens(req, res, userId, finalRole, lowerEmail);
 
     let name = '';
+    let userObjectId = '';
     if (finalRole === 'admin') {
       name = 'Campus Admin';
+      userObjectId = 'admin-id';
     } else {
       const Model = finalRole === 'alumni' ? Alumni : User;
       const account = await Model.findOne({ userId });
-      if (account) name = account.name || '';
+      if (account) {
+        name = account.name || '';
+        userObjectId = account._id.toString();
+      }
     }
 
     res.json({
@@ -888,6 +1022,7 @@ router.post('/auth/mfa/verify', authLimiter, async (req, res) => {
       token,
       user: {
         id: userId,
+        _id: userObjectId,
         name,
         email: lowerEmail,
         role: finalRole
@@ -958,7 +1093,7 @@ router.post('/auth/refresh-token', async (req, res) => {
 });
 
 // 6. FORGOT-PASSWORD Endpoint (Secure token generation)
-router.post('/auth/forgot-password', authLimiter, async (req, res) => {
+router.post('/auth/forgot-password', checkAccountOtpLimit, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
@@ -1032,7 +1167,7 @@ router.post('/auth/forgot-password', authLimiter, async (req, res) => {
 });
 
 // 7. RESET-PASSWORD Endpoint (With token matching & session invalidation)
-router.post('/auth/reset-password', authLimiter, async (req, res) => {
+router.post('/auth/reset-password', checkAccountLoginLimit, async (req, res) => {
   try {
     const { token, password } = req.body;
     if (!token || !password) {
@@ -1251,7 +1386,7 @@ router.get('/debug/email-test', async (req, res) => {
 });
 
 // 13. Deprecated/Bypass verify-otp endpoint kept for verification compatibility
-router.post('/auth/verify-otp', authLimiter, async (req, res) => {
+router.post('/auth/verify-otp', checkAccountLoginLimit, async (req, res) => {
   try {
     const { email, code } = req.body;
     if (!email || !code) {
@@ -1261,9 +1396,9 @@ router.post('/auth/verify-otp', authLimiter, async (req, res) => {
     const lowerEmail = email.toLowerCase().trim();
     const currentIp = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     
-    const lockout = await checkLockout(lowerEmail, currentIp);
+    const lockout = await checkLockout(lowerEmail);
     if (lockout.locked) {
-      return res.status(423).json({ success: false, error: `Account locked. Try again later.` });
+      return res.status(423).json({ success: false, error: `Account locked. Try again in ${lockout.waitMinutes} minutes.` });
     }
     
     const otpRecord = await OTP.findOne({ email: lowerEmail });
@@ -1276,7 +1411,7 @@ router.post('/auth/verify-otp', authLimiter, async (req, res) => {
     if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
       otpRecord.attempts += 1;
       await otpRecord.save();
-      await recordFailedAttempt(lowerEmail, currentIp);
+      await recordFailedAttempt(lowerEmail);
       
       if (otpRecord.attempts >= 5) {
         await OTP.deleteOne({ _id: otpRecord._id });
@@ -1287,7 +1422,7 @@ router.post('/auth/verify-otp', authLimiter, async (req, res) => {
     
     // Clean up
     await OTP.deleteOne({ _id: otpRecord._id });
-    await resetAttempts(lowerEmail, currentIp);
+    await resetAttempts(lowerEmail);
     
     let isNewUser = false;
     let profileComplete = false;
@@ -3877,14 +4012,62 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied: Connection belongs to a different college.' });
     }
 
-    // Mark received messages in this match as read
-    await Message.updateMany(
-      { matchId, senderId: otherUserId, read: false },
-      { $set: { read: true, status: 'seen' } }
-    );
+    const otherUserOid = otherUser ? otherUser._id.toString() : otherUserId;
+
+    // Check if current user (the recipient fetching these messages) has resonance enabled
+    const recipientUser = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    const isResonanceEnabled = recipientUser ? recipientUser.resonanceEnabled !== false : true;
+
+    if (isResonanceEnabled) {
+      // Set incoming messages from the other user to harmonized (delivered)
+      await Message.updateMany(
+        { matchId, senderId: otherUserOid, status: 'sent' },
+        { $set: { status: 'delivered', resonanceState: 'harmonized' } }
+      );
+    } else {
+      // If privacy is disabled, mark messages directly as absorbed (seen) silently
+      await Message.updateMany(
+        { matchId, senderId: otherUserOid, read: false },
+        { $set: { read: true, status: 'seen', resonanceState: 'absorbed' } }
+      );
+    }
 
     const list = await Message.find({ matchId }).sort({ timestamp: 1 });
     res.json({ success: true, data: list });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/chats/:matchId/upload - Upload file attachments
+router.post('/chats/:matchId/upload', requireAuth, upload.array('files'), async (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const conn = await Connection.findById(matchId);
+    if (!conn || (conn.user1 !== req.user.userId && conn.user2 !== req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied: Connection match invalid.' });
+    }
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, error: 'No files uploaded.' });
+    }
+
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const baseUrl = `${protocol}://${host}/uploads`;
+
+    const uploadedAttachments = req.files.map(file => {
+      const isImage = file.mimetype.startsWith('image/');
+      return {
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        downloadUrl: `${baseUrl}/${file.filename}`,
+        thumbnailUrl: isImage ? `${baseUrl}/${file.filename}` : undefined
+      };
+    });
+
+    res.json({ success: true, data: uploadedAttachments });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -3894,15 +4077,15 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
 router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
   try {
     const { matchId } = req.params;
-    const { text } = req.body;
-    const senderId = req.user.userId;
+    const { text, messageType, attachments } = req.body;
+    const senderUserId = req.user.userId;
 
     const conn = await Connection.findById(matchId);
-    if (!conn || (conn.user1 !== senderId && conn.user2 !== senderId)) {
+    if (!conn || (conn.user1 !== senderUserId && conn.user2 !== senderUserId)) {
       return res.status(403).json({ success: false, error: 'Access denied: You are not part of this connection.' });
     }
 
-    const otherUserId = conn.user1 === senderId ? conn.user2 : conn.user1;
+    const otherUserId = conn.user1 === senderUserId ? conn.user2 : conn.user1;
     const otherUser = await User.findOne({ userId: otherUserId }) || await Alumni.findOne({ userId: otherUserId });
     
     // College isolation check
@@ -3910,26 +4093,32 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied: Recipient belongs to a different college.' });
     }
 
-    if (await isBlockedBetween(senderId, otherUserId)) {
+    if (await isBlockedBetween(senderUserId, otherUserId)) {
       return res.status(403).json({ success: false, error: 'Cannot send message: This user is blocked.' });
     }
-    const sender = await User.findOne({ userId: senderId }) || await Alumni.findOne({ userId: senderId });
+    const sender = await User.findOne({ userId: senderUserId }) || await Alumni.findOne({ userId: senderUserId });
     const senderRole = sender ? sender.role : 'student';
-    if (!(await canMessage(senderId, senderRole, otherUserId))) {
+    if (!(await canMessage(senderUserId, senderRole, otherUserId))) {
       return res.status(403).json({ success: false, error: 'Cannot send message: Receiver settings restrict this action.' });
     }
 
     const newMsg = new Message({
       matchId,
-      senderId,
+      senderId: req.user._id, // Save Mongoose ObjectId!
       college: req.user.college,
-      text,
+      messageType: messageType || 'text',
+      text: text || '',
+      attachments: attachments || [],
       timestamp: new Date(),
       read: false,
       status: 'sent',
+      resonanceState: 'bridged',
       reactions: []
     });
     await newMsg.save();
+    if (global.io) {
+      global.io.to(`match_${matchId}`).emit('message:received', newMsg);
+    }
     res.json({ success: true, data: newMsg });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -3964,6 +4153,109 @@ router.post('/chats/:matchId/messages/:messageId/react', requireAuth, async (req
   }
 });
 
+// POST /chats/forward - Forward a message to multiple targets
+router.post('/chats/forward', requireAuth, async (req, res) => {
+  try {
+    const { targetRoomIds, messageId, caption, messageType, attachments } = req.body;
+    const senderUserId = req.user.userId;
+
+    if (!targetRoomIds || !Array.isArray(targetRoomIds) || targetRoomIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'No target rooms specified.' });
+    }
+
+    const sender = await User.findOne({ userId: senderUserId }) || await Alumni.findOne({ userId: senderUserId });
+    const senderName = sender ? sender.name : 'Someone';
+
+    const results = [];
+
+    for (const targetId of targetRoomIds) {
+      // 1. Check direct connection match
+      const conn = await Connection.findById(targetId);
+      if (conn) {
+        if (conn.user1 !== senderUserId && conn.user2 !== senderUserId) {
+          continue;
+        }
+
+        const newMsg = new Message({
+          matchId: targetId,
+          senderId: req.user._id,
+          college: req.user.college,
+          messageType: messageType || 'text',
+          text: caption !== undefined ? caption : '',
+          attachments: attachments || [],
+          timestamp: new Date(),
+          read: false,
+          status: 'sent',
+          resonanceState: 'bridged',
+          reactions: [],
+          isForwarded: true,
+          forwardedFrom: messageId,
+          forwardedBy: req.user._id,
+          forwardedAt: new Date()
+        });
+
+        await newMsg.save();
+        
+        if (messageId) {
+          await Message.findByIdAndUpdate(messageId, { $inc: { forwardCount: 1 } });
+          await GroupMessage.findByIdAndUpdate(messageId, { $inc: { forwardCount: 1 } });
+        }
+
+        results.push({ targetId, type: 'direct', message: newMsg });
+
+        if (global.io) {
+          global.io.to(`match_${targetId}`).emit('message:received', newMsg);
+        }
+        continue;
+      }
+
+      // 2. Check group chat
+      const group = await GroupChat.findById(targetId);
+      if (group) {
+        if (!group.members.includes(senderUserId)) {
+          continue;
+        }
+
+        const gMsg = new GroupMessage({
+          groupId: targetId,
+          senderId: req.user._id,
+          senderName,
+          messageType: messageType || 'text',
+          text: caption !== undefined ? caption : '',
+          attachments: attachments || [],
+          timestamp: new Date(),
+          isForwarded: true,
+          forwardedFrom: messageId,
+          forwardedBy: req.user._id,
+          forwardedAt: new Date()
+        });
+
+        await gMsg.save();
+
+        if (messageId) {
+          await Message.findByIdAndUpdate(messageId, { $inc: { forwardCount: 1 } });
+          await GroupMessage.findByIdAndUpdate(messageId, { $inc: { forwardCount: 1 } });
+        }
+
+        await GroupChat.findByIdAndUpdate(targetId, {
+          lastMessage: caption || (messageType === 'image' ? '🖼️ Sent an image' : '📎 Sent an attachment'),
+          lastMessageAt: new Date()
+        });
+
+        results.push({ targetId, type: 'group', message: gMsg });
+
+        if (global.io) {
+          global.io.to(`group_${targetId}`).emit('group_message:received', gMsg);
+        }
+      }
+    }
+
+    res.json({ success: true, data: results });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST /chats/:matchId/messages/:messageId/read - Mark direct message as read
 router.post('/chats/:matchId/messages/:messageId/read', requireAuth, async (req, res) => {
   try {
@@ -3980,6 +4272,79 @@ router.post('/chats/:matchId/messages/:messageId/read', requireAuth, async (req,
     msg.status = 'seen';
     await msg.save();
     res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /chats/:matchId/messages/:messageId/resonance - Update message resonance state
+router.post('/chats/:matchId/messages/:messageId/resonance', requireAuth, async (req, res) => {
+  try {
+    const { matchId, messageId } = req.params;
+    const { state } = req.body; // 'vibrant' | 'resonating' | 'absorbed'
+    
+    const conn = await Connection.findById(matchId);
+    if (!conn || (conn.user1 !== req.user.userId && conn.user2 !== req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const msg = await Message.findById(messageId);
+    if (!msg || msg.matchId !== matchId) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    // Enforce privacy settings
+    const user = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    const resonanceEnabled = user ? user.resonanceEnabled !== false : true;
+
+    if (!resonanceEnabled) {
+      // If user has resonance disabled, it goes straight to absorbed silently
+      msg.resonanceState = 'absorbed';
+      msg.read = true;
+      msg.status = 'seen';
+    } else {
+      msg.resonanceState = state;
+      if (state === 'absorbed' || state === 'resonating') {
+        msg.read = true;
+        msg.status = 'seen';
+      }
+    }
+
+    await msg.save();
+    if (global.io) {
+      global.io.to(`match_${matchId}`).emit('resonance:state_changed', { messageId, resonanceState: msg.resonanceState, status: msg.status });
+    }
+    res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /chats/:matchId/focus - Broadcast/Save user channel focus state
+router.post('/chats/:matchId/focus', requireAuth, async (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const { isFocused } = req.body;
+    
+    const conn = await Connection.findById(matchId);
+    if (!conn || (conn.user1 !== req.user.userId && conn.user2 !== req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const otherUserId = conn.user1 === req.user.userId ? conn.user2 : conn.user1;
+    const otherUser = await User.findOne({ userId: otherUserId }) || await Alumni.findOne({ userId: otherUserId });
+    const otherUserOid = otherUser ? otherUser._id.toString() : otherUserId;
+
+    // If focusing on a channel, we can also auto-harmonize all pending messages sent to us
+    if (isFocused) {
+      await Message.updateMany(
+        { matchId, senderId: otherUserOid, status: 'sent' },
+        { $set: { status: 'delivered', resonanceState: 'harmonized' } }
+      );
+    }
+
+    if (global.io) {
+      global.io.to(`match_${matchId}`).emit('resonance:focus_changed', { userId: req.user.userId, isFocused });
+    }
+    res.json({ success: true, isFocused });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4079,7 +4444,7 @@ router.post('/groups/:groupId/messages', requireAuth, async (req, res) => {
 
     const gMsg = new GroupMessage({
       groupId,
-      senderId,
+      senderId: req.user._id, // Save Mongoose ObjectId!
       senderName,
       text,
       timestamp: new Date()
@@ -4840,6 +5205,7 @@ router.get('/privacy-settings', requireAuth, async (req, res) => {
       showAchievements: profile.showAchievements !== false,
       referralAlerts: profile.referralAlerts !== false,
       messageAlerts: profile.messageAlerts !== false,
+      resonanceEnabled: profile.resonanceEnabled !== false,
       blockedUsers: blockedUsersDetails
     };
 
@@ -4864,7 +5230,8 @@ router.put('/privacy-settings', requireAuth, async (req, res) => {
       showReferrals: settings.showReferrals,
       showAchievements: settings.showAchievements,
       referralAlerts: settings.referralAlerts,
-      messageAlerts: settings.messageAlerts
+      messageAlerts: settings.messageAlerts,
+      resonanceEnabled: settings.resonanceEnabled !== false
     };
 
     let updated = null;

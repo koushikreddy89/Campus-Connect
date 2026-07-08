@@ -300,7 +300,8 @@ const App = () => {
               isProfileComplete: onboardingCompleted,
               role: dbRole,
               email: dbUser.email,
-              uid: dbUser.id
+              uid: dbUser.id,
+              _id: dbUser._id
             });
 
             if (dbRole !== 'admin') {
@@ -691,6 +692,17 @@ const App = () => {
 };
 
 const AppLayoutWrapper = ({ children }: { children: React.ReactNode }) => {
+  const location = useLocation();
+  const isChatRoute = location.pathname.startsWith('/chat');
+
+  if (isChatRoute) {
+    return (
+      <div className="dark h-screen bg-[#070709] text-foreground w-full overflow-hidden relative">
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="dark min-h-screen bg-background text-foreground w-full">
       <div className="w-full max-w-md sm:max-w-xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pb-24 relative">

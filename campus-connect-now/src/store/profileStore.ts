@@ -171,14 +171,22 @@ export const useProfileStore = create<ProfileState>()(
 
           console.log('✅ [Profile] Profile saved successfully to MongoDB');
           
+          const dbUser = res && 'data' in res ? res.data : null;
+          if (dbUser) {
+            useAuthStore.setState({
+              isProfileComplete: dbUser.onboardingCompleted !== false
+            });
+          }
+
           const updatedProfile = {
             ...state.profile,
+            ...(dbUser || {}),
             onboardingCompleted: onboardingData?.onboardingCompleted !== undefined 
               ? onboardingData.onboardingCompleted 
-              : state.profile.onboardingCompleted,
+              : (dbUser ? dbUser.onboardingCompleted !== false : state.profile.onboardingCompleted),
             onboardingStep: onboardingData?.onboardingStep !== undefined 
               ? onboardingData.onboardingStep 
-              : state.profile.onboardingStep
+              : (dbUser ? dbUser.onboardingStep : state.profile.onboardingStep)
           };
 
           set({ profile: updatedProfile, isSaving: false });

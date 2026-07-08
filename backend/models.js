@@ -105,6 +105,7 @@ const AlumniSchema = new mongoose.Schema({
   showAchievements: { type: Boolean, default: true },
   referralAlerts: { type: Boolean, default: true },
   messageAlerts: { type: Boolean, default: true },
+  resonanceEnabled: { type: Boolean, default: true },
   isSuspended: { type: Boolean, default: false },
   onboardingCompleted: { type: Boolean, default: false },
   onboardingStep: { type: Number, default: 1 }
@@ -567,6 +568,7 @@ module.exports = {
     showAchievements: { type: Boolean, default: true },
     referralAlerts: { type: Boolean, default: true },
     messageAlerts: { type: Boolean, default: true },
+    resonanceEnabled: { type: Boolean, default: true },
     isSuspended: { type: Boolean, default: false },
     onboardingCompleted: { type: Boolean, default: false },
     onboardingStep: { type: Number, default: 1 }
@@ -623,15 +625,33 @@ module.exports = {
     matchId: { type: String, required: true },
     senderId: { type: String, required: true },
     college: { type: String, default: 'SR University', index: true },
-    text: { type: String, required: true },
+    messageType: { type: String, enum: ['text', 'image', 'file'], default: 'text' },
+    text: { type: String, default: '' },
+    attachments: [{
+      fileName: { type: String, required: true },
+      fileSize: { type: Number, required: true },
+      mimeType: { type: String, required: true },
+      downloadUrl: { type: String, required: true },
+      thumbnailUrl: { type: String }
+    }],
     timestamp: { type: Date, default: Date.now },
     read: { type: Boolean, default: false },
     status: { type: String, enum: ['sent', 'delivered', 'seen'], default: 'sent' },
+    resonanceState: { 
+      type: String, 
+      enum: ['dormant', 'bridged', 'harmonized', 'vibrant', 'resonating', 'absorbed'], 
+      default: 'dormant' 
+    },
     reactions: [{
       emoji: String,
       userId: String,
       timestamp: { type: Date, default: Date.now }
-    }]
+    }],
+    isForwarded: { type: Boolean, default: false },
+    forwardedFrom: { type: String },
+    forwardedBy: { type: String },
+    forwardedAt: { type: Date },
+    forwardCount: { type: Number, default: 0 }
   }, { timestamps: true }), 'messages'),
 
   GroupChat: mongoose.model('GroupChat', new mongoose.Schema({
@@ -648,8 +668,21 @@ module.exports = {
     groupId: { type: String, required: true },
     senderId: { type: String, required: true },
     senderName: { type: String, default: '' },
-    text: { type: String, required: true },
-    timestamp: { type: Date, default: Date.now }
+    messageType: { type: String, enum: ['text', 'image', 'file'], default: 'text' },
+    text: { type: String, default: '' },
+    attachments: [{
+      fileName: { type: String, required: true },
+      fileSize: { type: Number, required: true },
+      mimeType: { type: String, required: true },
+      downloadUrl: { type: String, required: true },
+      thumbnailUrl: { type: String }
+    }],
+    timestamp: { type: Date, default: Date.now },
+    isForwarded: { type: Boolean, default: false },
+    forwardedFrom: { type: String },
+    forwardedBy: { type: String },
+    forwardedAt: { type: Date },
+    forwardCount: { type: Number, default: 0 }
   }, { timestamps: true }), 'group_messages'),
 
   Story: mongoose.model('Story', new mongoose.Schema({
@@ -728,14 +761,18 @@ SessionSchema.index({ userId: 1 });
 SessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // Auto-expire sessions
 
 const LoginAttemptSchema = new mongoose.Schema({
-  email: { type: String, required: true },
-  ipAddress: { type: String, required: true },
-  attempts: { type: Number, default: 0 },
+  email: { type: String, required: true, unique: true, index: true },
+  loginAttempts: { type: Number, default: 0 },
+  otpRequests: { type: Number, default: 0 },
+  lastLogin: { type: Date },
+  lastOtpRequest: { type: Date },
   lockUntil: { type: Date },
-  lastAttemptAt: { type: Date, default: Date.now }
+  failedAttempts: { type: Number, default: 0 },
+  successfulLoginsToday: { type: Number, default: 0 },
+  successfulLoginsWindowStart: { type: Date, default: Date.now },
+  otpRequestsWindowStart: { type: Date, default: Date.now }
 }, { timestamps: true });
 LoginAttemptSchema.index({ email: 1 });
-LoginAttemptSchema.index({ ipAddress: 1 });
 
 const SecurityLogSchema = new mongoose.Schema({
   userId: { type: String, default: '' },

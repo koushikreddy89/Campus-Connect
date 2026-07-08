@@ -2,10 +2,13 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGroupChatStore } from '@/store/groupChatStore';
 import { useAuthStore } from '@/store/authStore';
+import { useChatStore } from '@/store/chatStore';
 import { ArrowLeft, Send, Users, Phone, Video, Info, Paperclip, Smile, Copy, CheckCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EmptyState } from '@/components/EmptyState';
 import { toast } from 'sonner';
+import { BottomTabBar } from '@/components/BottomTabBar';
+import { socketService } from '@/services/socketService';
 
 export default function GroupChatPage({ 
   embeddedGroupId,
@@ -19,29 +22,81 @@ export default function GroupChatPage({
   const navigate = useNavigate();
   const [text, setText] = useState('');
   const messagesEnd = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const lastMessageCount = useRef(0);
 
   const group = useGroupChatStore(s => s.groups.find(g => g.id === groupId));
   const messages = useGroupChatStore(s => s.groupMessages[groupId!] || []);
-  const currentUserId = useAuthStore(s => s.uid);
+  const currentUserId = useAuthStore(s => s._id);
   const sendGroupMessage = useGroupChatStore(s => s.sendGroupMessage);
   const fetchGroupMessages = useGroupChatStore(s => s.fetchGroupMessages);
 
   // Hover action panel overlay
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
 
+  const typingTimeoutRef = useRef<any>(null);
+
+  const handleTextChange = (val: string) => {
+    setText(val);
+    const socket = socketService.getSocket();
+    if (socket?.connected && groupId) {
+      socket.emit('typing', { roomId: groupId, userId: currentUserId, isTyping: true });
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        socket.emit('typing', { roomId: groupId, userId: currentUserId, isTyping: false });
+      }, 1500);
+    }
+  };
+
+  // Connect socket and listen to events
+  useEffect(() => {
+    useChatStore.getState().connectSocket();
+    return () => {
+      useChatStore.getState().disconnectSocket();
+    };
+  }, []);
+
+  // Join the group chat room on load
+  useEffect(() => {
+    if (groupId) {
+      socketService.joinRoom(groupId);
+      return () => {
+        socketService.leaveRoom(groupId);
+      };
+    }
+  }, [groupId]);
+
+  // Fetch messages exactly once on mount / chat load
   useEffect(() => {
     if (groupId) {
       fetchGroupMessages(groupId);
-      const interval = setInterval(() => {
-        fetchGroupMessages(groupId);
-      }, 3000);
-      return () => clearInterval(interval);
     }
   }, [groupId, fetchGroupMessages]);
 
+  // Smart auto-scroll logic
   useEffect(() => {
-    messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (messages.length > lastMessageCount.current) {
+      const lastMsg = messages[messages.length - 1];
+      const isOwn = lastMsg?.senderId === currentUserId;
+      const container = scrollContainerRef.current;
+      
+      if (container) {
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 250;
+        if (isOwn || isNearBottom) {
+          messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+      }
+      lastMessageCount.current = messages.length;
+    }
+  }, [messages, currentUserId]);
+
+  // Jump to bottom instantly on chat load
+  useEffect(() => {
+    if (messages.length > 0) {
+      messagesEnd.current?.scrollIntoView({ behavior: 'auto' });
+      lastMessageCount.current = messages.length;
+    }
+  }, [groupId]);
 
   if (!group) {
     return (
@@ -96,7 +151,7 @@ export default function GroupChatPage({
   }, [messages, currentUserId]);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#08080C] text-zinc-300">
+    <div className={`flex-1 flex flex-col h-full bg-[#08080C] text-zinc-300 relative ${!embeddedGroupId ? 'pb-[64px]' : ''}`}>
       
       {/* Header */}
       <div className="bg-[#0A0A0F] border-b border-zinc-900/60 z-10 shrink-0 select-none">
@@ -144,7 +199,7 @@ export default function GroupChatPage({
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto scrollbar-thin">
         <div className="max-w-[820px] mx-auto w-full px-6 py-6 space-y-4">
           {groupedMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 select-none opacity-60 min-h-[300px]">
@@ -257,7 +312,7 @@ export default function GroupChatPage({
             
             <input
               value={text}
-              onChange={e => setText(e.target.value)}
+              onChange={e => handleTextChange(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSend()}
               placeholder={`Message ${group.name}...`}
               className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-650 outline-none"
@@ -275,6 +330,7 @@ export default function GroupChatPage({
         </div>
       </div>
 
+      {!embeddedGroupId && <BottomTabBar />}
     </div>
   );
 }

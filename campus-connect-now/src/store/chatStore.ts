@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { useAuthStore } from './authStore';
+import { useMatchStore } from './matchStore';
 import { Message, ReactionEmoji } from '@/types';
 import { getCurrentUserEmail } from '@/utils/userUtils';
 import { chatApi } from '@/services/api';
@@ -9,6 +10,7 @@ import { socketService } from '@/services/socketService';
 interface ChatState {
   messages: Record<string, Message[]>;
   typingMatchId: string | null;
+  focusedMatchId: string | null;
   currentUserEmail: string;
   resonanceQueue: Array<{ matchId: string; messageId: string; state: ResonanceState }>;
   fetchMessages: (matchId: string) => Promise<void>;
@@ -25,6 +27,7 @@ interface ChatState {
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   typingMatchId: null,
+  focusedMatchId: null,
   currentUserEmail: getCurrentUserEmail() || 'user@example.com',
   resonanceQueue: [],
 
@@ -43,7 +46,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 1. Message received listener
     socket.on('message:received', (msg: Message) => {
       const currentUserId = useAuthStore.getState()._id;
-      if (msg.senderId === currentUserId) {
+      const currentUserUid = useAuthStore.getState().uid;
+      if (
+        String(msg.senderId) === String(currentUserId) ||
+        String(msg.senderId) === String(currentUserUid)
+      ) {
         // The sender handles message insertion via HTTP response (optimistic replacement)
         // to prevent duplication and preserve correct insertion order.
         return;
@@ -55,6 +62,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Prevent duplicates
       const exists = list.some(m => m.id === msg.id || (m as any)._id === (msg as any)._id || (m as any)._id === msg.id || m.id === (msg as any)._id);
       if (exists) return;
+
+      const isCurrentChatFocused = get().focusedMatchId === msg.matchId;
+
+      if (isCurrentChatFocused) {
+        msg.read = true;
+        msg.status = 'seen';
+        // Notify backend that we saw this specific message
+        chatApi.markAsRead(msg.matchId, msg.id || (msg as any)._id);
+      } else {
+        // Increment unread count in matches store
+        useMatchStore.getState().incrementUnreadCount(msg.matchId, msg.text || 'New message');
+      }
 
       set({
         messages: {
@@ -262,17 +281,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   focusChannel: async (matchId: string, isFocused: boolean) => {
     try {
+      set({ focusedMatchId: isFocused ? matchId : null });
       if (isFocused) {
         socketService.joinRoom(`match_${matchId}`);
+        // Mark all messages in this connection as read on database
+        chatApi.markAllAsRead(matchId);
+        // Clear unread badge in matches list
+        useMatchStore.getState().clearUnreadCount(matchId);
       } else {
         socketService.leaveRoom(`match_${matchId}`);
       }
 
+      const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
       await fetch(`http://localhost:5000/api/chats/${matchId}/focus`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ isFocused })
       });

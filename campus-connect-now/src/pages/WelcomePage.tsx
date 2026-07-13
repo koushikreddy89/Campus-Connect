@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/authStore';
 import { ArrowRight, ArrowLeft, Mail, Shield, GraduationCap, Loader2, Trophy, Sparkles, Eye, EyeOff, Lock, Check, X, RefreshCw } from 'lucide-react';
@@ -10,6 +10,364 @@ import { Logo } from '@/components/Logo';
 
 type Step = 'roleSelect' | 'auth' | 'otp' | 'mfa' | 'forgotPassword';
 type AuthMode = 'login' | 'signup';
+
+// Animated background with slow glowing orbs and drifting particles
+function AmbientBackground() {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const prefersReduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none select-none z-0">
+      {/* Background radial gradient */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))]" />
+      
+      {/* Floating Orbs - static/no motion if prefers-reduced-motion */}
+      <motion.div 
+        animate={prefersReduced ? {} : { 
+          scale: [1, 1.08, 1], 
+          x: [0, 20, 0], 
+          y: [0, -25, 0] 
+        }} 
+        transition={{ 
+          repeat: Infinity, 
+          duration: 30, 
+          ease: 'easeInOut' 
+        }} 
+        className="absolute top-[10%] left-[15%] h-[350px] w-[350px] rounded-full bg-violet-600/5 blur-[120px]" 
+      />
+      <motion.div 
+        animate={prefersReduced ? {} : { 
+          scale: [1, 1.12, 1], 
+          x: [0, -25, 0], 
+          y: [0, 30, 0] 
+        }} 
+        transition={{ 
+          repeat: Infinity, 
+          duration: 35, 
+          ease: 'easeInOut',
+          delay: 4
+        }} 
+        className="absolute bottom-[20%] right-[15%] h-[450px] w-[450px] rounded-full bg-amber-500/3 blur-[140px]" 
+      />
+      <motion.div 
+        animate={prefersReduced ? {} : { 
+          scale: [1, 1.1, 1], 
+          x: [0, 15, 0], 
+          y: [0, 15, 0] 
+        }} 
+        transition={{ 
+          repeat: Infinity, 
+          duration: 32, 
+          ease: 'easeInOut',
+          delay: 8
+        }} 
+        className="absolute top-[40%] right-[30%] h-[300px] w-[300px] rounded-full bg-sky-500/3 blur-[100px]" 
+      />
+      
+      {/* Tiny glowing particles (fewer on mobile) */}
+      {!prefersReduced && (
+        <div className="absolute inset-0 opacity-[0.25]">
+          {[...Array(isMobile ? 8 : 16)].map((_, i) => {
+            const size = Math.random() * 3 + 1;
+            const left = Math.random() * 100;
+            const top = Math.random() * 100;
+            const duration = Math.random() * 20 + 20;
+            const delay = Math.random() * -20;
+            return (
+              <motion.div
+                key={i}
+                className="absolute rounded-full bg-white/40 blur-[1px]"
+                style={{
+                  width: size,
+                  height: size,
+                  left: `${left}%`,
+                  top: `${top}%`,
+                }}
+                animate={{
+                  y: [0, -100, 0],
+                  x: [0, Math.random() * 30 - 15, 0],
+                  opacity: [0.15, 0.7, 0.15]
+                }}
+                transition={{
+                  duration: duration,
+                  repeat: Infinity,
+                  delay: delay,
+                  ease: "linear"
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Staggered word animation for heading
+function WordStaggerHeading({ text }: { text: string }) {
+  const words = text.split(" ");
+  
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.08,
+      }
+    }
+  };
+
+  const wordVariants = {
+    hidden: { opacity: 0, y: 15 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      transition: {
+        type: "spring",
+        damping: 20,
+        stiffness: 120,
+      }
+    }
+  };
+
+  return (
+    <motion.h1 
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+      className="text-4xl md:text-6xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-400 mb-4"
+    >
+      {words.map((word, idx) => (
+        <motion.span key={idx} variants={wordVariants} className="inline-block mr-3">
+          {word}
+        </motion.span>
+      ))}
+    </motion.h1>
+  );
+}
+
+// Icon Wrapper animation (propagates hover from parent)
+function AnimatedIcon({ children, role }: { children: React.ReactNode; role: 'student' | 'alumni' | 'admin' }) {
+  const bgColors = {
+    student: 'bg-violet-600/10 border-violet-500/20 group-hover:bg-violet-600/20 group-hover:border-violet-500/30',
+    alumni: 'bg-amber-600/10 border-amber-500/20 group-hover:bg-amber-600/20 group-hover:border-amber-500/30',
+    admin: 'bg-sky-600/10 border-sky-500/20 group-hover:bg-sky-600/20 group-hover:border-sky-500/30'
+  };
+
+  return (
+    <div className={`h-12 w-12 rounded-xl flex items-center justify-center mb-6 border transition-all duration-300 ${bgColors[role]}`}>
+      <motion.div
+        className="flex items-center justify-center"
+        variants={{
+          hover: {
+            scale: 1.15,
+            rotate: 8,
+            filter: "drop-shadow(0 0 6px currentColor)"
+          }
+        }}
+        transition={{ type: "spring", stiffness: 350, damping: 15 }}
+      >
+        {children}
+      </motion.div>
+    </div>
+  );
+}
+
+// Link CTA arrow slide and growing underline (propagates hover from parent)
+function AnimatedCTA({ text, role }: { text: string; role: 'student' | 'alumni' | 'admin' }) {
+  const colors = {
+    student: 'text-violet-400 group-hover:text-violet-300',
+    alumni: 'text-amber-400 group-hover:text-amber-300',
+    admin: 'text-sky-400 group-hover:text-sky-300'
+  };
+
+  const underlineColors = {
+    student: 'bg-violet-400 group-hover:bg-violet-300',
+    alumni: 'bg-amber-400 group-hover:bg-amber-300',
+    admin: 'bg-sky-400 group-hover:bg-sky-300'
+  };
+
+  return (
+    <div className={`inline-flex flex-col relative items-start gap-1 font-semibold text-sm mt-6 transition-colors duration-250 ${colors[role]}`}>
+      <div className="flex items-center gap-2">
+        <span>{text}</span>
+        <motion.div
+          variants={{
+            hover: { x: 8 }
+          }}
+          transition={{ type: "spring", stiffness: 350, damping: 20 }}
+        >
+          <ArrowRight className="h-4 w-4" />
+        </motion.div>
+      </div>
+      <span className="w-full h-[1px] relative overflow-hidden bg-white/5 mt-0.5">
+        <motion.span 
+          className={`absolute left-0 top-0 bottom-0 w-full ${underlineColors[role]}`}
+          initial={{ x: "-100%" }}
+          variants={{
+            hover: { x: "0%" }
+          }}
+          transition={{ duration: 0.25, ease: "easeInOut" }}
+        />
+      </span>
+    </div>
+  );
+}
+
+// Apple/Linear style card with mouse parallax, spotlight following, floating animation, and smooth tap
+function CardWrapper({ 
+  children, 
+  onClick, 
+  role, 
+  delay 
+}: { 
+  children: React.ReactNode; 
+  onClick: () => void; 
+  role: 'student' | 'alumni' | 'admin'; 
+  delay: number; 
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  
+  // Parallax rotation motion values
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  
+  // Spotlight position motion values
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const spotlightOpacity = useMotionValue(0);
+
+  // Springs for smooth movement
+  const rotateX = useSpring(useTransform(y, [-150, 150], [5, -5]), { damping: 25, stiffness: 120 });
+  const rotateY = useSpring(useTransform(x, [-150, 150], [-5, 5]), { damping: 25, stiffness: 120 });
+  const spotlightSpr = useSpring(spotlightOpacity, { damping: 20, stiffness: 120 });
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cardRef.current) return;
+    
+    const isMobile = window.innerWidth < 768;
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    
+    const rect = cardRef.current.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    
+    // Position relative to card top-left
+    const clientX = e.clientX - rect.left;
+    const clientY = e.clientY - rect.top;
+    
+    mouseX.set(clientX);
+    mouseY.set(clientY);
+    spotlightOpacity.set(0.12);
+    
+    if (!prefersReduced && !isMobile) {
+      const centerX = clientX - width / 2;
+      const centerY = clientY - height / 2;
+      x.set(centerX);
+      y.set(centerY);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    x.set(0);
+    y.set(0);
+    spotlightOpacity.set(0);
+  };
+
+  const glowColorMap = {
+    student: 'rgba(139, 92, 246, 0.15)',
+    alumni: 'rgba(245, 158, 11, 0.15)',
+    admin: 'rgba(14, 165, 233, 0.15)'
+  };
+  
+  const activeGlowColor = glowColorMap[role];
+  
+  // Continuous floating vertical motion config (reduced on mobile/prefers-reduced-motion)
+  const isMobileDevice = typeof window !== 'undefined' && window.innerWidth < 768;
+  const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const floatY = (prefersReducedMotion || isMobileDevice) ? [0, 0] : (role === 'student' ? [-3, 3] : role === 'alumni' ? [-4, 2] : [-2, 4]);
+  const floatDuration = role === 'student' ? 6 : role === 'alumni' ? 7 : 8;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 40, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ 
+        type: "spring",
+        damping: 20,
+        stiffness: 90,
+        delay: delay 
+      }}
+      className="w-full h-full"
+    >
+      <motion.div
+        animate={prefersReducedMotion ? {} : {
+          y: floatY,
+        }}
+        transition={{
+          repeat: Infinity,
+          repeatType: "reverse",
+          duration: floatDuration,
+          ease: "easeInOut",
+          delay: delay * 0.5
+        }}
+        className="w-full h-full"
+      >
+        <motion.div
+          ref={cardRef}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onClick={onClick}
+          style={{
+            rotateX: rotateX,
+            rotateY: rotateY,
+            transformStyle: "preserve-3d",
+            perspective: 1000
+          }}
+          whileHover="hover"
+          animate={{
+            y: 0,
+            scale: 1,
+          }}
+          variants={{
+            hover: {
+              y: -8,
+              scale: 1.04,
+              transition: { duration: 0.3, ease: [0.25, 1, 0.5, 1] }
+            }
+          }}
+          whileTap={{ scale: 0.97 }}
+          className={`group relative cursor-pointer rounded-[20px] p-8 bg-white/[0.03] border border-white/[0.08] backdrop-blur-[18px] transition-colors duration-300 flex flex-col justify-between min-h-[260px] select-none overflow-hidden
+            ${role === 'student' ? 'hover:border-violet-500/40 hover:bg-white/[0.05] hover:shadow-[0_0_50px_-15px_rgba(139,92,246,0.18)]' : ''}
+            ${role === 'alumni' ? 'hover:border-amber-500/40 hover:bg-white/[0.05] hover:shadow-[0_0_50px_-15px_rgba(245,158,11,0.18)]' : ''}
+            ${role === 'admin' ? 'hover:border-sky-500/40 hover:bg-white/[0.05] hover:shadow-[0_0_50px_-15px_rgba(14,165,233,0.18)]' : ''}
+          `}
+        >
+          {/* Spotlight Effect */}
+          <motion.div
+            className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+            style={{
+              background: useTransform(
+                [mouseX, mouseY, spotlightSpr],
+                ([mx, my, op]) => `radial-gradient(300px circle at ${mx}px ${my}px, rgba(255, 255, 255, ${op}), transparent 80%)`
+              )
+            }}
+          />
+
+          {/* Ambient Glow behind card */}
+          <div 
+            className="absolute -inset-[1px] rounded-[20px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-[-1]"
+            style={{
+              background: `radial-gradient(200px circle at 50% 50%, ${activeGlowColor}, transparent 80%)`,
+            }}
+          />
+
+          {children}
+        </motion.div>
+      </motion.div>
+    </motion.div>
+  );
+}
 
 const anim = {
   initial: { opacity: 0, y: 20 },
@@ -333,50 +691,47 @@ export default function WelcomePage() {
   const passwordRequirements = checkPasswordRequirements(password);
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#09090B] text-white relative overflow-hidden px-4 font-sans select-none">
+    <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#09090B] text-white relative overflow-hidden px-4 font-sans select-none animate-fade-in">
       
-      {/* Premium background radial glowing orbs */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.18),rgba(255,255,255,0))]" />
-      
-      <motion.div 
-        animate={{ 
-          scale: [1, 1.1, 1], 
-          x: [0, 20, 0], 
-          y: [0, -20, 0] 
-        }} 
-        transition={{ 
-          repeat: Infinity, 
-          duration: 20, 
-          ease: 'easeInOut' 
-        }} 
-        className="absolute top-1/4 left-1/4 h-[300px] w-[300px] rounded-full bg-violet-600/10 blur-[100px] pointer-events-none" 
-      />
-      <motion.div 
-        animate={{ 
-          scale: [1, 1.15, 1], 
-          x: [0, -30, 0], 
-          y: [0, 30, 0] 
-        }} 
-        transition={{ 
-          repeat: Infinity, 
-          duration: 25, 
-          ease: 'easeInOut',
-          delay: 3
-        }} 
-        className="absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-amber-500/5 blur-[120px] pointer-events-none" 
-      />
+      {/* Premium ambient animated background */}
+      <AmbientBackground />
 
       <div className="relative z-10 w-full max-w-5xl flex flex-col items-center justify-center">
         
         {/* Navigation Logo Header */}
-        <div className="flex flex-col items-center justify-center mb-8">
-          <div className="h-16 w-16 rounded-2xl bg-white/[0.02] border border-white/10 flex items-center justify-center shadow-lg backdrop-blur-md mb-4">
+        <motion.div 
+          variants={{
+            hidden: { opacity: 0, scale: 0.85 },
+            visible: { 
+              opacity: 1, 
+              scale: 1,
+              transition: {
+                type: "spring",
+                damping: 15,
+                stiffness: 100
+              }
+            }
+          }}
+          initial="hidden"
+          animate="visible"
+          className="flex flex-col items-center justify-center mb-8"
+        >
+          <motion.div 
+            animate={{ y: [-3, 3] }}
+            transition={{
+              repeat: Infinity,
+              repeatType: "reverse",
+              duration: 5,
+              ease: "easeInOut"
+            }}
+            className="h-16 w-16 rounded-2xl bg-white/[0.02] border border-white/10 flex items-center justify-center shadow-lg backdrop-blur-md mb-4"
+          >
             <Logo variant="icon" className="h-9 w-9 text-violet-400" />
-          </div>
+          </motion.div>
           <span className="text-xs uppercase tracking-[0.25em] text-zinc-500 font-semibold flex items-center gap-1.5">
             <Sparkles className="h-3 w-3 text-violet-400" /> Campus Connect Platform
           </span>
-        </div>
+        </motion.div>
 
         <AnimatePresence mode="wait">
           {/* STEP 1: ROLE SELECT (LANDING) */}
@@ -384,76 +739,61 @@ export default function WelcomePage() {
             <motion.div key="roleSelect" {...anim} className="w-full flex flex-col items-center">
               
               <div className="text-center max-w-2xl mb-12">
-                <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-400 mb-4">
-                  Welcome to Campus Connect
-                </h1>
-                <p className="text-zinc-400 text-lg md:text-xl font-medium">
+                <WordStaggerHeading text="Welcome to Campus Connect" />
+                <motion.p 
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5, duration: 0.5, ease: "easeOut" }}
+                  className="text-zinc-400 text-lg md:text-xl font-medium"
+                >
                   Connect. Learn. Grow. Secure Enterprise Network.
-                </p>
+                </motion.p>
               </div>
 
               {/* Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl px-4">
                 
                 {/* Student Card */}
-                <motion.div
-                  whileHover={{ y: -6, scale: 1.01 }}
-                  onClick={() => handleRoleSelection('student')}
-                  className="group relative cursor-pointer rounded-3xl p-8 bg-zinc-950/40 border border-zinc-900 backdrop-blur-xl hover:border-violet-500/50 hover:shadow-[0_0_40px_-10px_rgba(139,92,246,0.25)] transition-all duration-300 flex flex-col justify-between min-h-[260px]"
-                >
+                <CardWrapper role="student" delay={0.1} onClick={() => handleRoleSelection('student')}>
                   <div>
-                    <div className="h-12 w-12 rounded-xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <AnimatedIcon role="student">
                       <GraduationCap className="h-6 w-6 text-violet-400" />
-                    </div>
+                    </AnimatedIcon>
                     <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-violet-300 transition-colors">Student</h3>
                     <p className="text-sm text-zinc-400 leading-relaxed">
                       Discover peers, share projects, participate in hackathons, and build your campus identity.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 text-violet-400 font-semibold text-sm mt-6 group-hover:translate-x-1.5 transition-transform">
-                    Enterprise Portal <ArrowRight className="h-4 w-4" />
-                  </div>
-                </motion.div>
+                  <AnimatedCTA text="Enterprise Portal" role="student" />
+                </CardWrapper>
 
                 {/* Alumni Card */}
-                <motion.div
-                  whileHover={{ y: -6, scale: 1.01 }}
-                  onClick={() => handleRoleSelection('alumni')}
-                  className="group relative cursor-pointer rounded-3xl p-8 bg-zinc-950/40 border border-zinc-900 backdrop-blur-xl hover:border-amber-500/50 hover:shadow-[0_0_40px_-10px_rgba(245,158,11,0.25)] transition-all duration-300 flex flex-col justify-between min-h-[260px]"
-                >
+                <CardWrapper role="alumni" delay={0.22} onClick={() => handleRoleSelection('alumni')}>
                   <div>
-                    <div className="h-12 w-12 rounded-xl bg-amber-600/10 border border-amber-500/20 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <AnimatedIcon role="alumni">
                       <Trophy className="h-6 w-6 text-amber-400" />
-                    </div>
+                    </AnimatedIcon>
                     <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-amber-300 transition-colors">Alumni</h3>
                     <p className="text-sm text-zinc-400 leading-relaxed">
                       Verify your graduation records to mentor, share job openings, and refer fellow students.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm mt-6 group-hover:translate-x-1.5 transition-transform">
-                    Verify Alumni Record <ArrowRight className="h-4 w-4" />
-                  </div>
-                </motion.div>
+                  <AnimatedCTA text="Verify Alumni Record" role="alumni" />
+                </CardWrapper>
 
                 {/* Admin Card */}
-                <motion.div
-                  whileHover={{ y: -6, scale: 1.01 }}
-                  onClick={() => handleRoleSelection('admin')}
-                  className="group relative cursor-pointer rounded-3xl p-8 bg-zinc-950/40 border border-zinc-900 backdrop-blur-xl hover:border-sky-500/50 hover:shadow-[0_0_40px_-10px_rgba(14,165,233,0.25)] transition-all duration-300 flex flex-col justify-between min-h-[260px]"
-                >
+                <CardWrapper role="admin" delay={0.34} onClick={() => handleRoleSelection('admin')}>
                   <div>
-                    <div className="h-12 w-12 rounded-xl bg-sky-600/10 border border-sky-500/20 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <AnimatedIcon role="admin">
                       <Shield className="h-6 w-6 text-sky-400" />
-                    </div>
+                    </AnimatedIcon>
                     <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-sky-300 transition-colors">Admin Portal</h3>
                     <p className="text-sm text-zinc-400 leading-relaxed">
                       Publish official communications, events, announcements, and placement opportunities.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 text-sky-400 font-semibold text-sm mt-6 group-hover:translate-x-1.5 transition-transform">
-                    Authorized Sign-In <ArrowRight className="h-4 w-4" />
-                  </div>
-                </motion.div>
+                  <AnimatedCTA text="Authorized Sign-In" role="admin" />
+                </CardWrapper>
 
               </div>
             </motion.div>

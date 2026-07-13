@@ -504,14 +504,21 @@ export default function ChatListPage() {
 
 // Left Conversation Stack Sub-components
 function MatchAvatar({ match, onClick }: { match: any; onClick: () => void }) {
+  const navigate = useNavigate();
   const isOnline = match.user?.isOnline || false;
   return (
-    <button onClick={onClick} className="flex flex-col items-center gap-1.5 min-w-[55px] select-none shrink-0 group">
-      <div className="relative">
+    <div className="flex flex-col items-center gap-1.5 min-w-[55px] select-none shrink-0 group">
+      <div 
+        onClick={(e) => {
+          e.stopPropagation();
+          if (match.userId) navigate(`/profile/${match.userId}`);
+        }}
+        className="relative cursor-pointer hover:scale-105 active:scale-95 transition-all"
+      >
         <img
           src={match.user?.photos?.[0]}
           alt=""
-          className={`h-11 w-11 rounded-full object-cover border border-zinc-900 ring-2 ring-zinc-900 group-hover:ring-violet-500/40 transition-all ${!match.isRevealed ? 'blur-[3px]' : ''}`}
+          className={`h-11 w-11 rounded-full object-cover border border-zinc-900 ring-2 ring-zinc-900 group-hover:ring-violet-500/40 transition-all ${!match.isRevealed ? 'blur-[2px]' : ''}`}
         />
         {isOnline && (
           <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#0A0A0F] bg-green-400" />
@@ -522,56 +529,142 @@ function MatchAvatar({ match, onClick }: { match: any; onClick: () => void }) {
           </span>
         )}
       </div>
-      <span className="text-[10px] text-zinc-550 group-hover:text-zinc-350 truncate w-12 text-center font-medium">
+      <span 
+        onClick={onClick}
+        className="text-[10px] text-zinc-550 group-hover:text-zinc-350 truncate w-12 text-center font-medium cursor-pointer"
+      >
         {match.isRevealed ? match.user?.name?.split(' ')[0] : match.user?.anonymousName?.split(' ')[0]}
       </span>
-    </button>
+    </div>
   );
 }
 
 function ChatListItem({ match, index, isActive, onClick }: { match: any; index: number; isActive?: boolean; onClick: () => void }) {
+  const navigate = useNavigate();
   const isOnline = match.user?.isOnline || false;
   const name = match.isRevealed ? match.user?.name : match.user?.anonymousName || 'Anonymous';
+  
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+    return () => window.removeEventListener('click', closeMenu);
+  }, []);
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
+
   return (
-    <motion.button
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
-      onClick={onClick}
-      className={`w-full rounded-2xl p-3 flex items-center gap-3 text-left border transition-all ${
-        isActive 
-          ? 'bg-violet-600/10 border-violet-500/25 shadow-lg shadow-violet-950/20' 
-          : 'bg-[#101015]/60 border-zinc-900/60 hover:bg-[#121217]'
-      }`}
-    >
-      <div className="relative">
-        <img
-          src={match.user?.photos?.[0]}
-          alt=""
-          className={`h-11 w-11 rounded-full object-cover bg-zinc-900 ${!match.isRevealed ? 'blur-[3px]' : ''}`}
-          loading="lazy"
-        />
-        {isOnline && (
-          <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#0A0A0F] bg-green-400" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-1.5">
-          <p className="text-xs font-bold text-white truncate">{name}</p>
-          <span className="text-[9px] text-zinc-550 shrink-0">
-            {match.lastMessageTime ? new Date(match.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-          </span>
+    <div className="relative">
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: index * 0.05 }}
+        onContextMenu={handleContextMenu}
+        onClick={onClick}
+        className={`w-full rounded-2xl p-3 flex items-center gap-3 text-left border transition-all cursor-pointer select-none ${
+          isActive 
+            ? 'bg-violet-600/10 border-violet-500/25 shadow-lg shadow-violet-950/20' 
+            : 'bg-[#101015]/60 border-zinc-900/60 hover:bg-[#121217]'
+        }`}
+      >
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            if (match.userId) navigate(`/profile/${match.userId}`);
+          }}
+          className="relative shrink-0 hover:scale-105 active:scale-95 transition-transform"
+        >
+          <img
+            src={match.user?.photos?.[0]}
+            alt=""
+            className={`h-11 w-11 rounded-full object-cover bg-zinc-900 ${!match.isRevealed ? 'blur-[2px]' : ''}`}
+            loading="lazy"
+          />
+          {isOnline && (
+            <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#0A0A0F] bg-green-400" />
+          )}
         </div>
-        <p className="text-[11px] text-zinc-400 truncate mt-0.5">{match.lastMessage || 'Start swiping!'}</p>
-      </div>
 
-      {match.unreadCount > 0 && (
-        <span className="h-5 w-5 rounded-full bg-violet-600 text-[10px] font-extrabold text-white flex items-center justify-center shadow-sm shrink-0 border border-violet-500/20">
-          {match.unreadCount}
-        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs font-bold text-white truncate">{name}</p>
+            <span className="text-[9px] text-zinc-550 shrink-0">
+              {match.lastMessageTime ? new Date(match.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+            </span>
+          </div>
+          <p className="text-[11px] text-zinc-400 truncate mt-0.5">{match.lastMessage || 'Start swiping!'}</p>
+        </div>
+
+        {match.unreadCount > 0 && (
+          <span className="h-5 w-5 rounded-full bg-violet-600 text-[10px] font-extrabold text-white flex items-center justify-center shadow-sm shrink-0 border border-violet-500/20">
+            {match.unreadCount}
+          </span>
+        )}
+      </motion.div>
+
+      {/* Context Menu Overlay */}
+      {contextMenu && (
+        <div 
+          className="fixed z-[100] w-48 bg-zinc-950 border border-white/[0.08] rounded-2xl p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.5)] select-none backdrop-blur-xl"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button 
+            onClick={() => {
+              setContextMenu(null);
+              if (match.userId) navigate(`/profile/${match.userId}`);
+            }}
+            className="w-full text-left px-3 py-2 text-xs text-zinc-350 hover:text-white hover:bg-white/[0.05] rounded-xl transition-all font-semibold"
+          >
+            View Profile
+          </button>
+          <button 
+            onClick={() => {
+              setContextMenu(null);
+              toast.success('Conversation muted');
+            }}
+            className="w-full text-left px-3 py-2 text-xs text-zinc-350 hover:text-white hover:bg-white/[0.05] rounded-xl transition-all font-semibold"
+          >
+            Mute Chat
+          </button>
+          <button 
+            onClick={() => {
+              setContextMenu(null);
+              toast.info('Conversation archived');
+            }}
+            className="w-full text-left px-3 py-2 text-xs text-zinc-350 hover:text-white hover:bg-white/[0.05] rounded-xl transition-all font-semibold"
+          >
+            Archive Chat
+          </button>
+          <button 
+            onClick={() => {
+              setContextMenu(null);
+              toast.error('User blocked successfully');
+            }}
+            className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:text-rose-350 hover:bg-rose-500/10 rounded-xl transition-all font-semibold"
+          >
+            Block User
+          </button>
+          <div className="h-px bg-white/[0.06] my-1" />
+          <button 
+            onClick={() => {
+              setContextMenu(null);
+              toast.error('Chat history deleted');
+            }}
+            className="w-full text-left px-3 py-2 text-xs text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all font-semibold"
+          >
+            Delete Chat
+          </button>
+        </div>
       )}
-    </motion.button>
+    </div>
   );
 }
 

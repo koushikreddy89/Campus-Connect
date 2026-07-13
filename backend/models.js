@@ -613,12 +613,20 @@ module.exports = {
   }, { timestamps: true }), 'friendRequests'),
 
   Notification: mongoose.model('Notification', new mongoose.Schema({
-    userId: { type: String, required: true },
+    userId: { type: String, required: true, index: true },
+    recipientId: { type: String, index: true },
+    senderId: { type: String, index: true },
     type: { type: String, required: true },
     title: { type: String, required: true },
-    body: { type: String, required: true },
+    body: { type: String, default: '' },
+    message: { type: String, default: '' },
     read: { type: Boolean, default: false },
-    relatedId: { type: String, default: '' }
+    isRead: { type: Boolean, default: false, index: true },
+    relatedId: { type: String, default: '' },
+    entityId: { type: String },
+    entityType: { type: String },
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+    softDeleted: { type: Boolean, default: false, index: true }
   }, { timestamps: true }), 'notifications'),
 
   Message: mongoose.model('Message', new mongoose.Schema({
@@ -636,6 +644,9 @@ module.exports = {
     }],
     timestamp: { type: Date, default: Date.now },
     read: { type: Boolean, default: false },
+    seenAt: { type: Date },
+    deliveredAt: { type: Date },
+    receiverId: { type: String, index: true },
     status: { type: String, enum: ['sent', 'delivered', 'seen'], default: 'sent' },
     resonanceState: { 
       type: String, 

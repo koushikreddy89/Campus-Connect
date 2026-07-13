@@ -77,7 +77,7 @@ export default function GroupChatPage({
   useEffect(() => {
     if (messages.length > lastMessageCount.current) {
       const lastMsg = messages[messages.length - 1];
-      const isOwn = lastMsg?.senderId === currentUserId;
+      const isOwn = String(lastMsg?.senderId) === String(currentUserId) || String(lastMsg?.senderId) === String(useAuthStore.getState().uid);
       const container = scrollContainerRef.current;
       
       if (container) {
@@ -133,7 +133,7 @@ export default function GroupChatPage({
         if (currentGroup) {
           groupsList.push(currentGroup);
         }
-        const isOwn = msg.senderId === currentUserId;
+        const isOwn = String(msg.senderId) === String(currentUserId) || String(msg.senderId) === String(useAuthStore.getState().uid);
         currentGroup = {
           senderId: msg.senderId,
           senderName: msg.senderName || 'Anonymous User',

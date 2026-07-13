@@ -1,8 +1,8 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Home, Newspaper, MessageCircle, User, Trophy } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { useChatStore } from '@/store/chatStore';
 import { useAuthStore } from '@/store/authStore';
+import { useMatchStore } from '@/store/matchStore';
 import { memo, useMemo } from 'react';
 
 const defaultTabs = [
@@ -20,29 +20,36 @@ const alumniTabs = [
   { path: '/profile', icon: User, label: 'Profile' },
 ];
 
-export const BottomTabBar = memo(() => {
+export const BottomTabBar = memo(({ isGlobal }: { isGlobal?: boolean }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const role = useAuthStore(s => s.role);
-  const messages = useChatStore(s => s.messages);
-  const currentUserId = useAuthStore(s => s.uid);
+  const matches = useMatchStore(s => s.matches);
 
   const tabs = role === 'alumni' ? alumniTabs : defaultTabs;
 
+  // Detect student swipe routing paths
+  const isSwipeRoute = ['/student/dashboard', '/home', '/feed', '/alumni', '/chat', '/profile'].some(path => 
+    location.pathname.startsWith(path)
+  );
+
+  // Hide local duplicates on horizontal swipe routing paths
+  if (isSwipeRoute && !isGlobal && role !== 'alumni') {
+    return null;
+  }
+
   const totalUnread = useMemo(() => {
-    let count = 0;
-    Object.values(messages).forEach(msgs => {
-      msgs.forEach(m => { if (!m.read && m.senderId !== currentUserId) count++; });
-    });
-    return count;
-  }, [messages, currentUserId]);
+    return matches.reduce((sum, m) => sum + (m.unreadCount || 0), 0);
+  }, [matches]);
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 safe-bottom">
-      <div className="glass-strong border-t-0 border-x-0 rounded-none" style={{ borderBottom: 'none' }}>
-        <nav className="flex items-center justify-around h-[64px] max-w-lg mx-auto px-2">
+      <div className="glass-strong border-t-0 border-x-0 rounded-none bg-zinc-950/60 backdrop-blur-xl border-t border-white/[0.08]" style={{ borderBottom: 'none' }}>
+        <nav className="relative flex items-center justify-around h-[64px] max-w-lg mx-auto px-2">
           {tabs.map(({ path, icon: Icon, label }) => {
-            const isActive = location.pathname.startsWith(path);
+            const isActive = location.pathname.startsWith(path) || 
+              (path === '/home' && location.pathname.startsWith('/student/dashboard'));
+            
             return (
               <motion.button
                 key={path}
@@ -54,20 +61,35 @@ export const BottomTabBar = memo(() => {
                   <Icon
                     className={`h-[22px] w-[22px] transition-all duration-200 ${
                       isActive 
-                        ? 'text-primary scale-110 drop-shadow-[0_0_8px_rgba(109,95,245,0.45)]' 
-                        : 'text-muted-foreground hover:text-white'
+                        ? 'text-violet-400 scale-110 drop-shadow-[0_0_8px_rgba(139,92,246,0.45)]' 
+                        : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                     strokeWidth={isActive ? 2.5 : 1.8}
                   />
                   {label === 'Chat' && totalUnread > 0 && (
-                    <span className="absolute -top-1.5 -right-2 h-4 min-w-[16px] rounded-full bg-accent text-[9px] font-bold text-accent-foreground flex items-center justify-center px-1 glow-accent">
-                      {totalUnread}
-                    </span>
+                    <motion.span 
+                      key={totalUnread}
+                      initial={{ scale: 0.4, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: "spring", stiffness: 600, damping: 14 }}
+                      className="absolute -top-1.5 -right-2 h-4 min-w-[16px] rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center px-1 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
+                    >
+                      {totalUnread > 99 ? '99+' : totalUnread}
+                    </motion.span>
                   )}
                 </div>
-                <span className={`text-[10px] font-semibold transition-all duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground/70'}`}>
+                <span className={`text-[10px] font-semibold transition-all duration-200 ${isActive ? 'text-violet-400' : 'text-zinc-500/70'}`}>
                   {label}
                 </span>
+
+                {/* Sliding spring active indicator line */}
+                {isActive && (
+                  <motion.div
+                    layoutId="tabActiveIndicator"
+                    className="absolute bottom-0 h-[3px] bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full w-8 shadow-[0_0_8px_rgba(139,92,246,0.5)]"
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  />
+                )}
               </motion.button>
             );
           })}

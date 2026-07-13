@@ -1575,6 +1575,7 @@ router.get('/auth/session', requireAuth, async (req, res) => {
       success: true,
       user: {
         id: userId,
+        _id: userDetails._id,
         name: userDetails.name || (role === 'admin' ? 'Campus Admin' : ''),
         email: userDetails.email,
         role: role
@@ -3493,15 +3494,15 @@ router.post('/posts/:postId/like', async (req, res) => {
       // Trigger notification to the post owner if it's someone else
       const postObj = await StudentPost.findById(postId);
       if (postObj && postObj.userId !== userId) {
-        const liker = await User.findOne({ userId });
-        const notif = new Notification({
-          userId: postObj.userId,
-          type: 'like',
-          title: 'New Post Like! 👍',
-          body: `${liker ? liker.name : 'Someone'} liked your post.`,
-          relatedId: postId
+        await createNotification({
+          recipientId: postObj.userId,
+          senderId: userId,
+          type: 'post_like',
+          title: 'Post Liked 👍',
+          message: 'Someone liked your post.',
+          entityId: postId,
+          entityType: 'post'
         });
-        await notif.save();
       }
 
       res.json({ success: true, liked: true });
@@ -3539,14 +3540,15 @@ router.post('/posts/:postId/comment', async (req, res) => {
 
     // Trigger notification to the post owner if it's someone else
     if (postObj && postObj.userId !== userId) {
-      const notif = new Notification({
-        userId: postObj.userId,
-        type: 'comment',
+      await createNotification({
+        recipientId: postObj.userId,
+        senderId: userId,
+        type: 'post_comment',
         title: 'New Comment on Post! 💬',
-        body: `${commenter ? commenter.name : 'Someone'} commented: "${content.substring(0, 30)}${content.length > 30 ? '...' : ''}"`,
-        relatedId: postId
+        message: `${commenter ? commenter.name : 'Someone'} commented: "${content.substring(0, 30)}${content.length > 30 ? '...' : ''}"`,
+        entityId: postId,
+        entityType: 'post'
       });
-      await notif.save();
     }
 
     res.json({ success: true, data: newComment });
@@ -3612,23 +3614,25 @@ router.post('/connections/request', async (req, res) => {
       const senderObj = await User.findOne({ userId: fromUserId });
       const targetObj = await User.findOne({ userId: toUserId });
 
-      const notifForTarget = new Notification({
-        userId: toUserId,
-        type: 'accept',
+      await createNotification({
+        recipientId: toUserId,
+        senderId: fromUserId,
+        type: 'friend_accept',
         title: 'New Connection Match! 🎉',
-        body: `You and ${senderObj ? senderObj.name : 'a student'} are now connected!`,
-        relatedId: fromUserId
+        message: `You and ${senderObj ? senderObj.name : 'a student'} are now connected!`,
+        entityId: fromUserId,
+        entityType: 'user'
       });
-      await notifForTarget.save();
 
-      const notifForSender = new Notification({
-        userId: fromUserId,
-        type: 'accept',
+      await createNotification({
+        recipientId: fromUserId,
+        senderId: toUserId,
+        type: 'friend_accept',
         title: 'New Connection Match! 🎉',
-        body: `You and ${targetObj ? targetObj.name : 'a student'} are now connected!`,
-        relatedId: toUserId
+        message: `You and ${targetObj ? targetObj.name : 'a student'} are now connected!`,
+        entityId: toUserId,
+        entityType: 'user'
       });
-      await notifForSender.save();
 
       return res.json({ success: true, matched: true, status: 'accepted' });
     }
@@ -3641,14 +3645,15 @@ router.post('/connections/request', async (req, res) => {
     );
 
     const senderObj = await User.findOne({ userId: fromUserId });
-    const notif = new Notification({
-      userId: toUserId,
-      type: 'request',
+    await createNotification({
+      recipientId: toUserId,
+      senderId: fromUserId,
+      type: 'friend_request',
       title: 'New Connection Request',
-      body: `${senderObj ? senderObj.name : 'A student'} wants to connect with you.`,
-      relatedId: fromUserId
+      message: `${senderObj ? senderObj.name : 'A student'} wants to connect with you.`,
+      entityId: fromUserId,
+      entityType: 'user'
     });
-    await notif.save();
 
     return res.json({ success: true, matched: false, status: 'pending' });
   } catch (error) {
@@ -3676,14 +3681,15 @@ router.post('/connections/accept', async (req, res) => {
     await conn.save();
 
     const recipientObj = await User.findOne({ userId: request.toUserId });
-    const notif = new Notification({
-      userId: request.fromUserId,
-      type: 'accept',
+    await createNotification({
+      recipientId: request.fromUserId,
+      senderId: request.toUserId,
+      type: 'friend_accept',
       title: 'Connection Accepted! 🎉',
-      body: `${recipientObj ? recipientObj.name : 'A student'} accepted your connection request.`,
-      relatedId: request.toUserId
+      message: `${recipientObj ? recipientObj.name : 'A student'} accepted your connection request.`,
+      entityId: request.toUserId,
+      entityType: 'user'
     });
-    await notif.save();
 
     res.json({ success: true, data: request });
   } catch (error) {
@@ -3941,7 +3947,7 @@ router.get('/connections', requireAuth, async (req, res) => {
 
         const unreadCount = await Message.countDocuments({
           matchId: conn._id.toString(),
-          senderId: otherUserId,
+          receiverId: userId,
           read: false
         });
 
@@ -4105,6 +4111,7 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
     const newMsg = new Message({
       matchId,
       senderId: req.user._id, // Save Mongoose ObjectId!
+      receiverId: otherUserId,
       college: req.user.college,
       messageType: messageType || 'text',
       text: text || '',
@@ -4116,6 +4123,18 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       reactions: []
     });
     await newMsg.save();
+    
+    // Trigger real-time DM notification to the other user
+    await createNotification({
+      recipientId: otherUserId,
+      senderId: senderUserId,
+      type: 'new_message',
+      title: sender ? sender.name : 'New Message',
+      message: messageType === 'image' ? 'Sent an image' : (text || 'Sent an attachment'),
+      entityId: matchId,
+      entityType: 'chat'
+    });
+
     if (global.io) {
       global.io.to(`match_${matchId}`).emit('message:received', newMsg);
     }
@@ -4272,6 +4291,67 @@ router.post('/chats/:matchId/messages/:messageId/read', requireAuth, async (req,
     msg.status = 'seen';
     await msg.save();
     res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /chats/:matchId/read-all - Mark all unread messages in a conversation as seen
+router.post('/chats/:matchId/read-all', requireAuth, async (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const currentUserId = req.user.userId;
+
+    const conn = await Connection.findById(matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const otherUserId = conn.user1 === currentUserId ? conn.user2 : conn.user1;
+
+    // Find all unread messages where recipient is currentUserId (represented by receiverId == currentUserId)
+    const result = await Message.updateMany(
+      { 
+        matchId, 
+        receiverId: currentUserId,
+        read: false 
+      },
+      { 
+        $set: { 
+          read: true, 
+          status: 'seen',
+          seenAt: new Date() 
+        } 
+      }
+    );
+
+    // Also fallback update messages where senderId != currentUserId just in case receiverId wasn't populated in legacy messages
+    const otherUserDb = await User.findOne({ userId: otherUserId }) || await Alumni.findOne({ userId: otherUserId });
+    if (otherUserDb) {
+      await Message.updateMany(
+        {
+          matchId,
+          senderId: otherUserDb._id,
+          read: false
+        },
+        {
+          $set: {
+            read: true,
+            status: 'seen',
+            seenAt: new Date(),
+            receiverId: currentUserId
+          }
+        }
+      );
+    }
+
+    if (global.io) {
+      // Emit to the other user so their read receipts update instantly
+      global.io.to(`match_${matchId}`).emit('message:seen', { matchId, readerId: currentUserId });
+      global.io.to(`user_${otherUserId}`).emit('conversation:update', { matchId });
+    }
+
+    res.json({ success: true, count: result.modifiedCount });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4563,14 +4643,15 @@ router.post('/student/profile/view', async (req, res) => {
 
     const viewerObj = await User.findOne({ userId: viewerId }) || await Alumni.findOne({ userId: viewerId });
     if (viewerObj) {
-      const notif = new Notification({
-        userId: viewedUserId,
-        type: 'view',
+      await createNotification({
+        recipientId: viewedUserId,
+        senderId: viewerId,
+        type: 'profile_viewed',
         title: 'Someone viewed your profile 👀',
-        body: `${viewerObj.name} viewed your profile.`,
-        relatedId: viewerId
+        message: `${viewerObj.name} viewed your profile.`,
+        entityId: viewerId,
+        entityType: 'user'
       });
-      await notif.save();
     }
 
     res.json({ success: true });
@@ -5012,6 +5093,63 @@ router.post('/referrals/:id/apply', async (req, res) => {
 // ----------------------------------------------------
 // SETTINGS, BLOCKING, AND REPORTING ENDPOINTS
 // ----------------------------------------------------
+
+// 0. GET /api/users/:userId - Retrieve user public details & block relationship status
+router.get('/users/:userId', requireAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user.userId;
+    
+    let target = await User.findOne({ userId }) || await User.findOne({ _id: userId });
+    let role = 'student';
+    
+    if (!target) {
+      target = await Alumni.findOne({ userId }) || await Alumni.findOne({ _id: userId });
+      role = 'alumni';
+    }
+    
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const currentUserProfile = req.user.role === 'alumni' 
+      ? await Alumni.findOne({ userId: currentUserId }) 
+      : await User.findOne({ userId: currentUserId });
+
+    const isBlockedByMe = currentUserProfile?.blockedUsers?.includes(userId) || false;
+    const isBlockingMe = target.blockedUsers?.includes(currentUserId) || false;
+
+    if (isBlockingMe) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Profile unavailable', 
+        blocked: true 
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: target._id.toString(),
+        userId: target.userId,
+        name: target.name,
+        role,
+        bio: target.bio || '',
+        college: target.college,
+        department: target.department || '',
+        academicYear: target.academicYear || '',
+        profileImageUrl: target.profileImageUrl || target.photos?.[0] || '',
+        bannerUrl: target.coverPhoto || target.bannerUrl || '',
+        skills: target.skills || [],
+        interests: target.interests || [],
+        isBlockedByMe,
+        isBlockingMe
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // 1. GET /api/users/search - Search users/alumni for blocking
 router.get('/users/search', requireAuth, async (req, res) => {
@@ -6751,19 +6889,202 @@ router.post('/placements/:id/track', requireAuth, async (req, res) => {
   }
 });
 
-// 12. GET /api/placements/trash - Get all soft-deleted placements
-router.get('/placements/trash', requireAuth, async (req, res) => {
+// ==========================================
+// REAL-TIME NOTIFICATION SYSTEM ENDPOINTS
+// ==========================================
+
+// Helper function to create notification (real-time publish to Socket.IO)
+async function createNotification({ recipientId, senderId, type, title, message, entityId, entityType, metadata = {} }) {
   try {
-    const college = req.user.college || 'SR University';
-    const query = { college, status: 'trash' };
-    if (req.user.role !== 'admin') {
-      query.createdBy = req.user.userId;
+    const { Notification, User, Alumni } = require('./models');
+    
+    // Grouping support: e.g. "Rahul and 12 others liked your post."
+    if (type === 'post_like' || type === 'post_comment') {
+      const existing = await Notification.findOne({
+        recipientId,
+        type,
+        entityId,
+        isRead: false,
+        softDeleted: false
+      });
+      if (existing) {
+        let users = existing.metadata.users || [];
+        if (senderId && !users.includes(senderId)) {
+          users.push(senderId);
+        }
+        
+        const firstSender = await User.findOne({ userId: senderId }) || await Alumni.findOne({ userId: senderId });
+        const firstSenderName = firstSender ? firstSender.name : 'Someone';
+        
+        existing.metadata = { ...existing.metadata, users };
+        if (users.length > 1) {
+          existing.title = `${firstSenderName} and ${users.length - 1} others`;
+          existing.message = `${type === 'post_like' ? 'liked' : 'commented on'} your post.`;
+        } else {
+          existing.title = firstSenderName;
+          existing.message = `${type === 'post_like' ? 'liked' : 'commented on'} your post.`;
+        }
+        await existing.save();
+        
+        if (global.io) {
+          global.io.to(`user_${recipientId}`).emit('notification:update', existing);
+        }
+        return existing;
+      }
     }
-    const trashPlacements = await Placement.find(query).sort({ deletedAt: -1 });
-    res.json({ success: true, data: trashPlacements });
+
+    let senderName = 'System';
+    let senderAvatar = '';
+    if (senderId) {
+      const sender = await User.findOne({ userId: senderId }) || await Alumni.findOne({ userId: senderId });
+      if (sender) {
+        senderName = sender.name || 'Anonymous';
+        senderAvatar = sender.photos?.[0] || '';
+      }
+    }
+
+    const newNotif = new Notification({
+      recipientId,
+      userId: recipientId,
+      senderId,
+      type,
+      title: title || senderName,
+      message: message || '',
+      entityId,
+      entityType,
+      metadata: { ...metadata, senderName, senderAvatar, users: senderId ? [senderId] : [] }
+    });
+
+    await newNotif.save();
+
+    if (global.io) {
+      global.io.to(`user_${recipientId}`).emit('notification:new', newNotif);
+    }
+    return newNotif;
+  } catch (error) {
+    console.error('Failed to create notification:', error);
+  }
+}
+
+// 1. GET /api/notifications - retrieve user notifications (filtered, paginated, searchable)
+router.get('/notifications', requireAuth, async (req, res) => {
+  try {
+    const recipientId = req.user.userId;
+    const { type = 'all', search = '', page = 1, limit = 20 } = req.query;
+
+    const query = { recipientId, softDeleted: false };
+
+    // Filter mapping
+    if (type === 'unread') {
+      query.isRead = false;
+    } else if (type === 'messages') {
+      query.type = 'new_message';
+    } else if (type === 'social') {
+      query.type = { $in: ['post_like', 'post_comment', 'comment_reply', 'new_follower', 'friend_request', 'friend_accept'] };
+    } else if (type === 'announcements') {
+      query.type = { $in: ['admin_announcement', 'verification_approved'] };
+    } else if (type === 'placements') {
+      query.type = { $in: ['placement_announcement', 'alumni_referral'] };
+    } else if (type === 'events') {
+      query.type = 'event_invitation';
+    } else if (type === 'mentions') {
+      query.type = 'mention';
+    }
+
+    // Search query matches title/message
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { message: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const skipCount = (parseInt(page) - 1) * parseInt(limit);
+    const notifications = await Notification.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skipCount)
+      .limit(parseInt(limit));
+
+    const total = await Notification.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: notifications,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// 2. GET /api/notifications/unread-count - retrieve live unread count
+router.get('/notifications/unread-count', requireAuth, async (req, res) => {
+  try {
+    const count = await Notification.countDocuments({
+      recipientId: req.user.userId,
+      isRead: false,
+      softDeleted: false
+    });
+    res.json({ success: true, count });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. POST /api/notifications/mark-read - mark notifications as read
+router.post('/notifications/mark-read', requireAuth, async (req, res) => {
+  try {
+    const { notificationIds } = req.body;
+    const recipientId = req.user.userId;
+    const query = { recipientId, softDeleted: false };
+
+    if (notificationIds && Array.isArray(notificationIds) && notificationIds.length > 0) {
+      query._id = { $in: notificationIds };
+    }
+
+    await Notification.updateMany(query, { isRead: true });
+
+    if (global.io) {
+      global.io.to(`user_${recipientId}`).emit('notification:read', { notificationIds });
+    }
+
+    res.json({ success: true, message: 'Notifications marked as read.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4. POST /api/notifications/delete - soft-delete notifications
+router.post('/notifications/delete', requireAuth, async (req, res) => {
+  try {
+    const { notificationIds } = req.body;
+    const recipientId = req.user.userId;
+    
+    if (!notificationIds || !Array.isArray(notificationIds) || notificationIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'notificationIds array is required.' });
+    }
+
+    await Notification.updateMany(
+      { _id: { $in: notificationIds }, recipientId },
+      { softDeleted: true }
+    );
+
+    if (global.io) {
+      global.io.to(`user_${recipientId}`).emit('notification:delete', { notificationIds });
+    }
+
+    res.json({ success: true, message: 'Notifications deleted.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Export createNotification so other service logic can call it
+module.exports.createNotification = createNotification;
 
 module.exports = router;

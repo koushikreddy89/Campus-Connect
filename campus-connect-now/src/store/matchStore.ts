@@ -27,6 +27,8 @@ interface MatchState {
   setConnectionRequests: (requests: ConnectionRequest[]) => void;
   fetchMatches: () => Promise<void>;
   fetchConnectionRequests: () => Promise<void>;
+  incrementUnreadCount: (matchId: string, lastMessage: string) => void;
+  clearUnreadCount: (matchId: string) => void;
 }
 
 export const useMatchStore = create<MatchState>((set, get) => ({
@@ -178,5 +180,34 @@ export const useMatchStore = create<MatchState>((set, get) => ({
     } finally {
       set({ isLoading: false });
     }
+  },
+
+  incrementUnreadCount: (matchId, lastMessage) => {
+    set((s) => {
+      const matchIndex = s.matches.findIndex(m => m.id === matchId);
+      if (matchIndex === -1) return {};
+
+      const updatedMatches = [...s.matches];
+      const match = { ...updatedMatches[matchIndex] };
+      
+      match.unreadCount = (match.unreadCount || 0) + 1;
+      match.lastMessage = lastMessage;
+      (match as any).lastMessageAt = new Date().toISOString();
+      (match as any).lastMessageTime = new Date().toISOString();
+
+      // Move match to top of conversation list
+      updatedMatches.splice(matchIndex, 1);
+      return { matches: [match, ...updatedMatches] };
+    });
+  },
+
+  clearUnreadCount: (matchId) => {
+    set((s) => ({
+      matches: s.matches.map(m => 
+        m.id === matchId 
+          ? { ...m, unreadCount: 0 } 
+          : m
+      )
+    }));
   },
 }));

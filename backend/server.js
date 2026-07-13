@@ -158,6 +158,10 @@ mongoose.connect(MONGODB_URI)
         socket.to(roomId).emit('typing', { roomId, userId, isTyping });
       });
 
+      socket.on('presence', ({ roomId, userId, status, lastSeen }) => {
+        socket.to(roomId).emit('presence', { roomId, userId, status, lastSeen });
+      });
+
       socket.on('disconnect', () => {
         console.log('🔌 Socket disconnected:', socket.id);
       });

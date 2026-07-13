@@ -46,9 +46,10 @@ export default function StudentProfileDetailPage() {
       if (!id) return;
 
       // 1. Fetch Student profile from MongoDB
+      const activeToken = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
       const res = await fetch(`${getApiUrl()}/api/student/profile?userId=${id}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${activeToken}`
         }
       });
       const result = await res.json();
@@ -63,7 +64,7 @@ export default function StudentProfileDetailPage() {
         // Fetch current user notifications to see if requested or use discovery api check
         const notificationsRes = await fetch(`${getApiUrl()}/api/notifications?userId=${id}`, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${activeToken}`
           }
         });
         const notifResult = await notificationsRes.json();
@@ -73,7 +74,7 @@ export default function StudentProfileDetailPage() {
         // check accepted connections or pending requests initiated by currentUserId
         const selfNotifsRes = await fetch(`${getApiUrl()}/api/notifications?userId=${currentUserId}`, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${activeToken}`
           }
         });
         const selfNotifResult = await selfNotifsRes.json();
@@ -87,7 +88,7 @@ export default function StudentProfileDetailPage() {
       // 2. Fetch posts by this author
       const postsRes = await fetch(`${getApiUrl()}/api/feed?authorId=${id}&userId=${currentUserId || ''}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${activeToken}`
         }
       });
       const postsResult = await postsRes.json();

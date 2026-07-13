@@ -830,6 +830,20 @@ export const chatApi = {
       return { success: false, error: error.message };
     }
   },
+
+  async markAllAsRead(chatId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/chats/${chatId}/read-all`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      const result = await res.json();
+      return result;
+    } catch (error: any) {
+      console.error('Error marking all messages read:', error);
+      return { success: false, error: error.message };
+    }
+  },
 };
 
 // ============================================
@@ -1036,11 +1050,15 @@ export const storyApi = {
 // ============================================
 
 export const notificationApi = {
-  async getNotifications() {
+  async getNotifications(type = 'all', search = '', page = 1, limit = 20) {
     try {
-      const userId = useAuthStore.getState().uid;
-      if (!userId) return { success: true, data: [] };
-      const res = await fetch(`${getApiUrl()}/api/notifications?userId=${userId}`, {
+      const queryParams = new URLSearchParams({
+        type,
+        search,
+        page: String(page),
+        limit: String(limit)
+      });
+      const res = await fetch(`${getApiUrl()}/api/notifications?${queryParams.toString()}`, {
         headers: getHeaders(undefined)
       });
       const result = await res.json();
@@ -1048,15 +1066,16 @@ export const notificationApi = {
       return result;
     } catch (error: any) {
       console.error('Failed to get notifications:', error);
-      return { success: false, data: [] };
+      return { success: false, data: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } };
     }
   },
 
-  async markAsRead(notificationId: string) {
+  async markAsRead(notificationIds?: string[]) {
     try {
-      const res = await fetch(`${getApiUrl()}/api/notifications/${notificationId}/read`, {
+      const res = await fetch(`${getApiUrl()}/api/notifications/mark-read`, {
         method: 'POST',
-        headers: getHeaders()
+        headers: getHeaders(),
+        body: JSON.stringify({ notificationIds })
       });
       return await res.json();
     } catch (error: any) {
@@ -1064,4 +1083,32 @@ export const notificationApi = {
       return { success: false };
     }
   },
+
+  async deleteNotifications(notificationIds: string[]) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/notifications/delete`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ notificationIds })
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Failed to delete notifications:', error);
+      return { success: false };
+    }
+  },
+
+  async getUnreadCount() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/notifications/unread-count`, {
+        headers: getHeaders(undefined)
+      });
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error || 'Failed to get unread count');
+      return result;
+    } catch (error: any) {
+      console.error('Failed to get unread count:', error);
+      return { success: false, count: 0 };
+    }
+  }
 };

@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuthStore } from "@/store/authStore";
 import { useProfileStore } from "@/store/profileStore";
+import { useNotificationStore } from "@/store/notificationStore";
 import { alumniProfileService } from "@/services/alumniService";
 import { userApi } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -85,8 +86,16 @@ const StudentProfileDetailPage = lazy(() => import("./pages/StudentProfileDetail
   console.error('[Lazy Load Error] StudentProfileDetailPage:', err);
   throw err;
 }));
+const ProfilePageDispatcher = lazy(() => import("./pages/ProfilePageDispatcher.tsx").catch(err => {
+  console.error('[Lazy Load Error] ProfilePageDispatcher:', err);
+  throw err;
+}));
 const PlacementDetailPage = lazy(() => import("./pages/PlacementDetailPage.tsx").catch(err => {
   console.error('[Lazy Load Error] PlacementDetailPage:', err);
+  throw err;
+}));
+const SwipeNavigator = lazy(() => import("./components/SwipeNavigator.tsx").catch(err => {
+  console.error('[Lazy Load Error] SwipeNavigator:', err);
   throw err;
 }));
 
@@ -230,6 +239,18 @@ const App = () => {
   const isProfileComplete = useAuthStore(s => s.isProfileComplete);
   const role = useAuthStore(s => s.role);
 
+  const currentUserId = useAuthStore(s => s._id);
+  const setupSocketListeners = useNotificationStore(s => s.setupSocketListeners);
+  const fetchUnreadCount = useNotificationStore(s => s.fetchUnreadCount);
+
+  useEffect(() => {
+    if (currentUserId) {
+      fetchUnreadCount();
+      const cleanup = setupSocketListeners(currentUserId);
+      return () => cleanup();
+    }
+  }, [currentUserId, setupSocketListeners, fetchUnreadCount]);
+
   useEffect(() => {
     // Auto-migrate legacy 'MIT' college from local storage state to 'SR University'
     const currentAuthState = useAuthStore.getState();
@@ -301,7 +322,7 @@ const App = () => {
               role: dbRole,
               email: dbUser.email,
               uid: dbUser.id,
-              _id: dbUser._id
+              _id: dbUser._id || dbUser.id
             });
 
             if (dbRole !== 'admin') {
@@ -420,7 +441,7 @@ const App = () => {
                   path="/student/dashboard"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><HomePage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />
@@ -434,7 +455,7 @@ const App = () => {
                   path="/feed"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><FeedPage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />
@@ -466,7 +487,7 @@ const App = () => {
                   path="/alumni"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><PremiumAlumniFeedPage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />
@@ -482,7 +503,7 @@ const App = () => {
                   path="/chat"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><ChatListPage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />
@@ -514,7 +535,15 @@ const App = () => {
                   path="/profile"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><ProfilePage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/profile/:userId"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <ProtectedRoute><ProfilePageDispatcher /></ProtectedRoute>
                     </Suspense>
                   }
                 />

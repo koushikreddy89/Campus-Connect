@@ -5,8 +5,9 @@ import { useChatStore } from '@/store/chatStore';
 import { useMatchStore } from '@/store/matchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useGroupChatStore } from '@/store/groupChatStore';
-import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown } from 'lucide-react';
+import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown, Flame, Infinity, Lock, Heart, Pin, Bookmark, Share2 } from 'lucide-react';
 import { chatApi } from '@/services/api';
+import { getApiUrl } from '@/services/connectionService';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EmptyState } from '@/components/EmptyState';
 import { ReactionEmoji } from '@/types';
@@ -20,19 +21,29 @@ const REACTION_OPTIONS: ReactionEmoji[] = ['👍', '❤️', '😂', '😮', '�
 
 // Premium Last Seen & Status Formatter
 const formatLastSeen = (status: string, timestampStr?: string) => {
-  if (status === 'online') return 'Online';
+  if (status === 'online') return '🟢 Online';
   if (status === 'idle') return 'Idle';
   if (status === 'typing') return 'Typing...';
   if (status === 'recording') return 'Recording voice...';
-  if (!timestampStr) return 'Offline';
+  
+  if (!timestampStr) return 'Last seen unavailable';
 
   const date = new Date(timestampStr);
-  const diffMs = Date.now() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
+  if (isNaN(date.getTime())) return 'Last seen unavailable';
 
-  if (diffMins < 1) return 'Last seen just now';
-  if (diffMins < 60) return `Last seen ${diffMins} minutes ago`;
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
   
+  // Just now: < 1 minute
+  if (diffMs < 60000) {
+    return 'Last seen just now';
+  }
+  // Minutes ago: < 1 hour
+  if (diffMs < 3600000) {
+    const mins = Math.floor(diffMs / 60000);
+    return `Last seen ${mins} ${mins === 1 ? 'minute' : 'minutes'} ago`;
+  }
+
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -40,8 +51,7 @@ const formatLastSeen = (status: string, timestampStr?: string) => {
   const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   if (date.toDateString() === today.toDateString()) {
-    const diffHours = Math.floor(diffMins / 60);
-    return `Last seen ${diffHours} hours ago`;
+    return `Last seen today at ${timeStr}`;
   }
   if (date.toDateString() === yesterday.toDateString()) {
     return `Last seen yesterday at ${timeStr}`;
@@ -94,9 +104,28 @@ export default function ChatPage({
 
   // Real-time recipient presence state
   const match = useMatchStore(s => s.matches.find(m => m.id === matchId));
-  const [recipientPresence, setRecipientPresence] = useState<{ status: string; lastSeen?: string }>({
-    status: match?.user?.isOnline ? 'online' : 'offline'
-  });
+  const recipientPresence = useMemo(() => {
+    return {
+      status: (match?.isOnline || match?.user?.isOnline) ? 'online' : 'offline',
+      lastSeen: match?.user?.lastSeen
+    };
+  }, [match]);
+
+  const [retentionMode, setRetentionMode] = useState<'VIEW_ONCE' | 'NEVER_DELETE'>(
+    (localStorage.getItem('chat_retention_mode') as 'VIEW_ONCE' | 'NEVER_DELETE') || 'NEVER_DELETE'
+  );
+
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaLoadError, setMediaLoadError] = useState<string | null>(null);
+
+  // Premium context menu and details states
+  const [selectedMenuMsg, setSelectedMenuMsg] = useState<any | null>(null);
+  const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [showMenu, setShowMenu] = useState(false);
+  const [showDetailsMsg, setShowDetailsMsg] = useState<any | null>(null);
+  const [showDeleteConfirmMsg, setShowDeleteConfirmMsg] = useState<any | null>(null);
+  const [deleteType, setDeleteType] = useState<'me' | 'everyone'>('me');
+  const [replyParentMsg, setReplyParentMsg] = useState<any | null>(null);
 
   const messagesEnd = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -119,7 +148,43 @@ export default function ChatPage({
     useGroupChatStore.getState().fetchGroups();
   }, []);
 
-  const currentUserId = useAuthStore(s => s._id);
+  useEffect(() => {
+    if (matchId && match?.user?.id) {
+      const fetchPresence = async () => {
+        try {
+          const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
+          const res = await fetch(`${getApiUrl()}/api/users/${match.user.id}/presence`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          const data = await res.json();
+          if (data && data.lastSeen !== undefined) {
+            useMatchStore.getState().setMatches(
+              useMatchStore.getState().matches.map(m => {
+                if (m.id === matchId) {
+                  return {
+                    ...m,
+                    isOnline: data.isOnline,
+                    user: m.user ? { ...m.user, isOnline: data.isOnline, lastSeen: data.lastSeen } : undefined
+                  };
+                }
+                return m;
+              })
+            );
+          }
+        } catch (e) {
+          console.error("Failed to fetch fresh user presence:", e);
+        }
+      };
+      fetchPresence();
+      
+      const presenceInterval = setInterval(fetchPresence, 30000);
+      return () => clearInterval(presenceInterval);
+    }
+  }, [matchId, match?.user?.id]);
+
+  const currentUserId = useAuthStore(s => s.uid);
   const messagesMap = useChatStore(s => s.messages);
   const messages = messagesMap[matchId!] ?? EMPTY_MESSAGES;
 
@@ -161,12 +226,36 @@ export default function ChatPage({
   const handleTextChange = (val: string) => {
     setText(val);
     const socket = socketService.getSocket();
+    const token = localStorage.getItem('token') || '';
     if (socket?.connected && matchId) {
-      socket.emit('typing', { roomId: matchId, userId: currentUserId, isTyping: true });
+      socket.emit('typing', { roomId: matchId, userId: currentUserId, isTyping: val.length > 0 });
+    }
+    if (token && matchId) {
+      if (val.length > 0) {
+        fetch('http://localhost:5000/api/typing/start', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ conversationId: matchId })
+        }).catch(() => {});
+      }
+
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit('typing', { roomId: matchId, userId: currentUserId, isTyping: false });
-      }, 1500);
+        if (socket?.connected) {
+          socket.emit('typing', { roomId: matchId, userId: currentUserId, isTyping: false });
+        }
+        fetch('http://localhost:5000/api/typing/stop', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ conversationId: matchId })
+        }).catch(() => {});
+      }, 2000);
     }
   };
 
@@ -178,62 +267,17 @@ export default function ChatPage({
     return 'dormant';
   };
 
-  // Connect socket, join room, and listen to real-time presence events
+  // Connect socket and join room
   useEffect(() => {
     if (matchId) {
       useChatStore.getState().connectSocket();
       socketService.joinRoom(`match_${matchId}`);
 
-      const socket = socketService.getSocket();
-      if (socket?.connected) {
-        // Broadcast user entered online state
-        socket.emit('presence', { roomId: `match_${matchId}`, userId: currentUserId, status: 'online' });
-      }
-
-      const handlePresenceUpdate = ({ userId, status, lastSeen }: any) => {
-        if (userId !== currentUserId) {
-          setRecipientPresence({ status, lastSeen });
-        }
-      };
-
-      socket?.on('presence', handlePresenceUpdate);
-
       return () => {
-        if (socket?.connected) {
-          // Broadcast user exited offline state
-          socket.emit('presence', { roomId: `match_${matchId}`, userId: currentUserId, status: 'offline', lastSeen: new Date().toISOString() });
-        }
-        socket?.off('presence', handlePresenceUpdate);
         socketService.leaveRoom(`match_${matchId}`);
         useChatStore.getState().disconnectSocket();
       };
     }
-  }, [matchId, currentUserId]);
-
-  // Sync client-side idle/active triggers on window events
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      const socket = socketService.getSocket();
-      if (!socket?.connected || !matchId) return;
-
-      const status = document.hidden ? 'idle' : 'online';
-      socket.emit('presence', { 
-        roomId: `match_${matchId}`, 
-        userId: currentUserId, 
-        status, 
-        lastSeen: status === 'idle' ? new Date().toISOString() : undefined 
-      });
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleVisibilityChange);
-    window.addEventListener('blur', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleVisibilityChange);
-      window.removeEventListener('blur', handleVisibilityChange);
-    };
   }, [matchId, currentUserId]);
 
   // Presence last-seen timestamp ticker (force update every 30s)
@@ -349,6 +393,34 @@ export default function ChatPage({
     };
   }, [messages, matchId, currentUserId]);
 
+  // View Once 8-second auto-close timer
+  useEffect(() => {
+    if (activeMedia && activeMedia.isViewOnce && activeMedia.loadedSuccessfully) {
+      const timer = setTimeout(() => {
+        const msgId = activeMedia.msgId;
+        setActiveMedia(null);
+        useChatStore.getState().openMessage(matchId!, msgId);
+      }, 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeMedia, matchId]);
+
+  // Handle escape key to close media viewer modal and context menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (activeMedia) {
+          closeMediaViewer();
+        }
+        if (showMenu) {
+          setShowMenu(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeMedia, showMenu]);
+
   // Scroll position listener to auto-toggle Floating unread indicator pill
   const handleScroll = () => {
     const container = scrollContainerRef.current;
@@ -428,7 +500,7 @@ export default function ChatPage({
         const isImage = uploadedFile.mimeType.startsWith('image/');
         const msgType = isImage ? 'image' : 'file';
 
-        await sendMessage(matchId!, '', msgType, [uploadedFile]);
+        await sendMessage(matchId!, '', msgType, [uploadedFile], retentionMode);
         toast.success('File uploaded successfully!');
       } else {
         toast.error(res.error || 'Upload failed.');
@@ -481,7 +553,29 @@ export default function ChatPage({
     if (!text.trim() || isSending) return;
     setIsSending(true);
     try {
-      await sendMessage(matchId!, text.trim());
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      const socket = socketService.getSocket();
+      const token = localStorage.getItem('token') || '';
+      if (socket?.connected && matchId) {
+        socket.emit('typing', { roomId: matchId, userId: currentUserId, isTyping: false });
+      }
+      if (token && matchId) {
+        fetch('http://localhost:5000/api/typing/stop', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ conversationId: matchId })
+        }).catch(() => {});
+      }
+
+      if (replyParentMsg) {
+        await useChatStore.getState().replyToMessage(matchId!, replyParentMsg.id || replyParentMsg._id, text.trim(), 'text');
+        setReplyParentMsg(null);
+      } else {
+        await sendMessage(matchId!, text.trim(), 'text', [], retentionMode);
+      }
       setText('');
     } catch (e) {
       console.error('Error sending message:', e);
@@ -493,9 +587,195 @@ export default function ChatPage({
     }
   };
 
+  const handleModeChange = (mode: 'VIEW_ONCE' | 'NEVER_DELETE') => {
+    setRetentionMode(mode);
+    localStorage.setItem('chat_retention_mode', mode);
+  };
+
   const handleReact = (messageId: string, emoji: ReactionEmoji) => {
     reactToMessage(matchId!, messageId, emoji);
     setShowEmojiPickerForMsg(null);
+  };
+
+  const openContextMenu = (msg: any, x: number, y: number, isOwn: boolean) => {
+    const menuWidth = 240;
+    const menuHeight = 420;
+    const padding = 16;
+
+    let posX = x;
+    let posY = y;
+
+    if (x + menuWidth > window.innerWidth) {
+      posX = window.innerWidth - menuWidth - padding;
+    }
+    if (y + menuHeight > window.innerHeight) {
+      posY = window.innerHeight - menuHeight - padding;
+    }
+
+    setMenuCoords({ x: Math.max(padding, posX), y: Math.max(padding, posY) });
+    setSelectedMenuMsg(msg);
+    setShowMenu(true);
+  };
+
+  const handleContextReact = (emoji: ReactionEmoji) => {
+    if (!selectedMenuMsg) return;
+    reactToMessage(matchId!, selectedMenuMsg.id || selectedMenuMsg._id, emoji);
+    setShowMenu(false);
+  };
+
+  const handleContextPin = () => {
+    if (!selectedMenuMsg) return;
+    useChatStore.getState().pinMessage(matchId!, selectedMenuMsg.id || selectedMenuMsg._id);
+    setShowMenu(false);
+    toast.success(selectedMenuMsg.pinned ? 'Message unpinned! 📌' : 'Message pinned! 📌');
+  };
+
+  const handleContextBookmark = () => {
+    if (!selectedMenuMsg) return;
+    useChatStore.getState().bookmarkMessage(matchId!, selectedMenuMsg.id || selectedMenuMsg._id);
+    setShowMenu(false);
+    toast.success('Bookmark updated! 🔖');
+  };
+
+  const handleContextDeleteForMe = () => {
+    if (!selectedMenuMsg) return;
+    setDeleteType('me');
+    setShowDeleteConfirmMsg(selectedMenuMsg);
+    setShowMenu(false);
+  };
+
+  const handleContextDeleteForEveryone = () => {
+    if (!selectedMenuMsg) return;
+    setDeleteType('everyone');
+    setShowDeleteConfirmMsg(selectedMenuMsg);
+    setShowMenu(false);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!showDeleteConfirmMsg) return;
+    const msgId = showDeleteConfirmMsg.id || showDeleteConfirmMsg._id;
+    if (deleteType === 'me') {
+      await useChatStore.getState().deleteMessageForMe(matchId!, msgId);
+      toast.success('Message deleted for you.');
+    } else {
+      await useChatStore.getState().deleteMessageForEveryone(matchId!, msgId);
+      toast.success('Message deleted for everyone.');
+    }
+    setShowDeleteConfirmMsg(null);
+  };
+
+  const holdTimer = useRef<any>(null);
+
+  const handleMouseDown = (e: React.MouseEvent, msg: any, isOwn: boolean) => {
+    if (e.button !== 0) return;
+    holdTimer.current = setTimeout(() => {
+      if (navigator.vibrate) navigator.vibrate(60);
+      openContextMenu(msg, e.clientX, e.clientY, isOwn);
+    }, 2000);
+  };
+
+  const handleMouseUp = () => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, msg: any, isOwn: boolean) => {
+    const touch = e.touches[0];
+    holdTimer.current = setTimeout(() => {
+      if (navigator.vibrate) navigator.vibrate(60);
+      openContextMenu(msg, touch.clientX, touch.clientY, isOwn);
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, msg: any, isOwn: boolean) => {
+    e.preventDefault();
+    openContextMenu(msg, e.clientX, e.clientY, isOwn);
+  };
+
+  const preloadViewOnce = (msg: any, senderName: string) => {
+    console.log("View Once clicked, message details:", msg);
+    
+    const fileObj = msg.attachments?.[0] || { downloadUrl: msg.imageUrl || '', fileName: 'View Once Media', mimeType: msg.messageType === 'image' ? 'image/png' : 'text/plain' };
+    const url = fileObj.downloadUrl;
+
+    if (!url) {
+      console.error("preloadViewOnce failed: downloadUrl is missing", fileObj);
+      toast.error("This View Once media has no configured URL.");
+      return;
+    }
+
+    const baseUrl = getApiUrl();
+    const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
+    
+    let fullUrl = url;
+    if (url.startsWith('/')) {
+      fullUrl = `${baseUrl}${url}`;
+    } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      fullUrl = `${baseUrl}/${url}`;
+    }
+    fullUrl = `${fullUrl}${fullUrl.includes('?') ? '&' : '?'}token=${token}`;
+
+    const updatedFileObj = {
+      ...fileObj,
+      downloadUrl: fullUrl
+    };
+
+    setMediaLoading(true);
+    setMediaLoadError(null);
+
+    setActiveMedia({
+      file: updatedFileObj,
+      senderName,
+      timestamp: msg.timestamp,
+      msgId: msg.id || msg._id,
+      messageType: msg.messageType,
+      text: msg.text || 'View Once Message',
+      isViewOnce: true,
+      loadedSuccessfully: false
+    });
+
+    const img = new Image();
+    img.src = fullUrl;
+    img.onload = () => {
+      setMediaLoading(false);
+      setActiveMedia(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          loadedSuccessfully: true
+        };
+      });
+    };
+    img.onerror = () => {
+      setMediaLoading(false);
+      setMediaLoadError("This media could not be loaded.");
+    };
+  };
+
+  const closeMediaViewer = () => {
+    if (!activeMedia) return;
+    const msgId = activeMedia.msgId;
+    const isViewOnce = activeMedia.isViewOnce;
+    const loadedSuccessfully = activeMedia.loadedSuccessfully;
+
+    setActiveMedia(null);
+    setZoomScale(1);
+    setShowMetadata(false);
+    setMediaLoading(false);
+    setMediaLoadError(null);
+
+    if (isViewOnce && loadedSuccessfully) {
+      useChatStore.getState().openMessage(matchId!, msgId);
+    }
   };
 
   const handleCopyText = (txt: string) => {
@@ -732,7 +1012,7 @@ export default function ChatPage({
                             }}
                           >
                             {/* Outgoing hover menu */}
-                            {group.isOwn && isHovered && (
+                            {group.isOwn && isHovered && msg.retentionMode !== 'VIEW_ONCE' && (
                               <div className="flex items-center gap-1 p-1 bg-zinc-950 border border-white/[0.06] rounded-xl shadow-lg shrink-0 scale-90 origin-right transition-all">
                                 <button 
                                   onClick={() => setShowEmojiPickerForMsg(isEmojiOpen ? null : keyId)}
@@ -766,7 +1046,16 @@ export default function ChatPage({
                             )}
 
                             {/* Msg Bubble */}
-                            <div className="relative">
+                            <div 
+                              className="relative"
+                              onContextMenu={(e) => handleContextMenu(e, msg, group.isOwn)}
+                              onMouseDown={(e) => handleMouseDown(e, msg, group.isOwn)}
+                              onMouseUp={handleMouseUp}
+                              onMouseLeave={handleMouseUp}
+                              onTouchStart={(e) => handleTouchStart(e, msg, group.isOwn)}
+                              onTouchEnd={handleTouchEnd}
+                              onTouchMove={handleTouchEnd}
+                            >
                               <div
                                 className={`px-4 py-3 rounded-[24px] text-xs leading-relaxed shadow-md transition-all ${
                                   group.isOwn
@@ -774,69 +1063,112 @@ export default function ChatPage({
                                     : 'bg-[#24242E] border border-white/[0.05] text-zinc-100 rounded-bl-[4px] shadow-sm hover:-translate-y-[1px]'
                                 }`}
                               >
-                                {/* Render Attachments */}
-                                {msg.attachments && msg.attachments.length > 0 && (
-                                  <div className="space-y-2 mb-2 max-w-[280px]">
-                                    {msg.attachments.map((file: any, fIdx: number) => {
-                                      const isImage = file.mimeType.startsWith('image/');
-                                      if (isImage) {
-                                        return (
-                                          <div 
-                                            key={fIdx} 
-                                            className="relative rounded-2xl overflow-hidden border border-white/[0.08] cursor-zoom-in group/img shadow-md"
-                                            onClick={() => setActiveMedia({
-                                              file,
-                                              senderName: group.senderName,
-                                              timestamp: msg.timestamp,
-                                              msgId: msg.id || msg._id,
-                                              messageType: msg.messageType,
-                                              text: msg.text
-                                            })}
-                                          >
-                                            <img 
-                                              src={file.downloadUrl} 
-                                              alt={file.fileName} 
-                                              className="max-h-[180px] w-full object-cover rounded-2xl hover:scale-105 transition-transform duration-300"
-                                              loading="lazy"
-                                            />
-                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity pointer-events-none">
-                                              <ImageIcon className="w-5 h-5 text-white animate-pulse" />
-                                            </div>
+                                {msg.retentionMode === 'VIEW_ONCE' ? (
+                                  msg.viewed ? (
+                                    <div className="flex items-center gap-1.5 py-1 text-zinc-450 font-medium">
+                                      <Flame className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
+                                      <span>{group.isOwn ? 'Opened' : 'You opened this message.'}</span>
+                                      <span className="text-[9px] text-zinc-550 italic font-mono shrink-0 ml-1">(disappeared)</span>
+                                    </div>
+                                  ) : (
+                                    <div
+                                      onClick={!group.isOwn ? () => preloadViewOnce(msg, group.senderName) : undefined}
+                                      className={!group.isOwn ? "cursor-pointer" : ""}
+                                    >
+                                      {group.isOwn ? (
+                                        <div className="flex items-center gap-2 py-1 select-none opacity-85">
+                                          <Lock className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+                                          <div className="flex flex-col">
+                                            <span className="font-semibold text-amber-300">View Once Message</span>
+                                            <span className="text-[9px] text-zinc-400">Waiting for recipient to open</span>
                                           </div>
-                                        );
-                                      }
-
-                                      return (
-                                        <div key={fIdx} className="flex items-center gap-3 p-3 bg-zinc-950/40 border border-white/[0.06] rounded-2xl">
-                                          <FileText className="w-6 h-6 text-zinc-400 shrink-0" />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-[10px] font-medium text-zinc-200 truncate">{file.fileName}</p>
-                                            <p className="text-[9px] text-zinc-500 font-mono">{(file.fileSize / 1024).toFixed(1)} KB</p>
-                                          </div>
-                                          <a
-                                            href={file.downloadUrl}
-                                            download={file.fileName}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                                          >
-                                            <Download className="w-3.5 h-3.5" />
-                                          </a>
                                         </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
+                                      ) : (
+                                        <div className="flex items-center gap-2.5 py-1.5 select-none active:opacity-70 group/once">
+                                          <Flame className="w-4 h-4 text-amber-400 animate-bounce shrink-0" />
+                                          <div className="flex flex-col">
+                                            <span className="font-bold text-amber-400 group-hover/once:underline">View Once Message</span>
+                                            <span className="text-[9px] text-zinc-400">Click to open & view now</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                ) : (
+                                  <>
+                                    {/* Render Attachments */}
+                                    {msg.attachments && msg.attachments.length > 0 && (
+                                      <div className="space-y-2 mb-2 max-w-[280px]">
+                                        {msg.attachments.map((file: any, fIdx: number) => {
+                                          const isImage = file.mimeType.startsWith('image/');
+                                          if (isImage) {
+                                            return (
+                                              <div 
+                                                key={fIdx} 
+                                                className="relative rounded-2xl overflow-hidden border border-white/[0.08] cursor-zoom-in group/img shadow-md"
+                                                onClick={() => setActiveMedia({
+                                                  file,
+                                                  senderName: group.senderName,
+                                                  timestamp: msg.timestamp,
+                                                  msgId: msg.id || msg._id,
+                                                  messageType: msg.messageType,
+                                                  text: msg.text
+                                                })}
+                                              >
+                                                <img 
+                                                  src={file.downloadUrl} 
+                                                  alt={file.fileName} 
+                                                  className="max-h-[180px] w-full object-cover rounded-2xl hover:scale-105 transition-transform duration-300"
+                                                  loading="lazy"
+                                                />
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity pointer-events-none">
+                                                  <ImageIcon className="w-5 h-5 text-white animate-pulse" />
+                                                </div>
+                                              </div>
+                                            );
+                                          }
 
-                                {msg.text && <p className="break-words select-text">{msg.text}</p>}
+                                          return (
+                                            <div key={fIdx} className="flex items-center gap-3 p-3 bg-zinc-950/40 border border-white/[0.06] rounded-2xl">
+                                              <FileText className="w-6 h-6 text-zinc-400 shrink-0" />
+                                              <div className="flex-1 min-w-0">
+                                                <p className="text-[10px] font-medium text-zinc-200 truncate">{file.fileName}</p>
+                                                <p className="text-[9px] text-zinc-500 font-mono">{(file.fileSize / 1024).toFixed(1)} KB</p>
+                                              </div>
+                                              <a
+                                                href={file.downloadUrl}
+                                                download={file.fileName}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                                              >
+                                                <Download className="w-3.5 h-3.5" />
+                                              </a>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {msg.text && <p className="break-words select-text">{msg.text}</p>}
+                                  </>
+                                )}
                                 
-                                {/* Time & Resonance Acknowledgment (Visible on Hover/Interaction) */}
-                                <div className="h-0 opacity-0 overflow-hidden group-hover:h-auto group-hover:opacity-65 group-hover:mt-1.5 transition-all duration-200 flex items-center justify-between gap-3 text-[9px] select-none font-mono">
+                                {/* Time & Read Receipts */}
+                                <div className="flex items-center justify-end gap-1 mt-1 text-[9px] select-none font-mono text-zinc-500">
                                   <span>
                                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                   {group.isOwn && (
-                                    <ResonanceThread state={getResonanceState(msg)} isSender={true} />
+                                    <span className="ml-1 select-none text-[10px] leading-none shrink-0">
+                                      {msg.status === 'seen' || msg.read || getResonanceState(msg) === 'absorbed' ? (
+                                        <span className="text-blue-400 font-bold">✓✓</span>
+                                      ) : msg.status === 'delivered' || getResonanceState(msg) === 'harmonized' ? (
+                                        <span className="text-zinc-450 font-bold">✓✓</span>
+                                      ) : (
+                                        <span className="text-zinc-550 font-medium">✓</span>
+                                      )}
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -945,6 +1277,24 @@ export default function ChatPage({
 
       {/* Redesigned Floating Glass Input Composer */}
       <div className="relative z-10 safe-bottom shrink-0 select-none pb-4 px-6 max-w-[900px] mx-auto w-full">
+        {replyParentMsg && (
+          <div className="w-full px-5 py-2">
+            <div className="bg-[#111118]/90 border border-white/[0.08] backdrop-blur-md rounded-2xl p-3 flex items-center justify-between text-xs mb-2">
+              <div className="flex items-center gap-2 text-zinc-300">
+                <Reply className="w-3.5 h-3.5 text-violet-400" />
+                <span>Replying to <span className="font-bold text-violet-400">Message</span>: </span>
+                <span className="text-zinc-450 italic truncate max-w-[300px]">{replyParentMsg.text || 'Media attachment'}</span>
+              </div>
+              <button 
+                onClick={() => setReplyParentMsg(null)}
+                className="p-1 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {uploadProgress !== null && (
           <div className="w-full px-5 py-2">
             <div className="bg-zinc-900/80 border border-white/[0.08] backdrop-blur-md rounded-2xl p-3 flex items-center gap-3">
@@ -994,6 +1344,30 @@ export default function ChatPage({
             className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-550 outline-none caret-violet-500"
           />
 
+          {/* Retention Mode Toggle */}
+          <div className="flex items-center gap-0.5 bg-zinc-950/60 border border-white/[0.04] p-0.5 rounded-full text-[10px] select-none text-zinc-400 shrink-0">
+            <button 
+              onClick={() => handleModeChange('VIEW_ONCE')}
+              className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
+                retentionMode === 'VIEW_ONCE' ? 'bg-amber-500/20 text-amber-400 font-bold border border-amber-500/20' : 'hover:text-zinc-200'
+              }`}
+              title="View Once (Snapchat mode)"
+            >
+              <Flame className="w-2.5 h-2.5 shrink-0" />
+              <span className="hidden sm:inline">View Once</span>
+            </button>
+            <button 
+              onClick={() => handleModeChange('NEVER_DELETE')}
+              className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
+                retentionMode === 'NEVER_DELETE' ? 'bg-violet-500/20 text-violet-400 font-bold border border-violet-500/20' : 'hover:text-zinc-200'
+              }`}
+              title="Never Delete (Standard mode)"
+            >
+              <Infinity className="w-2.5 h-2.5 shrink-0" />
+              <span className="hidden sm:inline">Never Delete</span>
+            </button>
+          </div>
+
           <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={handleSend}
@@ -1016,11 +1390,7 @@ export default function ChatPage({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[9999] bg-black/95 flex flex-col justify-between select-none"
-              onClick={() => {
-                setActiveMedia(null);
-                setZoomScale(1);
-                setShowMetadata(false);
-              }}
+              onClick={closeMediaViewer}
             >
               {/* Top Action Bar */}
               <div 
@@ -1029,11 +1399,7 @@ export default function ChatPage({
               >
                 <div className="flex items-center gap-3">
                   <button 
-                    onClick={() => {
-                      setActiveMedia(null);
-                      setZoomScale(1);
-                      setShowMetadata(false);
-                    }}
+                    onClick={closeMediaViewer}
                     className="p-2 hover:bg-zinc-900 rounded-xl text-zinc-400 hover:text-white transition-colors"
                   >
                     <ChevronLeft className="w-5 h-5" />
@@ -1068,11 +1434,7 @@ export default function ChatPage({
                   </button>
                   <button 
                     className="p-2 hover:bg-zinc-900 rounded-xl text-zinc-400 hover:text-white transition-colors"
-                    onClick={() => {
-                      setActiveMedia(null);
-                      setZoomScale(1);
-                      setShowMetadata(false);
-                    }}
+                    onClick={closeMediaViewer}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -1102,35 +1464,77 @@ export default function ChatPage({
                 {/* Viewport for image */}
                 <div 
                   className="flex-1 h-full flex items-center justify-center overflow-hidden p-6"
-                  onClick={() => {
-                    setActiveMedia(null);
-                    setZoomScale(1);
-                    setShowMetadata(false);
-                  }}
+                  onClick={closeMediaViewer}
                 >
-                  <motion.img
-                    initial={{ scale: 0.95, x: 0, y: 0 }}
-                    animate={{ scale: zoomScale }}
-                    drag={zoomScale > 1}
-                    dragConstraints={{ left: -400 * (zoomScale - 1), right: 400 * (zoomScale - 1), top: -400 * (zoomScale - 1), bottom: 400 * (zoomScale - 1) }}
-                    dragElastic={0.15}
-                    exit={{ scale: 0.95 }}
-                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                    src={activeMedia.file.downloadUrl}
-                    alt="Preview"
-                    className="max-w-full max-h-full object-contain rounded-xl shadow-2xl cursor-zoom-in"
-                    onWheel={(e) => {
-                      setZoomScale(prev => {
-                        const step = 0.25;
-                        const next = e.deltaY < 0 ? prev + step : prev - step;
-                        return Math.min(3, Math.max(1, next));
-                      });
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setZoomScale(prev => prev === 1 ? 2 : 1);
-                    }}
-                  />
+                  {mediaLoading ? (
+                    <div className="flex flex-col items-center gap-3 text-center" onClick={e => e.stopPropagation()}>
+                      <Loader2 className="w-8 h-8 text-violet-500 animate-spin" />
+                      <span className="text-xs text-zinc-400 font-medium font-mono">Preloading secure media...</span>
+                    </div>
+                  ) : mediaLoadError ? (
+                    <div className="flex flex-col items-center gap-4 text-center select-none" onClick={e => e.stopPropagation()}>
+                      <Flame className="w-10 h-10 text-rose-500 animate-pulse" />
+                      <h3 className="text-zinc-200 font-medium text-sm">Unable to load media</h3>
+                      <p className="text-xs text-zinc-550 max-w-xs">{mediaLoadError}</p>
+                      <button 
+                        onClick={() => preloadViewOnce({ attachments: [activeMedia.file], timestamp: activeMedia.timestamp, id: activeMedia.msgId, messageType: activeMedia.messageType, text: activeMedia.text }, activeMedia.senderName)}
+                        className="px-4 py-2 bg-violet-650 hover:bg-violet-750 text-white rounded-xl text-xs font-semibold font-mono transition-colors shadow-[0_0_12px_rgba(109,40,217,0.3)]"
+                      >
+                        Retry Loading
+                      </button>
+                    </div>
+                  ) : activeMedia.messageType === 'text' ? (
+                    <div 
+                      className="p-8 border border-white/[0.08] rounded-3xl bg-zinc-900/80 shadow-2xl max-w-md text-center flex flex-col items-center gap-4 backdrop-blur-xl"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="p-4 bg-amber-500/10 rounded-2xl text-amber-500 animate-pulse">
+                        <Flame className="w-8 h-8" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-white">Disappearing Message</h3>
+                      <p className="text-zinc-200 text-sm font-medium leading-relaxed font-mono px-4 py-3 bg-zinc-950/60 rounded-2xl border border-white/[0.04] select-text">
+                        {activeMedia.text}
+                      </p>
+                    </div>
+                  ) : (activeMedia.messageType === 'document' || activeMedia.messageType === 'file') ? (
+                    <div 
+                      className="p-8 border border-white/[0.08] rounded-3xl bg-zinc-900/80 shadow-2xl max-w-md text-center flex flex-col items-center gap-4 backdrop-blur-xl"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-400">
+                        <FileText className="w-8 h-8" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-white">{activeMedia.file.fileName}</h3>
+                      <span className="text-[10px] font-mono text-zinc-500">{(activeMedia.file.fileSize / 1024).toFixed(1)} KB</span>
+                      <p className="text-zinc-400 text-xs leading-relaxed italic">
+                        {activeMedia.text || 'Secure document attachment'}
+                      </p>
+                    </div>
+                  ) : (
+                    <motion.img
+                      initial={{ scale: 0.95, x: 0, y: 0 }}
+                      animate={{ scale: zoomScale }}
+                      drag={zoomScale > 1}
+                      dragConstraints={{ left: -400 * (zoomScale - 1), right: 400 * (zoomScale - 1), top: -400 * (zoomScale - 1), bottom: 400 * (zoomScale - 1) }}
+                      dragElastic={0.15}
+                      exit={{ scale: 0.95 }}
+                      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                      src={activeMedia.file.downloadUrl}
+                      alt="Preview"
+                      className="max-w-full max-h-full object-contain rounded-xl shadow-2xl cursor-zoom-in"
+                      onWheel={(e) => {
+                        setZoomScale(prev => {
+                          const step = 0.25;
+                          const next = e.deltaY < 0 ? prev + step : prev - step;
+                          return Math.min(3, Math.max(1, next));
+                        });
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZoomScale(prev => prev === 1 ? 2 : 1);
+                      }}
+                    />
+                  )}
                 </div>
 
                 {/* Right navigation arrow */}
@@ -1218,79 +1622,86 @@ export default function ChatPage({
                 className="w-full bg-zinc-950/85 backdrop-blur-md border-t border-zinc-900 p-4 flex flex-col items-center gap-3 z-10 shrink-0 pointer-events-auto"
                 onClick={e => e.stopPropagation()}
               >
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    onClick={() => {
-                      reactToMessage(matchId!, activeMedia.msgId, '❤️');
-                      toast.success('Reacted with ❤️');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-rose-500 text-xs transition-colors"
-                  >
-                    <Heart className="w-3.5 h-3.5 fill-rose-500" /> React
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(activeMedia.file.downloadUrl);
-                      toast.success('Image link copied to clipboard!');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
-                  >
-                    <Copy className="w-3.5 h-3.5" /> Copy Link
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setForwardingMedia(activeMedia);
-                      setSelectedTargets([]);
-                      setCustomCaption(activeMedia.text || '');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
-                  >
-                    <Forward className="w-3.5 h-3.5" /> Forward
-                  </button>
-
-                  <a
-                    href={activeMedia.file.downloadUrl}
-                    download={activeMedia.file.fileName}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Download
-                  </a>
-
-                  <button
-                    onClick={() => {
-                      setText(prev => `Replying to image: "${activeMedia.file.fileName}"\n${prev}`);
-                      setActiveMedia(null);
-                      toast.success('Replied with image reference!');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
-                  >
-                    <Reply className="w-3.5 h-3.5" /> Reply
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      toast.success('Saved to Favorites ⭐');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
-                  >
-                    <Star className="w-3.5 h-3.5" /> Favorite
-                  </button>
-
-                  {activeMedia.senderName === 'You' && (
+                {activeMedia.isViewOnce ? (
+                  <div className="flex items-center justify-center gap-2 text-amber-400 font-medium py-2 px-4 rounded-full bg-amber-500/10 border border-amber-500/20 text-xs text-center select-none font-mono max-w-md">
+                    <Flame className="w-4 h-4 text-amber-500 animate-pulse shrink-0" />
+                    <span>This View Once message will disappear permanently after you close this screen.</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-center gap-2">
                     <button
                       onClick={() => {
-                        toast.success('Delete request received.');
+                        reactToMessage(matchId!, activeMedia.msgId, '❤️');
+                        toast.success('Reacted with ❤️');
                       }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/40 border border-rose-900/60 hover:bg-rose-900 text-rose-300 text-xs transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-rose-500 text-xs transition-colors"
                     >
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                      <Heart className="w-3.5 h-3.5 fill-rose-500" /> React
                     </button>
-                  )}
-                </div>
+
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(activeMedia.file.downloadUrl);
+                        toast.success('Image link copied to clipboard!');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
+                    >
+                      <Copy className="w-3.5 h-3.5" /> Copy Link
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setForwardingMedia(activeMedia);
+                        setSelectedTargets([]);
+                        setCustomCaption(activeMedia.text || '');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
+                    >
+                      <Forward className="w-3.5 h-3.5" /> Forward
+                    </button>
+
+                    <a
+                      href={activeMedia.file.downloadUrl}
+                      download={activeMedia.file.fileName}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download
+                    </a>
+
+                    <button
+                      onClick={() => {
+                        setText(prev => `Replying to image: "${activeMedia.file.fileName}"\n${prev}`);
+                        setActiveMedia(null);
+                        toast.success('Replied with image reference!');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
+                    >
+                      <Reply className="w-3.5 h-3.5" /> Reply
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        toast.success('Saved to Favorites ⭐');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs transition-colors"
+                    >
+                      <Star className="w-3.5 h-3.5" /> Favorite
+                    </button>
+
+                    {activeMedia.senderName === 'You' && (
+                      <button
+                        onClick={() => {
+                          toast.success('Delete request received.');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/40 border border-rose-900/60 hover:bg-rose-900 text-rose-300 text-xs transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 mt-1">
                   <button
@@ -1518,6 +1929,304 @@ export default function ChatPage({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Premium Floating Context Menu */}
+      {showMenu && selectedMenuMsg && createPortal(
+        <div 
+          className="fixed inset-0 z-[99999] bg-black/10 transition-opacity"
+          onClick={() => setShowMenu(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 10 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            style={{ top: menuCoords.y, left: menuCoords.x }}
+            className="absolute bg-zinc-950/85 backdrop-blur-xl border border-white/[0.08] shadow-2xl rounded-3xl w-[240px] overflow-hidden z-[100000] p-1.5 select-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top Section - Reaction Bar */}
+            <div className="flex items-center justify-between px-2.5 py-2 border-b border-white/[0.06] mb-1.5">
+              <div className="flex gap-1.5 overflow-x-auto scrollbar-none">
+                {REACTION_OPTIONS.map((emoji) => (
+                  <motion.button
+                    key={emoji}
+                    whileHover={{ scale: 1.25 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 10 }}
+                    onClick={() => handleContextReact(emoji)}
+                    className="text-lg p-0.5 leading-none"
+                  >
+                    {emoji}
+                  </motion.button>
+                ))}
+              </div>
+              <button 
+                onClick={() => {
+                  toast.info('More reactions coming soon! ✨');
+                }}
+                className="text-zinc-500 hover:text-zinc-300 text-xs font-semibold pl-1 border-l border-white/[0.06]"
+              >
+                ➕
+              </button>
+            </div>
+
+            {/* Menu Options */}
+            <div className="space-y-0.5 text-xs text-zinc-300 font-medium">
+              <button
+                onClick={() => {
+                  setReplyParentMsg(selectedMenuMsg);
+                  setShowMenu(false);
+                  toast.success('Replying to message...');
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+              >
+                <Reply className="w-4 h-4 text-zinc-450" />
+                <span>Reply</span>
+              </button>
+
+              {selectedMenuMsg.messageType === 'text' && selectedMenuMsg.retentionMode !== 'VIEW_ONCE' && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(selectedMenuMsg.text);
+                    toast.success('Copied text to clipboard! 📋');
+                    setShowMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+                >
+                  <Copy className="w-4 h-4 text-zinc-450" />
+                  <span>Copy Text</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  toast.success('Link copied for sharing! 📤');
+                  setShowMenu(false);
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+              >
+                <Share2 className="w-4 h-4 text-zinc-450" />
+                <span>Share Link</span>
+              </button>
+
+              {selectedMenuMsg.retentionMode !== 'VIEW_ONCE' && (
+                <>
+                  <button
+                    onClick={() => {
+                      toast.success('Message saved to Favorites! ⭐');
+                      setShowMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+                  >
+                    <Star className="w-4 h-4 text-zinc-450" />
+                    <span>Save to Favorites</span>
+                  </button>
+
+                  <button
+                    onClick={handleContextPin}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+                  >
+                    <Pin className="w-4 h-4 text-zinc-450" />
+                    <span>{selectedMenuMsg.pinned ? 'Unpin Message' : 'Pin Message'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleContextBookmark}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+                  >
+                    <Bookmark className="w-4 h-4 text-zinc-450" />
+                    <span>{selectedMenuMsg.bookmarkedBy?.includes(useAuthStore.getState().uid) ? 'Remove Bookmark' : 'Bookmark Message'}</span>
+                  </button>
+
+                  {((selectedMenuMsg.attachments && selectedMenuMsg.attachments.length > 0) || selectedMenuMsg.imageUrl || selectedMenuMsg.documentUrl) && (
+                    <a
+                      href={selectedMenuMsg.attachments?.[0]?.downloadUrl || selectedMenuMsg.imageUrl || selectedMenuMsg.documentUrl}
+                      download
+                      onClick={() => setShowMenu(false)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+                    >
+                      <Download className="w-4 h-4 text-zinc-450" />
+                      <span>Download</span>
+                    </a>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      setForwardingMedia({
+                        msgId: selectedMenuMsg.id || selectedMenuMsg._id,
+                        text: selectedMenuMsg.text || '',
+                        messageType: selectedMenuMsg.messageType || 'text',
+                        file: selectedMenuMsg.attachments && selectedMenuMsg.attachments.length > 0 ? selectedMenuMsg.attachments[0] : null
+                      });
+                      setSelectedTargets([]);
+                      setCustomCaption(selectedMenuMsg.text || '');
+                      setShowMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+                  >
+                    <Forward className="w-4 h-4 text-zinc-450" />
+                    <span>Forward Message</span>
+                  </button>
+                </>
+              )}
+
+              <button
+                onClick={() => {
+                  setShowDetailsMsg(selectedMenuMsg);
+                  setShowMenu(false);
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] rounded-xl text-left transition-colors"
+              >
+                <Info className="w-4 h-4 text-zinc-450" />
+                <span>Message Details</span>
+              </button>
+
+              {/* Danger Actions Section */}
+              <div className="border-t border-white/[0.06] mt-1.5 pt-1.5">
+                <button
+                  onClick={handleContextDeleteForMe}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-rose-500/10 text-rose-400 rounded-xl text-left transition-colors"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-500/80" />
+                  <span>Delete for Me</span>
+                </button>
+
+                {(String(selectedMenuMsg.senderId) === String(useAuthStore.getState().uid) || String(selectedMenuMsg.senderId) === String(useAuthStore.getState()._id)) && (
+                  <button
+                    onClick={handleContextDeleteForEveryone}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-rose-500/10 text-rose-400 rounded-xl text-left transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-500" />
+                    <span>Delete for Everyone</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>,
+        document.body
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmMsg && createPortal(
+        <div className="fixed inset-0 z-[100000] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-zinc-950 border border-white/[0.08] rounded-3xl w-full max-w-sm shadow-2xl p-6 text-center select-none"
+          >
+            <div className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl w-fit mx-auto mb-4">
+              <Trash2 className="w-7 h-7 animate-pulse" />
+            </div>
+            <h3 className="text-zinc-200 font-semibold text-sm">Delete Message</h3>
+            <p className="text-zinc-450 text-xs mt-2 leading-relaxed">
+              {deleteType === 'everyone' 
+                ? "This message will disappear for everyone."
+                : "This message will be removed from your chat history."
+              }
+            </p>
+            <div className="flex gap-2.5 mt-5">
+              <button 
+                onClick={() => setShowDeleteConfirmMsg(null)}
+                className="flex-1 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition-all"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleConfirmDelete}
+                className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition-all shadow-[0_0_12px_rgba(220,38,38,0.2)]"
+              >
+                Delete
+              </button>
+            </div>
+          </motion.div>
+        </div>,
+        document.body
+      )}
+
+      {/* Message Details Modal */}
+      {showDetailsMsg && createPortal(
+        <div className="fixed inset-0 z-[100000] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-zinc-950 border border-white/[0.08] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden select-none"
+          >
+            <div className="p-5 border-b border-white/[0.06] flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-zinc-200">Message Details</h3>
+              <button 
+                onClick={() => setShowDetailsMsg(null)}
+                className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3.5 text-xs text-zinc-400 font-medium">
+              <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                <span>Message ID</span>
+                <span className="font-mono text-[10px] text-zinc-500 select-all">{showDetailsMsg.id || showDetailsMsg._id}</span>
+              </div>
+              <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                <span>Retention Mode</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${showDetailsMsg.retentionMode === 'VIEW_ONCE' ? 'bg-amber-500/10 text-amber-500' : 'bg-violet-500/10 text-violet-400'}`}>
+                  {showDetailsMsg.retentionMode === 'VIEW_ONCE' ? 'View Once (disappearing)' : 'Never Delete'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                <span>Format</span>
+                <span className="capitalize">{showDetailsMsg.messageType}</span>
+              </div>
+              <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                <span>Sent Time</span>
+                <span className="text-zinc-300 font-mono">{new Date(showDetailsMsg.timestamp).toLocaleString()}</span>
+              </div>
+              {showDetailsMsg.seenAt && (
+                <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                  <span>Seen Time</span>
+                  <span className="text-blue-400 font-mono">{new Date(showDetailsMsg.seenAt).toLocaleString()}</span>
+                </div>
+              )}
+              {showDetailsMsg.deliveredAt && (
+                <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                  <span>Delivered Time</span>
+                  <span className="text-zinc-350 font-mono">{new Date(showDetailsMsg.deliveredAt).toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                <span>Sender ID</span>
+                <span className="font-mono text-[10px] text-zinc-500 select-all">{showDetailsMsg.senderId}</span>
+              </div>
+              <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                <span>Receiver ID</span>
+                <span className="font-mono text-[10px] text-zinc-500 select-all">{showDetailsMsg.receiverId || 'N/A'}</span>
+              </div>
+              {showDetailsMsg.attachments?.[0] && (
+                <>
+                  <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                    <span>File Name</span>
+                    <span className="truncate max-w-[200px] text-zinc-300">{showDetailsMsg.attachments[0].fileName}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03]">
+                    <span>File Size</span>
+                    <span className="text-zinc-300">{(showDetailsMsg.attachments[0].fileSize / 1024).toFixed(1)} KB</span>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="p-4 bg-zinc-950/80 border-t border-white/[0.06] flex justify-end">
+              <button 
+                onClick={() => setShowDetailsMsg(null)}
+                className="px-4 py-2 bg-violet-600 hover:bg-violet-755 text-white rounded-xl text-xs font-semibold font-mono transition-colors shadow-md"
+              >
+                Close
+              </button>
+            </div>
+          </motion.div>
+        </div>,
+        document.body
+      )}
 
       {!embeddedMatchId && <BottomTabBar />}
     </div>

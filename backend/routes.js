@@ -3926,6 +3926,23 @@ router.post('/student/profile', async (req, res) => {
   }
 });
 
+// GET /users/:id/presence - Get user presence status
+router.get('/users/:id/presence', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findOne({ userId: id }) || await Alumni.findOne({ userId: id });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    res.json({
+      isOnline: user.isOnline || false,
+      lastSeen: user.lastSeen || user.updatedAt || new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /connections - Fetch active connection matches
 router.get('/connections', requireAuth, async (req, res) => {
   try {
@@ -3968,7 +3985,9 @@ router.get('/connections', requireAuth, async (req, res) => {
             achievements: otherUser.achievements || [],
             profileImageUrl: otherUser.profileImageUrl || otherUser.profileImage || '',
             photos: otherUser.photos || (otherUser.profileImageUrl ? [otherUser.profileImageUrl] : []),
-            college: otherUser.college || ''
+            college: otherUser.college || '',
+            isOnline: otherUser.isOnline || false,
+            lastSeen: otherUser.lastSeen || otherUser.updatedAt || new Date()
           },
           matchedAt: conn.createdAt.toISOString(),
           unreadCount,
@@ -4018,7 +4037,7 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied: Connection belongs to a different college.' });
     }
 
-    const otherUserOid = otherUser ? otherUser._id.toString() : otherUserId;
+    const otherUserOid = otherUserId;
 
     // Check if current user (the recipient fetching these messages) has resonance enabled
     const recipientUser = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
@@ -4038,8 +4057,36 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
       );
     }
 
-    const list = await Message.find({ matchId }).sort({ timestamp: 1 });
-    res.json({ success: true, data: list });
+    const list = await Message.find({ matchId, deletedForUsers: { $ne: req.user.userId } }).sort({ timestamp: 1 });
+    const maskedList = list.map(msg => {
+      if (msg.retentionMode === 'VIEW_ONCE') {
+        const copy = msg.toObject();
+        if (msg.viewed) {
+          const isOwn = String(msg.senderId) === String(req.user.userId);
+          copy.text = isOwn ? 'Opened' : 'You opened this message. This message disappeared.';
+          copy.attachments = [];
+          copy.documentUrl = undefined;
+          copy.documentName = undefined;
+          copy.imageUrl = undefined;
+          copy.url = undefined;
+          copy.title = undefined;
+          copy.description = undefined;
+          copy.thumbnail = undefined;
+          return copy;
+        } else {
+          // If not viewed yet, route the downloadUrl and imageUrl to the secure streaming endpoint!
+          const secureUrl = `/api/chats/${matchId}/messages/${msg._id}/media`;
+          if (copy.attachments && copy.attachments.length > 0) {
+            copy.attachments[0].downloadUrl = secureUrl;
+          }
+          if (copy.imageUrl) copy.imageUrl = secureUrl;
+          return copy;
+        }
+      }
+      return msg;
+    });
+
+    res.json({ success: true, data: maskedList });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4083,7 +4130,7 @@ router.post('/chats/:matchId/upload', requireAuth, upload.array('files'), async 
 router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
   try {
     const { matchId } = req.params;
-    const { text, messageType, attachments } = req.body;
+    const { text, messageType, attachments, retentionMode } = req.body;
     const senderUserId = req.user.userId;
 
     const conn = await Connection.findById(matchId);
@@ -4108,21 +4155,75 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Cannot send message: Receiver settings restrict this action.' });
     }
 
+    let finalMessageType = messageType || 'text';
+    let docUrl = undefined, docName = undefined, mType = undefined, fSize = undefined;
+    let imgUrl = undefined;
+    let lUrl = undefined, lTitle = undefined, lDesc = undefined, lThumb = undefined;
+
+    if (attachments && attachments.length > 0) {
+      const att = attachments[0];
+      if (att.mimeType && att.mimeType.startsWith('image/')) {
+        finalMessageType = 'image';
+        imgUrl = att.downloadUrl;
+      } else {
+        finalMessageType = 'document';
+        docUrl = att.downloadUrl;
+        docName = att.fileName;
+        mType = att.mimeType;
+        fSize = att.fileSize;
+      }
+    } else if (text) {
+      const urlRegex = /(https?:\/\/[^\s]+)/gi;
+      const urls = text.match(urlRegex);
+      if (urls && urls.length > 0) {
+        finalMessageType = 'link';
+        lUrl = urls[0];
+        try {
+          const parsed = new URL(lUrl);
+          lTitle = parsed.hostname;
+        } catch (_) {
+          lTitle = 'Shared Link';
+        }
+        lDesc = `Shared link: ${lUrl}`;
+        lThumb = '';
+      }
+    }
+
+    const isViewOnce = retentionMode === 'VIEW_ONCE';
+
     const newMsg = new Message({
       matchId,
-      senderId: req.user._id, // Save Mongoose ObjectId!
+      conversationId: matchId,
+      senderId: req.user.userId, // Save custom string userId!
       receiverId: otherUserId,
       college: req.user.college,
-      messageType: messageType || 'text',
+      messageType: finalMessageType,
       text: text || '',
       attachments: attachments || [],
+      documentUrl: docUrl,
+      documentName: docName,
+      mimeType: mType,
+      fileSize: fSize,
+      imageUrl: imgUrl,
+      url: lUrl,
+      title: lTitle,
+      description: lDesc,
+      thumbnail: lThumb,
       timestamp: new Date(),
       read: false,
       status: 'sent',
       resonanceState: 'bridged',
-      reactions: []
+      reactions: [],
+      retentionMode: retentionMode || 'NEVER_DELETE'
     });
     await newMsg.save();
+
+    let notificationText = finalMessageType === 'image' ? 'Sent an image' : (text || 'Sent an attachment');
+    if (isViewOnce) {
+      if (finalMessageType === 'image') notificationText = 'Sent a View Once Photo';
+      else if (finalMessageType === 'video') notificationText = 'Sent a View Once Video';
+      else notificationText = 'Sent a View Once Message';
+    }
     
     // Trigger real-time DM notification to the other user
     await createNotification({
@@ -4130,15 +4231,402 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       senderId: senderUserId,
       type: 'new_message',
       title: sender ? sender.name : 'New Message',
-      message: messageType === 'image' ? 'Sent an image' : (text || 'Sent an attachment'),
+      message: notificationText,
       entityId: matchId,
       entityType: 'chat'
     });
 
     if (global.io) {
       global.io.to(`match_${matchId}`).emit('message:received', newMsg);
+      global.io.to(`match_${matchId}`).emit('chat:media_update', {
+        matchId,
+        messageType: finalMessageType
+      });
     }
     res.json({ success: true, data: newMsg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /chat/:conversationId/shared/photos - Get shared photos
+router.get('/chat/:conversationId/shared/photos', requireAuth, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conn = await Connection.findById(conversationId);
+    if (!conn || (conn.user1 !== req.user.userId && conn.user2 !== req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+    const photos = await Message.find({
+      $or: [
+        { matchId: conversationId, messageType: 'image' },
+        { conversationId, messageType: 'image' },
+        { matchId: conversationId, 'attachments.mimeType': /^image\// }
+      ]
+    }).sort({ timestamp: -1 });
+
+    const list = [];
+    photos.forEach(msg => {
+      if (msg.imageUrl) {
+        list.push({
+          msgId: msg._id,
+          imageUrl: msg.imageUrl,
+          senderId: msg.senderId,
+          createdAt: msg.timestamp || msg.createdAt
+        });
+      }
+      if (msg.attachments && msg.attachments.length > 0) {
+        msg.attachments.forEach(att => {
+          if (att.mimeType && att.mimeType.startsWith('image/')) {
+            list.push({
+              msgId: msg._id,
+              imageUrl: att.downloadUrl,
+              senderId: msg.senderId,
+              createdAt: msg.timestamp || msg.createdAt
+            });
+          }
+        });
+      }
+    });
+
+    res.json({ success: true, count: list.length, data: list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /chat/:conversationId/shared/documents - Get shared documents
+router.get('/chat/:conversationId/shared/documents', requireAuth, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conn = await Connection.findById(conversationId);
+    if (!conn || (conn.user1 !== req.user.userId && conn.user2 !== req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+    const docs = await Message.find({
+      $or: [
+        { matchId: conversationId, messageType: 'document' },
+        { conversationId, messageType: 'document' },
+        { matchId: conversationId, messageType: 'file' },
+        { matchId: conversationId, 'attachments.mimeType': { $not: /^image\// } }
+      ]
+    }).sort({ timestamp: -1 });
+
+    const list = [];
+    docs.forEach(msg => {
+      if (msg.documentUrl) {
+        list.push({
+          msgId: msg._id,
+          documentUrl: msg.documentUrl,
+          documentName: msg.documentName || 'Document',
+          mimeType: msg.mimeType,
+          fileSize: msg.fileSize,
+          senderId: msg.senderId,
+          createdAt: msg.timestamp || msg.createdAt
+        });
+      }
+      if (msg.attachments && msg.attachments.length > 0) {
+        msg.attachments.forEach(att => {
+          if (!att.mimeType || !att.mimeType.startsWith('image/')) {
+            list.push({
+              msgId: msg._id,
+              documentUrl: att.downloadUrl,
+              documentName: att.fileName,
+              mimeType: att.mimeType,
+              fileSize: att.fileSize,
+              senderId: msg.senderId,
+              createdAt: msg.timestamp || msg.createdAt
+            });
+          }
+        });
+      }
+    });
+
+    res.json({ success: true, count: list.length, data: list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /chat/:conversationId/shared/links - Get shared links
+router.get('/chat/:conversationId/shared/links', requireAuth, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conn = await Connection.findById(conversationId);
+    if (!conn || (conn.user1 !== req.user.userId && conn.user2 !== req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+    const links = await Message.find({
+      $or: [
+        { matchId: conversationId, messageType: 'link' },
+        { conversationId, messageType: 'link' }
+      ]
+    }).sort({ timestamp: -1 });
+
+    res.json({ success: true, count: links.length, data: links });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /users/:id/presence - Get presence
+router.get('/users/:id/presence', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findOne({ userId: id }) || await Alumni.findOne({ userId: id });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    res.json({
+      success: true,
+      data: {
+        userId: user.userId,
+        isOnline: user.isOnline,
+        lastSeen: user.lastSeen,
+        lastActivity: user.lastActivity
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /users/presence - Update presence
+router.patch('/users/presence', requireAuth, async (req, res) => {
+  try {
+    const { isOnline } = req.body;
+    const update = {
+      isOnline: !!isOnline,
+      lastActivity: new Date()
+    };
+    if (!isOnline) {
+      update.lastSeen = new Date();
+    }
+    const userId = req.user.userId;
+    let user = await User.findOneAndUpdate({ userId }, { $set: update }, { new: true });
+    if (!user) {
+      user = await Alumni.findOneAndUpdate({ userId }, { $set: update }, { new: true });
+    }
+
+    if (user && global.io) {
+      const connections = await Connection.find({
+        $or: [{ user1: userId }, { user2: userId }]
+      });
+      connections.forEach(conn => {
+        global.io.to(`match_${conn._id}`).emit('presence:status', {
+          userId,
+          isOnline: user.isOnline,
+          lastSeen: user.lastSeen
+        });
+      });
+    }
+
+    res.json({ success: true, data: { isOnline: user?.isOnline, lastSeen: user?.lastSeen } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /typing/start - Typing start
+router.post('/typing/start', requireAuth, async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    if (global.io) {
+      global.io.to(`match_${conversationId}`).emit('typing', {
+        roomId: conversationId,
+        userId: req.user.userId,
+        isTyping: true
+      });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /typing/stop - Typing stop
+router.post('/typing/stop', requireAuth, async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    if (global.io) {
+      global.io.to(`match_${conversationId}`).emit('typing', {
+        roomId: conversationId,
+        userId: req.user.userId,
+        isTyping: false
+      });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /messages/read - Read messages
+router.patch('/messages/read', requireAuth, async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    const currentUserId = req.user.userId;
+    const conn = await Connection.findById(conversationId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const otherUserId = conn.user1 === currentUserId ? conn.user2 : conn.user1;
+
+    await Message.updateMany(
+      { 
+        $or: [{ matchId: conversationId }, { conversationId }], 
+        senderId: otherUserId, 
+        status: { $ne: 'seen' } 
+      },
+      { 
+        $set: { 
+          read: true, 
+          status: 'seen', 
+          seenAt: new Date(),
+          resonanceState: 'absorbed' 
+        } 
+      }
+    );
+
+    if (global.io) {
+      global.io.to(`match_${conversationId}`).emit('message:seen', {
+        conversationId,
+        seenBy: currentUserId,
+        seenAt: new Date()
+      });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /chats/:matchId/messages/:messageId/media - Get secure authorized media stream
+router.get('/chats/:matchId/messages/:messageId/media', requireAuth, async (req, res) => {
+  try {
+    const { matchId, messageId } = req.params;
+    const currentUserId = req.user.userId;
+
+    const conn = await Connection.findById(matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied: You are not part of this connection.' });
+    }
+
+    const msg = await Message.findOne({ _id: messageId, matchId });
+    if (!msg) {
+      return res.status(404).json({ success: false, error: 'Message not found.' });
+    }
+
+    if (msg.retentionMode === 'VIEW_ONCE' && msg.viewed) {
+      return res.status(403).json({ success: false, error: 'Access denied: This View Once message has already been viewed.' });
+    }
+
+    const att = msg.attachments?.[0];
+    const rawUrl = att ? att.downloadUrl : msg.imageUrl;
+    if (!rawUrl) {
+      return res.status(404).json({ success: false, error: 'Media URL not configured on message.' });
+    }
+
+    const fs = require('fs');
+    const path = require('path');
+    const filename = rawUrl.split('/').pop();
+    const filePath = path.join(__dirname, 'uploads', filename);
+
+    if (!fs.existsSync(filePath)) {
+      console.error(`❌ View Once Media file not found on disk: ${filePath}`);
+      return res.status(404).json({ success: false, error: 'Physical media file not found on storage.' });
+    }
+
+    res.setHeader('Content-Type', (att && att.mimeType) || 'image/png');
+    console.log(`📡 Streaming secure View Once media to user [${currentUserId}] for message [${messageId}]`);
+    
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (err) => {
+      console.error('Streaming error:', err.message);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: 'Error streaming file.' });
+      }
+    });
+    stream.pipe(res);
+  } catch (error) {
+    console.error('Media stream endpoint crashed:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /chats/:matchId/messages/:messageId/open - Open/view disappearing message
+router.post('/chats/:matchId/messages/:messageId/open', requireAuth, async (req, res) => {
+  try {
+    const { matchId, messageId } = req.params;
+    const currentUserId = req.user.userId;
+
+    const conn = await Connection.findById(matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    // Atomically update the message to prevent race conditions
+    const msg = await Message.findOneAndUpdate(
+      { 
+        _id: messageId, 
+        matchId, 
+        retentionMode: 'VIEW_ONCE', 
+        viewed: false 
+      },
+      { 
+        $set: { 
+          viewed: true, 
+          viewedAt: new Date(), 
+          deletedAt: new Date(),
+          text: 'This message disappeared.', 
+          attachments: [], 
+          imageUrl: null, 
+          documentUrl: null,
+          url: null,
+          title: null,
+          description: null,
+          thumbnail: null
+        } 
+      },
+      { new: true }
+    );
+
+    if (!msg) {
+      return res.status(400).json({ success: false, error: 'Message already opened or invalid request.' });
+    }
+
+    // Clean up physical disk files if any
+    const fs = require('fs');
+    const path = require('path');
+    if (msg.attachments && msg.attachments.length > 0) {
+      msg.attachments.forEach(att => {
+        if (att.downloadUrl) {
+          try {
+            const filename = att.downloadUrl.split('/').pop();
+            const filePath = path.join(__dirname, 'uploads', filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              console.log(`🗑️ Deleted physical file: ${filePath}`);
+            }
+          } catch (fileErr) {
+            console.error('Failed to delete physical file:', fileErr.message);
+          }
+        }
+      });
+    }
+
+    if (global.io) {
+      global.io.to(`match_${matchId}`).emit('message:opened', {
+        matchId,
+        messageId,
+        viewedAt: msg.viewedAt
+      });
+      global.io.to(`match_${matchId}`).emit('chat:media_update', {
+        matchId
+      });
+    }
+
+    res.json({ success: true, data: msg });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4166,6 +4654,319 @@ router.post('/chats/:matchId/messages/:messageId/react', requireAuth, async (req
       msg.reactions.push({ emoji, userId, timestamp: new Date() });
     }
     await msg.save();
+    res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/messages/:id/details - Get message details (sent, delivered, seen timestamps, etc.)
+router.get('/messages/:id/details', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    // Auth verification
+    const conn = await Connection.findById(msg.matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: msg._id,
+        senderId: msg.senderId,
+        receiverId: msg.receiverId,
+        messageType: msg.messageType,
+        retentionMode: msg.retentionMode,
+        timestamp: msg.timestamp,
+        seenAt: msg.seenAt,
+        deliveredAt: msg.deliveredAt,
+        status: msg.status,
+        pinned: msg.pinned,
+        fileSize: msg.fileSize || (msg.attachments?.[0]?.fileSize),
+        fileName: msg.documentName || (msg.attachments?.[0]?.fileName)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/messages/:id/react - Toggle emoji reaction on a message
+router.post('/messages/:id/react', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { emoji } = req.body;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    const conn = await Connection.findById(msg.matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const idx = msg.reactions.findIndex(r => r.userId === currentUserId && r.emoji === emoji);
+    if (idx > -1) {
+      msg.reactions.splice(idx, 1);
+    } else {
+      msg.reactions.push({ emoji, userId: currentUserId, timestamp: new Date() });
+    }
+    await msg.save();
+
+    if (global.io) {
+      global.io.to(`match_${msg.matchId}`).emit('message:reactions_updated', {
+        messageId: id,
+        reactions: msg.reactions,
+        matchId: msg.matchId
+      });
+    }
+
+    res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/messages/:id/reply - Reply to a message
+router.post('/messages/:id/reply', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text, messageType } = req.body;
+    const currentUserId = req.user.userId;
+
+    const parentMsg = await Message.findById(id);
+    if (!parentMsg) return res.status(404).json({ success: false, error: 'Parent message not found' });
+
+    const conn = await Connection.findById(parentMsg.matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const otherUserId = conn.user1 === currentUserId ? conn.user2 : conn.user1;
+    const newMsg = new Message({
+      matchId: parentMsg.matchId,
+      conversationId: parentMsg.matchId,
+      senderId: currentUserId,
+      receiverId: otherUserId,
+      college: req.user.college,
+      messageType: messageType || 'text',
+      text: text || '',
+      replyToMessageId: id,
+      timestamp: new Date(),
+      status: 'sent'
+    });
+    await newMsg.save();
+
+    if (global.io) {
+      global.io.to(`match_${parentMsg.matchId}`).emit('message:received', newMsg);
+    }
+
+    res.json({ success: true, data: newMsg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/messages/:id/pin - Toggle pin state
+router.post('/messages/:id/pin', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    const conn = await Connection.findById(msg.matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    msg.pinned = !msg.pinned;
+    msg.pinnedAt = msg.pinned ? new Date() : undefined;
+    msg.pinnedBy = msg.pinned ? currentUserId : undefined;
+    await msg.save();
+
+    if (global.io) {
+      global.io.to(`match_${msg.matchId}`).emit('message:pinned_updated', {
+        messageId: id,
+        pinned: msg.pinned,
+        pinnedBy: msg.pinnedBy,
+        pinnedAt: msg.pinnedAt,
+        matchId: msg.matchId
+      });
+    }
+
+    res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/messages/:id/bookmark - Toggle bookmark
+router.post('/messages/:id/bookmark', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    const conn = await Connection.findById(msg.matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const idx = msg.bookmarkedBy.indexOf(currentUserId);
+    if (idx > -1) {
+      msg.bookmarkedBy.splice(idx, 1);
+    } else {
+      msg.bookmarkedBy.push(currentUserId);
+    }
+    await msg.save();
+
+    res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/messages/:id/share - Share/forward message to target match/connection
+router.post('/messages/:id/share', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { targetMatchId } = req.body;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    // Verify source room authorization
+    const connSrc = await Connection.findById(msg.matchId);
+    if (!connSrc || (connSrc.user1 !== currentUserId && connSrc.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied: source connection invalid.' });
+    }
+
+    // Verify target room authorization
+    const connTarget = await Connection.findById(targetMatchId);
+    if (!connTarget || (connTarget.user1 !== currentUserId && connTarget.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied: target connection invalid.' });
+    }
+
+    const otherUserId = connTarget.user1 === currentUserId ? connTarget.user2 : connTarget.user1;
+    const newMsg = new Message({
+      matchId: targetMatchId,
+      conversationId: targetMatchId,
+      senderId: currentUserId,
+      receiverId: otherUserId,
+      college: req.user.college,
+      messageType: msg.messageType,
+      text: msg.text || '',
+      attachments: msg.attachments || [],
+      imageUrl: msg.imageUrl,
+      documentUrl: msg.documentUrl,
+      documentName: msg.documentName,
+      mimeType: msg.mimeType,
+      fileSize: msg.fileSize,
+      url: msg.url,
+      title: msg.title,
+      description: msg.description,
+      thumbnail: msg.thumbnail,
+      isForwarded: true,
+      forwardedFrom: msg.senderId,
+      forwardedBy: currentUserId,
+      forwardedAt: new Date(),
+      status: 'sent'
+    });
+    await newMsg.save();
+
+    if (global.io) {
+      global.io.to(`match_${targetMatchId}`).emit('message:received', newMsg);
+    }
+
+    res.json({ success: true, data: newMsg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE /api/messages/:id/me - Delete for me
+router.delete('/messages/:id/me', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    const conn = await Connection.findById(msg.matchId);
+    if (!conn || (conn.user1 !== currentUserId && conn.user2 !== currentUserId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    if (!msg.deletedForUsers.includes(currentUserId)) {
+      msg.deletedForUsers.push(currentUserId);
+      await msg.save();
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE /api/messages/:id/everyone - Delete for everyone
+router.delete('/messages/:id/everyone', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user.userId;
+
+    const msg = await Message.findById(id);
+    if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+    // Authorization: Must be sender
+    if (msg.senderId !== currentUserId) {
+      return res.status(403).json({ success: false, error: 'Access denied: Only the sender can delete for everyone.' });
+    }
+
+    // Time limit window: 1 hour
+    const limitMs = 60 * 60 * 1000;
+    if (Date.now() - new Date(msg.timestamp).getTime() > limitMs) {
+      return res.status(400).json({ success: false, error: 'Deletion window (1 hour) has expired.' });
+    }
+
+    // Clear contents and mark deletedForEveryone
+    msg.text = 'This message was deleted.';
+    msg.attachments = [];
+    msg.imageUrl = null;
+    msg.documentUrl = null;
+    msg.documentName = null;
+    msg.mimeType = null;
+    msg.fileSize = null;
+    msg.url = null;
+    msg.title = null;
+    msg.description = null;
+    msg.thumbnail = null;
+    msg.deletedForEveryone = true;
+    await msg.save();
+
+    // Socket broadcast
+    if (global.io) {
+      global.io.to(`match_${msg.matchId}`).emit('message:deleted_everyone', {
+        messageId: id,
+        matchId: msg.matchId
+      });
+      global.io.to(`match_${msg.matchId}`).emit('chat:media_update', {
+        matchId: msg.matchId
+      });
+    }
+
     res.json({ success: true, data: msg });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

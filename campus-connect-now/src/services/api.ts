@@ -731,13 +731,13 @@ export const chatApi = {
     }
   },
 
-  async sendMessage(chatId: string, text: string, messageType: 'text' | 'image' | 'file' = 'text', attachments: any[] = []) {
+  async sendMessage(chatId: string, text: string, messageType: 'text' | 'image' | 'file' | 'document' | 'link' = 'text', attachments: any[] = [], retentionMode?: 'VIEW_ONCE' | 'NEVER_DELETE') {
     try {
       const senderId = useAuthStore.getState().uid;
       const res = await fetch(`${getApiUrl()}/api/chats/${chatId}/messages`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ senderId, text, messageType, attachments })
+        body: JSON.stringify({ senderId, text, messageType, attachments, retentionMode })
       });
       const result = await res.json();
       return result;
@@ -841,6 +841,98 @@ export const chatApi = {
       return result;
     } catch (error: any) {
       console.error('Error marking all messages read:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async replyToMessage(messageId: string, text: string, messageType: 'text' | 'image' | 'file' | 'document' | 'link' = 'text') {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/reply`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ text, messageType })
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error replying to message:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async pinMessage(messageId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/pin`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error pinning message:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async bookmarkMessage(messageId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/bookmark`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error bookmarking message:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async shareMessage(messageId: string, targetMatchId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/share`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ targetMatchId })
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error sharing message:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async deleteMessageForMe(messageId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/me`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error deleting message for me:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async deleteMessageForEveryone(messageId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/everyone`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error deleting message for everyone:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getMessageDetails(messageId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/messages/${messageId}/details`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error getting message details:', error);
       return { success: false, error: error.message };
     }
   },

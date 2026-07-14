@@ -106,7 +106,10 @@ const AlumniSchema = new mongoose.Schema({
   referralAlerts: { type: Boolean, default: true },
   messageAlerts: { type: Boolean, default: true },
   resonanceEnabled: { type: Boolean, default: true },
-  isSuspended: { type: Boolean, default: false },
+  isOnline: { type: Boolean, default: false, index: true },
+  lastSeen: { type: Date, default: Date.now, index: true },
+  lastActivity: { type: Date, default: Date.now },
+  socketId: { type: String, default: null },
   onboardingCompleted: { type: Boolean, default: false },
   onboardingStep: { type: Number, default: 1 }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
@@ -569,7 +572,10 @@ module.exports = {
     referralAlerts: { type: Boolean, default: true },
     messageAlerts: { type: Boolean, default: true },
     resonanceEnabled: { type: Boolean, default: true },
-    isSuspended: { type: Boolean, default: false },
+    isOnline: { type: Boolean, default: false, index: true },
+    lastSeen: { type: Date, default: Date.now, index: true },
+    lastActivity: { type: Date, default: Date.now },
+    socketId: { type: String, default: null },
     onboardingCompleted: { type: Boolean, default: false },
     onboardingStep: { type: Number, default: 1 }
   }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }), 'users'),
@@ -630,10 +636,11 @@ module.exports = {
   }, { timestamps: true }), 'notifications'),
 
   Message: mongoose.model('Message', new mongoose.Schema({
-    matchId: { type: String, required: true },
-    senderId: { type: String, required: true },
+    matchId: { type: String, required: true, index: true },
+    conversationId: { type: String, index: true },
+    senderId: { type: String, required: true, index: true },
     college: { type: String, default: 'SR University', index: true },
-    messageType: { type: String, enum: ['text', 'image', 'file'], default: 'text' },
+    messageType: { type: String, enum: ['text', 'image', 'document', 'link', 'file'], default: 'text', index: true },
     text: { type: String, default: '' },
     attachments: [{
       fileName: { type: String, required: true },
@@ -642,12 +649,25 @@ module.exports = {
       downloadUrl: { type: String, required: true },
       thumbnailUrl: { type: String }
     }],
-    timestamp: { type: Date, default: Date.now },
-    read: { type: Boolean, default: false },
+    documentUrl: { type: String },
+    documentName: { type: String },
+    mimeType: { type: String },
+    fileSize: { type: Number },
+    url: { type: String },
+    title: { type: String },
+    description: { type: String },
+    thumbnail: { type: String },
+    imageUrl: { type: String },
+    timestamp: { type: Date, default: Date.now, index: true },
+    retentionMode: { type: String, enum: ['VIEW_ONCE', 'NEVER_DELETE'], default: 'NEVER_DELETE', index: true },
+    viewed: { type: Boolean, default: false, index: true },
+    viewedAt: { type: Date },
+    deletedAt: { type: Date, index: true },
+    read: { type: Boolean, default: false, index: true },
     seenAt: { type: Date },
     deliveredAt: { type: Date },
     receiverId: { type: String, index: true },
-    status: { type: String, enum: ['sent', 'delivered', 'seen'], default: 'sent' },
+    status: { type: String, enum: ['sent', 'delivered', 'seen'], default: 'sent', index: true },
     resonanceState: { 
       type: String, 
       enum: ['dormant', 'bridged', 'harmonized', 'vibrant', 'resonating', 'absorbed'], 
@@ -662,7 +682,14 @@ module.exports = {
     forwardedFrom: { type: String },
     forwardedBy: { type: String },
     forwardedAt: { type: Date },
-    forwardCount: { type: Number, default: 0 }
+    forwardCount: { type: Number, default: 0 },
+    pinned: { type: Boolean, default: false, index: true },
+    pinnedAt: { type: Date },
+    pinnedBy: { type: String, index: true },
+    bookmarkedBy: { type: [String], default: [], index: true },
+    deletedForUsers: { type: [String], default: [], index: true },
+    deletedForEveryone: { type: Boolean, default: false, index: true },
+    replyToMessageId: { type: String, default: null, index: true }
   }, { timestamps: true }), 'messages'),
 
   GroupChat: mongoose.model('GroupChat', new mongoose.Schema({

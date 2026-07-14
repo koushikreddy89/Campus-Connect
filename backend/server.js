@@ -137,12 +137,53 @@ mongoose.connect(MONGODB_URI)
         credentials: true
       }
     });
+    globalThis.io = io;
 
-    // Share io globally so routes can emit events
-    global.io = io;
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'campus-connect-super-secret';
+    const { User, Alumni, Connection } = require('./models');
 
-    io.on('connection', (socket) => {
-      console.log('🔌 Socket connected:', socket.id);
+    io.use(async (socket, next) => {
+      const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+      if (!token) {
+        return next(new Error('Authentication error: Token missing'));
+      }
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        socket.user = decoded;
+        next();
+      } catch (err) {
+        next(new Error('Authentication error: Invalid token'));
+      }
+    });
+
+    io.on('connection', async (socket) => {
+      const userId = socket.user?.userId;
+      const role = socket.user?.role;
+      console.log('🔌 Socket connected:', socket.id, 'User:', userId);
+
+      if (userId) {
+        const Model = role === 'alumni' ? Alumni : User;
+        await Model.findOneAndUpdate({ userId }, {
+          $set: {
+            isOnline: true,
+            socketId: socket.id,
+            lastActivity: new Date()
+          }
+        });
+
+        const connections = await Connection.find({
+          $or: [{ user1: userId }, { user2: userId }]
+        });
+        connections.forEach(conn => {
+          socket.join(`match_${conn._id}`);
+          socket.to(`match_${conn._id}`).emit('presence:status', {
+            userId,
+            isOnline: true,
+            lastSeen: new Date()
+          });
+        });
+      }
 
       socket.on('join_room', ({ roomId }) => {
         socket.join(roomId);
@@ -162,8 +203,30 @@ mongoose.connect(MONGODB_URI)
         socket.to(roomId).emit('presence', { roomId, userId, status, lastSeen });
       });
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', async () => {
         console.log('🔌 Socket disconnected:', socket.id);
+        if (userId) {
+          const Model = role === 'alumni' ? Alumni : User;
+          await Model.findOneAndUpdate({ userId }, {
+            $set: {
+              isOnline: false,
+              socketId: null,
+              lastSeen: new Date(),
+              lastActivity: new Date()
+            }
+          });
+
+          const connections = await Connection.find({
+            $or: [{ user1: userId }, { user2: userId }]
+          });
+          connections.forEach(conn => {
+            socket.to(`match_${conn._id}`).emit('presence:status', {
+              userId,
+              isOnline: false,
+              lastSeen: new Date()
+            });
+          });
+        }
       });
     });
 

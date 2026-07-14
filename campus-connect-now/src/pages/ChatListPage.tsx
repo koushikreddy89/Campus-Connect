@@ -47,6 +47,17 @@ export default function ChatListPage() {
   const [selectedChat, setSelectedChat] = useState<{ id: string; type: 'direct' | 'group' } | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
 
+  const sharedPhotosMap = useChatStore(s => s.sharedPhotos);
+  const sharedDocsMap = useChatStore(s => s.sharedDocs);
+  const sharedLinksMap = useChatStore(s => s.sharedLinks);
+  const fetchSharedAssets = useChatStore(s => s.fetchSharedAssets);
+
+  useEffect(() => {
+    if (selectedChat && selectedChat.type === 'direct') {
+      fetchSharedAssets(selectedChat.id);
+    }
+  }, [selectedChat, fetchSharedAssets]);
+
   // ESC key listener to close modal
   useEffect(() => {
     if (!showCreateGroup) return;
@@ -357,18 +368,65 @@ export default function ChatListPage() {
               <div className="space-y-3 pt-2">
                 <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider block">Shared Resources</span>
                 <div className="space-y-2">
-                  <button className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl hover:bg-[#121217] transition-all text-left text-xs border border-zinc-900">
-                    <span className="flex items-center gap-2 text-zinc-400"><Image className="w-3.5 h-3.5 text-violet-400" /> Shared Photos</span>
-                    <span className="text-[10px] text-zinc-550">0 files</span>
-                  </button>
-                  <button className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl hover:bg-[#121217] transition-all text-left text-xs border border-zinc-900">
-                    <span className="flex items-center gap-2 text-zinc-400"><FileText className="w-3.5 h-3.5 text-violet-400" /> Documents</span>
-                    <span className="text-[10px] text-zinc-550">0 files</span>
-                  </button>
-                  <button className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl hover:bg-[#121217] transition-all text-left text-xs border border-zinc-900">
-                    <span className="flex items-center gap-2 text-zinc-400"><Link className="w-3.5 h-3.5 text-violet-400" /> Shared Links</span>
-                    <span className="text-[10px] text-zinc-550">0 links</span>
-                  </button>
+                  {(() => {
+                    const photosList = selectedChat ? (sharedPhotosMap[selectedChat.id] || []) : [];
+                    const docsList = selectedChat ? (sharedDocsMap[selectedChat.id] || []) : [];
+                    const linksList = selectedChat ? (sharedLinksMap[selectedChat.id] || []) : [];
+
+                    return (
+                      <>
+                        <div className="space-y-1">
+                          <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
+                            <span className="flex items-center gap-2 text-zinc-400"><Image className="w-3.5 h-3.5 text-violet-400" /> Shared Photos</span>
+                            <span className="text-[10px] text-zinc-550">{photosList.length} files</span>
+                          </div>
+                          {photosList.length > 0 && (
+                            <div className="grid grid-cols-3 gap-1.5 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl">
+                              {photosList.slice(0, 6).map((photo, pIdx) => (
+                                <a key={pIdx} href={photo.imageUrl} target="_blank" rel="noopener noreferrer" className="aspect-square rounded-lg overflow-hidden border border-zinc-800 hover:opacity-85 transition-opacity">
+                                  <img src={photo.imageUrl} alt="" className="w-full h-full object-cover" />
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="space-y-1">
+                          <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
+                            <span className="flex items-center gap-2 text-zinc-400"><FileText className="w-3.5 h-3.5 text-violet-400" /> Documents</span>
+                            <span className="text-[10px] text-zinc-550">{docsList.length} files</span>
+                          </div>
+                          {docsList.length > 0 && (
+                            <div className="space-y-1 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl max-h-40 overflow-y-auto">
+                              {docsList.map((doc, dIdx) => (
+                                <a key={dIdx} href={doc.documentUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-1.5 hover:bg-zinc-900/40 rounded-lg text-[10px] text-zinc-400 truncate">
+                                  <FileText className="w-3 h-3 text-violet-400/80 shrink-0" />
+                                  <span className="truncate flex-1">{doc.documentName}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
+                            <span className="flex items-center gap-2 text-zinc-400"><Link className="w-3.5 h-3.5 text-violet-400" /> Shared Links</span>
+                            <span className="text-[10px] text-zinc-550">{linksList.length} links</span>
+                          </div>
+                          {linksList.length > 0 && (
+                            <div className="space-y-1 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl max-h-40 overflow-y-auto">
+                              {linksList.map((link, lIdx) => (
+                                <a key={lIdx} href={link.url} target="_blank" rel="noopener noreferrer" className="flex flex-col gap-0.5 p-1.5 hover:bg-zinc-900/40 rounded-lg text-[10px] text-zinc-400">
+                                  <span className="font-semibold text-white truncate">{link.title || 'Link'}</span>
+                                  <span className="text-[9px] text-zinc-500 truncate">{link.url}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 

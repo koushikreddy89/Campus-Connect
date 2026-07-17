@@ -40,7 +40,7 @@ function PremiumAvatarComponent({
         src={src}
         alt={alt}
         onError={(e) => {
-          (e.target as HTMLImageElement).src = 'https://via.placeholder.com/64';
+          (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="100%" height="100%" fill="%2327272a"/><text x="50%" y="55%" font-size="24" font-family="sans-serif" font-weight="bold" fill="%23a1a1aa" dominant-baseline="middle" text-anchor="middle">CC</text></svg>';
         }}
         className={`${sizeMap[size]} rounded-full object-cover ring-2 ring-white/20 hover:ring-white/40 transition-all`}
       />

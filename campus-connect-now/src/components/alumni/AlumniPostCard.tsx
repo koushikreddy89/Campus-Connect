@@ -228,7 +228,7 @@ function AlumniPostCardComponent({
               className="h-10 w-10 rounded-full object-cover flex-shrink-0"
               loading="lazy"
               onError={(e) => {
-                (e.target as HTMLImageElement).src = 'https://via.placeholder.com/40';
+                (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><rect width="100%" height="100%" fill="%2327272a"/><text x="50%" y="55%" font-size="16" font-family="sans-serif" font-weight="bold" fill="%23a1a1aa" dominant-baseline="middle" text-anchor="middle">CC</text></svg>';
               }}
             />
 
@@ -331,7 +331,7 @@ function AlumniPostCardComponent({
                 whileHover={{ scale: 1.05 }}
                 loading="lazy"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://via.placeholder.com/300';
+                  (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="100%" height="100%" fill="%2327272a"/><text x="50%" y="55%" font-size="32" font-family="sans-serif" font-weight="bold" fill="%23a1a1aa" dominant-baseline="middle" text-anchor="middle">CC</text></svg>';
                 }}
               />
             ))}

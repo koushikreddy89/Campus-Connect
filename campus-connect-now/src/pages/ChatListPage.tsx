@@ -13,12 +13,23 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import ChatPage from './ChatPage';
 import GroupChatPage from './GroupChatPage';
+import GroupInfoPanel from '@/components/chat/GroupInfoPanel';
 import { Button } from '@/components/ui/button';
 
 export default function ChatListPage() {
   const matches = useMatchStore(s => s.matches);
   const groups = useGroupChatStore(s => s.groups);
-  const availableUsers = useUserStore(s => s.availableUsers);
+  const availableUsers = useMemo(() => {
+    const seen = new Set();
+    const list: any[] = [];
+    matches.forEach(m => {
+      if (m.user && m.user.id && !seen.has(m.user.id)) {
+        seen.add(m.user.id);
+        list.push(m.user);
+      }
+    });
+    return list;
+  }, [matches]);
   const navigate = useNavigate();
   
   const [tab, setTab] = useState<'direct' | 'groups'>('direct');
@@ -72,14 +83,22 @@ export default function ChatListPage() {
 
   // Filter available users for search input
   const filteredAvailableUsers = availableUsers.filter(u =>
-    u.name.toLowerCase().includes(memberSearch.toLowerCase())
+    (u.name || '').toLowerCase().includes(memberSearch.toLowerCase()) ||
+    (u.department || '').toLowerCase().includes(memberSearch.toLowerCase())
   );
 
   // Filter conversation list based on search query
   const filteredChats = useMemo(() => {
     if (tab === 'direct') {
-      return matches.filter(m => {
-        const name = m.isRevealed ? m.user?.name : m.user?.anonymousName || 'Anonymous';
+      const seen = new Set();
+      const uniqueMatches = matches.filter(m => {
+        const otherId = m.userId || m.user?.id || m.user?.userId;
+        if (!otherId || seen.has(otherId)) return false;
+        seen.add(otherId);
+        return true;
+      });
+      return uniqueMatches.filter(m => {
+        const name = m.user?.name || 'Anonymous';
         return name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                (m.lastMessage || '').toLowerCase().includes(searchQuery.toLowerCase());
       });
@@ -116,9 +135,9 @@ export default function ChatListPage() {
       const match = matches.find(m => m.id === selectedChat.id);
       if (!match) return null;
       return {
-        name: match.isRevealed ? match.user?.name : match.user?.anonymousName || 'Anonymous',
+        name: match.user?.name || 'Anonymous',
         avatar: match.user?.photos?.[0] || '',
-        isRevealed: match.isRevealed,
+        isRevealed: true,
         email: match.user?.email || '',
         bio: match.user?.bio || 'College student exploring Campus Connect.',
         department: match.user?.department || 'Computer Science',
@@ -224,13 +243,22 @@ export default function ChatListPage() {
                   <div className="mb-4">
                     <p className="text-[9px] text-zinc-550 mb-2 font-bold uppercase tracking-wider">Active Matches</p>
                     <div className="flex gap-3.5 overflow-x-auto hide-scrollbar pb-1.5">
-                      {matches.map(m => (
-                        <MatchAvatar 
-                          key={m.id} 
-                          match={m} 
-                          onClick={() => handleItemClick(m.id, 'direct')} 
-                        />
-                      ))}
+                      {(() => {
+                        const seen = new Set();
+                        const uniqueActiveMatches = matches.filter(m => {
+                          const otherId = m.userId || m.user?.id || m.user?.userId;
+                          if (!otherId || seen.has(otherId)) return false;
+                          seen.add(otherId);
+                          return true;
+                        });
+                        return uniqueActiveMatches.map(m => (
+                          <MatchAvatar 
+                            key={m.id} 
+                            match={m} 
+                            onClick={() => handleItemClick(m.id, 'direct')} 
+                          />
+                        ));
+                      })()}
                     </div>
                   </div>
                 )}
@@ -327,146 +355,156 @@ export default function ChatListPage() {
 
         {/* COLUMN 3: Conversation Details (Right Sidebar) */}
         <AnimatePresence>
-          {showRightSidebar && selectedChatInfo && (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 360, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="hidden lg:flex lg:flex-col border-l border-zinc-900 h-full bg-[#0A0A0F] overflow-y-auto overflow-x-hidden p-6 space-y-6 scrollbar-thin shrink-0 select-none w-[360px] min-w-[360px] max-w-[360px]"
-            >
-              {/* Profile Block */}
-              <div className="flex flex-col items-center text-center pb-5 border-b border-zinc-900">
-                <div className="relative mb-3.5">
-                  <img
-                    src={selectedChatInfo.avatar}
-                    alt=""
-                    className={`h-22 w-22 rounded-full object-cover ring-2 ring-violet-500/25 ${!selectedChatInfo.isRevealed ? 'blur-[5px]' : ''}`}
-                  />
-                  {selectedChatInfo.isOnline && (
-                    <span className="absolute bottom-1 right-1 h-3.5 w-3.5 rounded-full border-2 border-[#0A0A0F] bg-green-400" />
-                  )}
-                </div>
-                <h3 className="text-sm font-bold text-white">{selectedChatInfo.name}</h3>
-                <p className="text-[10px] text-zinc-550 mt-1 uppercase tracking-wider font-semibold">{selectedChatInfo.department}</p>
-                <p className="text-[10px] text-zinc-550 font-medium">Batch of {selectedChatInfo.batch}</p>
-              </div>
-
-              {/* General details */}
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider">Bio / Description</span>
-                  <p className="text-xs text-zinc-400 leading-relaxed">{selectedChatInfo.bio}</p>
-                </div>
-                <div className="space-y-1.5">
-                  <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider">College Group</span>
-                  <p className="text-xs text-white font-medium">{selectedChatInfo.college}</p>
-                </div>
-              </div>
-
-              {/* Shared Assets */}
-              <div className="space-y-3 pt-2">
-                <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider block">Shared Resources</span>
-                <div className="space-y-2">
-                  {(() => {
-                    const photosList = selectedChat ? (sharedPhotosMap[selectedChat.id] || []) : [];
-                    const docsList = selectedChat ? (sharedDocsMap[selectedChat.id] || []) : [];
-                    const linksList = selectedChat ? (sharedLinksMap[selectedChat.id] || []) : [];
-
-                    return (
-                      <>
-                        <div className="space-y-1">
-                          <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
-                            <span className="flex items-center gap-2 text-zinc-400"><Image className="w-3.5 h-3.5 text-violet-400" /> Shared Photos</span>
-                            <span className="text-[10px] text-zinc-550">{photosList.length} files</span>
-                          </div>
-                          {photosList.length > 0 && (
-                            <div className="grid grid-cols-3 gap-1.5 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl">
-                              {photosList.slice(0, 6).map((photo, pIdx) => (
-                                <a key={pIdx} href={photo.imageUrl} target="_blank" rel="noopener noreferrer" className="aspect-square rounded-lg overflow-hidden border border-zinc-800 hover:opacity-85 transition-opacity">
-                                  <img src={photo.imageUrl} alt="" className="w-full h-full object-cover" />
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
-                            <span className="flex items-center gap-2 text-zinc-400"><FileText className="w-3.5 h-3.5 text-violet-400" /> Documents</span>
-                            <span className="text-[10px] text-zinc-550">{docsList.length} files</span>
-                          </div>
-                          {docsList.length > 0 && (
-                            <div className="space-y-1 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl max-h-40 overflow-y-auto">
-                              {docsList.map((doc, dIdx) => (
-                                <a key={dIdx} href={doc.documentUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-1.5 hover:bg-zinc-900/40 rounded-lg text-[10px] text-zinc-400 truncate">
-                                  <FileText className="w-3 h-3 text-violet-400/80 shrink-0" />
-                                  <span className="truncate flex-1">{doc.documentName}</span>
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="space-y-1">
-                          <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
-                            <span className="flex items-center gap-2 text-zinc-400"><Link className="w-3.5 h-3.5 text-violet-400" /> Shared Links</span>
-                            <span className="text-[10px] text-zinc-550">{linksList.length} links</span>
-                          </div>
-                          {linksList.length > 0 && (
-                            <div className="space-y-1 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl max-h-40 overflow-y-auto">
-                              {linksList.map((link, lIdx) => (
-                                <a key={lIdx} href={link.url} target="_blank" rel="noopener noreferrer" className="flex flex-col gap-0.5 p-1.5 hover:bg-zinc-900/40 rounded-lg text-[10px] text-zinc-400">
-                                  <span className="font-semibold text-white truncate">{link.title || 'Link'}</span>
-                                  <span className="text-[9px] text-zinc-500 truncate">{link.url}</span>
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-
-              {/* Mutual Items */}
-              {selectedChatInfo.interests && selectedChatInfo.interests.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider block">Interests & Tags</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedChatInfo.interests.map((interest: string, idx: number) => (
-                      <span key={idx} className="px-2.5 py-1 bg-zinc-900 text-zinc-300 text-[10px] rounded-lg border border-zinc-800">
-                        {interest}
-                      </span>
-                    ))}
+          {showRightSidebar && selectedChat && (
+            selectedChat.type === 'group' ? (
+              <GroupInfoPanel
+                key={selectedChat.id}
+                groupId={selectedChat.id}
+                onClose={() => setShowRightSidebar(false)}
+              />
+            ) : (
+              selectedChatInfo && (
+                <motion.div
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: 360, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                  className="hidden lg:flex lg:flex-col border-l border-zinc-900 h-full bg-[#0A0A0F] overflow-y-auto overflow-x-hidden p-6 space-y-6 scrollbar-thin shrink-0 select-none w-[360px] min-w-[360px] max-w-[360px]"
+                >
+                  {/* Profile Block */}
+                  <div className="flex flex-col items-center text-center pb-5 border-b border-zinc-900">
+                    <div className="relative mb-3.5">
+                      <img
+                        src={selectedChatInfo.avatar}
+                        alt=""
+                        className={`h-22 w-22 rounded-full object-cover ring-2 ring-violet-500/25 ${!selectedChatInfo.isRevealed ? 'blur-[5px]' : ''}`}
+                      />
+                      {selectedChatInfo.isOnline && (
+                        <span className="absolute bottom-1 right-1 h-3.5 w-3.5 rounded-full border-2 border-[#0A0A0F] bg-green-400" />
+                      )}
+                    </div>
+                    <h3 className="text-sm font-bold text-white">{selectedChatInfo.name}</h3>
+                    <p className="text-[10px] text-zinc-550 mt-1 uppercase tracking-wider font-semibold">{selectedChatInfo.department}</p>
+                    <p className="text-[10px] text-zinc-550 font-medium">Batch of {selectedChatInfo.batch}</p>
                   </div>
-                </div>
-              )}
 
-              {/* Critical Actions */}
-              <div className="space-y-2 pt-4 border-t border-zinc-900">
-                <button 
-                  onClick={() => toast.success('Conversation muted')}
-                  className="w-full py-2.5 px-3 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-xl text-left text-xs text-zinc-450 hover:text-white flex items-center gap-2.5 transition-colors"
-                >
-                  <BellOff className="w-3.5 h-3.5" /> Mute Notifications
-                </button>
-                <button 
-                  onClick={() => toast.info('Conversation cleared')}
-                  className="w-full py-2.5 px-3 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-xl text-left text-xs text-zinc-450 hover:text-white flex items-center gap-2.5 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Clear Conversations
-                </button>
-                <button 
-                  onClick={() => toast.error('User restricted')}
-                  className="w-full py-2.5 px-3 bg-red-950/10 border border-red-500/10 hover:bg-red-950/20 rounded-xl text-left text-xs text-red-400 flex items-center gap-2.5 transition-colors"
-                >
-                  <Ban className="w-3.5 h-3.5" /> Mute / Block Participant
-                </button>
-              </div>
+                  {/* General details */}
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider">Bio / Description</span>
+                      <p className="text-xs text-zinc-400 leading-relaxed">{selectedChatInfo.bio}</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider">College Group</span>
+                      <p className="text-xs text-white font-medium">{selectedChatInfo.college}</p>
+                    </div>
+                  </div>
 
-            </motion.div>
+                  {/* Shared Assets */}
+                  <div className="space-y-3 pt-2">
+                    <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider block">Shared Resources</span>
+                    <div className="space-y-2">
+                      {(() => {
+                        const photosList = selectedChat ? (sharedPhotosMap[selectedChat.id] || []) : [];
+                        const docsList = selectedChat ? (sharedDocsMap[selectedChat.id] || []) : [];
+                        const linksList = selectedChat ? (sharedLinksMap[selectedChat.id] || []) : [];
+
+                        return (
+                          <>
+                            <div className="space-y-1">
+                              <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
+                                <span className="flex items-center gap-2 text-zinc-400"><Image className="w-3.5 h-3.5 text-violet-400" /> Shared Photos</span>
+                                <span className="text-[10px] text-zinc-555">{photosList.length} files</span>
+                              </div>
+                              {photosList.length > 0 && (
+                                <div className="grid grid-cols-3 gap-1.5 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl">
+                                  {photosList.slice(0, 6).map((photo, pIdx) => (
+                                    <a key={pIdx} href={photo.imageUrl} target="_blank" rel="noopener noreferrer" className="aspect-square rounded-lg overflow-hidden border border-zinc-800 hover:opacity-85 transition-opacity">
+                                      <img src={photo.imageUrl} alt="" className="w-full h-full object-cover" />
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="space-y-1">
+                              <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
+                                <span className="flex items-center gap-2 text-zinc-400"><FileText className="w-3.5 h-3.5 text-violet-400" /> Documents</span>
+                                <span className="text-[10px] text-zinc-555">{docsList.length} files</span>
+                              </div>
+                              {docsList.length > 0 && (
+                                <div className="space-y-1 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl max-h-40 overflow-y-auto">
+                                  {docsList.map((doc, dIdx) => (
+                                    <a key={dIdx} href={doc.documentUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-1.5 hover:bg-zinc-900/40 rounded-lg text-[10px] text-zinc-400 truncate">
+                                      <FileText className="w-3 h-3 text-violet-400/80 shrink-0" />
+                                      <span className="truncate flex-1">{doc.documentName}</span>
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="w-full flex items-center justify-between p-2.5 bg-[#121217]/50 rounded-xl text-xs border border-zinc-900">
+                                <span className="flex items-center gap-2 text-zinc-400"><Link className="w-3.5 h-3.5 text-violet-400" /> Shared Links</span>
+                                <span className="text-[10px] text-zinc-555">{linksList.length} links</span>
+                              </div>
+                              {linksList.length > 0 && (
+                                <div className="space-y-1 p-2 bg-[#121217]/30 border border-zinc-900/50 rounded-xl max-h-40 overflow-y-auto">
+                                  {linksList.map((link, lIdx) => (
+                                    <a key={lIdx} href={link.url} target="_blank" rel="noopener noreferrer" className="flex flex-col gap-0.5 p-1.5 hover:bg-zinc-900/40 rounded-lg text-[10px] text-zinc-400">
+                                      <span className="font-semibold text-white truncate">{link.title || 'Link'}</span>
+                                      <span className="text-[9px] text-zinc-550 truncate">{link.url}</span>
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Mutual Items */}
+                  {selectedChatInfo.interests && selectedChatInfo.interests.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider block">Interests & Tags</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedChatInfo.interests.map((interest: string, idx: number) => (
+                          <span key={idx} className="px-2.5 py-1 bg-zinc-900 text-zinc-300 text-[10px] rounded-lg border border-zinc-800">
+                            {interest}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Critical Actions */}
+                  <div className="space-y-2 pt-4 border-t border-zinc-900">
+                    <button 
+                      onClick={() => toast.success('Conversation muted')}
+                      className="w-full py-2.5 px-3 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-xl text-left text-xs text-zinc-450 hover:text-white flex items-center gap-2.5 transition-colors"
+                    >
+                      <BellOff className="w-3.5 h-3.5" /> Mute Notifications
+                    </button>
+                    <button 
+                      onClick={() => toast.info('Conversation cleared')}
+                      className="w-full py-2.5 px-3 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-xl text-left text-xs text-zinc-450 hover:text-white flex items-center gap-2.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Clear Conversations
+                    </button>
+                    <button 
+                      onClick={() => toast.error('User restricted')}
+                      className="w-full py-2.5 px-3 bg-red-950/10 border border-red-500/10 hover:bg-red-950/20 rounded-xl text-left text-xs text-red-400 flex items-center gap-2.5 transition-colors"
+                    >
+                      <Ban className="w-3.5 h-3.5" /> Mute / Block Participant
+                    </button>
+                  </div>
+
+                </motion.div>
+              )
+            )
           )}
         </AnimatePresence>
 
@@ -498,42 +536,94 @@ export default function ChatListPage() {
 
               {/* Circle Name */}
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Circle Name</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-550 tracking-wider">Circle Name</label>
                 <input
+                  type="text"
                   value={groupName}
                   onChange={e => setGroupName(e.target.value)}
+                  onMouseDown={e => { e.stopPropagation(); (e.target as HTMLInputElement).focus(); }}
                   placeholder="e.g. Project Team, Hackathon"
-                  className="w-full bg-[#111117] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder:text-zinc-650 outline-none"
+                  className="w-full bg-[#111117] border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white placeholder:text-zinc-650 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-all pointer-events-auto"
+                  style={{ caretColor: 'white' }}
                 />
               </div>
 
               {/* Member Search */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Available Users</label>
-                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-1 border border-zinc-900 rounded-xl bg-zinc-950/20">
-                  {filteredAvailableUsers.map(u => {
-                    const isSelected = selectedMembers.includes(u.id);
-                    return (
-                      <button
-                        key={u.id}
-                        onClick={() => {
-                          setSelectedMembers(prev =>
-                            prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id]
-                          );
-                        }}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all border ${
-                          isSelected
-                            ? 'bg-violet-600/10 border-violet-500/30 text-violet-400'
-                            : 'bg-zinc-900 border-zinc-850 text-zinc-400'
-                        }`}
-                      >
-                        <img src={u.photos?.[0]} alt="" className="w-4.5 h-4.5 rounded-full object-cover" />
-                        <span>{u.name}</span>
-                      </button>
-                    );
-                  })}
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-zinc-555 tracking-wider">Search & Add Members (Min. 2)</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-zinc-550" />
+                  <input
+                    type="text"
+                    value={memberSearch}
+                    onChange={e => setMemberSearch(e.target.value)}
+                    onMouseDown={e => { e.stopPropagation(); (e.target as HTMLInputElement).focus(); }}
+                    placeholder="Search by name or department..."
+                    className="w-full bg-[#111117] border border-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder:text-zinc-650 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-all pointer-events-auto"
+                    style={{ caretColor: 'white' }}
+                  />
                 </div>
               </div>
+
+              {/* Available Users Scrollable List */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-bold text-zinc-550 tracking-wider">Available Users</label>
+                <div className="flex flex-col gap-2 max-h-48 overflow-y-auto p-1 border border-zinc-900 rounded-xl bg-zinc-950/20 scrollbar-thin">
+                  {filteredAvailableUsers.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-zinc-550">No available users found</div>
+                  ) : (
+                    filteredAvailableUsers.map(u => {
+                      const isSelected = selectedMembers.includes(u.id);
+                      return (
+                        <div
+                          key={u.id}
+                          onClick={() => {
+                            setSelectedMembers(prev =>
+                              prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id]
+                            );
+                          }}
+                          className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer select-none ${
+                            isSelected
+                              ? 'bg-violet-600/10 border-violet-500/30'
+                              : 'bg-zinc-900/60 border-zinc-850 hover:bg-zinc-900'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="relative">
+                              <img src={u.photos?.[0]} alt="" className="w-9 h-9 rounded-full object-cover bg-zinc-800" />
+                              {u.isOnline && (
+                                <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border border-[#0A0A0F] bg-green-400" />
+                              )}
+                            </div>
+                            <div className="text-left">
+                              <p className="text-xs font-bold text-white">{u.name}</p>
+                              <p className="text-[10px] text-zinc-500 font-medium">
+                                {u.department || 'General'} • {u.batch ? `Class of ${u.batch}` : 'Student'}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Custom Checkbox */}
+                          <div className={`h-4.5 w-4.5 rounded-md border flex items-center justify-center transition-all ${
+                            isSelected 
+                              ? 'bg-violet-600 border-violet-500 text-white' 
+                              : 'border-zinc-700 bg-zinc-950'
+                          }`}>
+                            {isSelected && <span className="text-[10px] font-bold">✓</span>}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Validation Warning */}
+              {selectedMembers.length < 2 && selectedMembers.length > 0 && (
+                <p className="text-[10px] text-amber-500 font-medium bg-amber-500/5 border border-amber-500/10 rounded-lg p-2 text-center">
+                  ⚠️ Please select at least 2 members to create a circle group.
+                </p>
+              )}
 
               <div className="flex gap-2 pt-3">
                 <Button
@@ -544,8 +634,8 @@ export default function ChatListPage() {
                 </Button>
                 <Button
                   onClick={handleCreateGroup}
-                  disabled={!groupName.trim() || selectedMembers.length === 0}
-                  className="flex-1 bg-violet-650 hover:bg-violet-755 text-white rounded-xl py-2 text-xs font-semibold disabled:opacity-40"
+                  disabled={!groupName.trim() || selectedMembers.length < 2}
+                  className="flex-1 bg-violet-650 hover:bg-violet-750 text-white rounded-xl py-2 text-xs font-semibold disabled:opacity-40"
                 >
                   Create Circle
                 </Button>
@@ -576,7 +666,7 @@ function MatchAvatar({ match, onClick }: { match: any; onClick: () => void }) {
         <img
           src={match.user?.photos?.[0]}
           alt=""
-          className={`h-11 w-11 rounded-full object-cover border border-zinc-900 ring-2 ring-zinc-900 group-hover:ring-violet-500/40 transition-all ${!match.isRevealed ? 'blur-[2px]' : ''}`}
+          className="h-11 w-11 rounded-full object-cover border border-zinc-900 ring-2 ring-zinc-900 group-hover:ring-violet-500/40 transition-all"
         />
         {isOnline && (
           <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#0A0A0F] bg-green-400" />
@@ -591,7 +681,7 @@ function MatchAvatar({ match, onClick }: { match: any; onClick: () => void }) {
         onClick={onClick}
         className="text-[10px] text-zinc-550 group-hover:text-zinc-350 truncate w-12 text-center font-medium cursor-pointer"
       >
-        {match.isRevealed ? match.user?.name?.split(' ')[0] : match.user?.anonymousName?.split(' ')[0]}
+        {match.user?.name?.split(' ')[0] || 'Anonymous'}
       </span>
     </div>
   );
@@ -600,7 +690,7 @@ function MatchAvatar({ match, onClick }: { match: any; onClick: () => void }) {
 function ChatListItem({ match, index, isActive, onClick }: { match: any; index: number; isActive?: boolean; onClick: () => void }) {
   const navigate = useNavigate();
   const isOnline = match.user?.isOnline || false;
-  const name = match.isRevealed ? match.user?.name : match.user?.anonymousName || 'Anonymous';
+  const name = match.user?.name || 'Anonymous';
   
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -642,7 +732,7 @@ function ChatListItem({ match, index, isActive, onClick }: { match: any; index: 
           <img
             src={match.user?.photos?.[0]}
             alt=""
-            className={`h-11 w-11 rounded-full object-cover bg-zinc-900 ${!match.isRevealed ? 'blur-[2px]' : ''}`}
+            className="h-11 w-11 rounded-full object-cover bg-zinc-900"
             loading="lazy"
           />
           {isOnline && (

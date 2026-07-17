@@ -7,6 +7,7 @@ import { useProfileViewerStore } from '@/store/profileViewerStore';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { Button } from '@/components/ui/button';
 import { INTERESTS, COURSES, YEARS } from '@/data/constants';
+import { getApiUrl } from '@/services/connectionService';
 import { 
   LogOut, 
   Shield, 
@@ -122,6 +123,55 @@ export default function ProfilePage() {
 
   const [editing, setEditing] = useState(false);
   const [editTab, setEditTab] = useState<'basic' | 'social' | 'skills' | 'career'>('basic');
+  const [profileStats, setProfileStats] = useState<any>(null);
+  const [profilePosts, setProfilePosts] = useState<any[]>([]);
+  const [profileMedia, setProfileMedia] = useState<any[]>([]);
+  const [profileFriends, setProfileFriends] = useState<any[]>([]);
+  const [profileFollowers, setProfileFollowers] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'feed' | 'photos' | 'videos' | 'projects' | 'achievements' | 'documents' | 'about' | 'friends'>('about');
+
+  const fetchStats = async () => {
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+      const headers = { 'Authorization': `Bearer ${token}` };
+      
+      const res = await fetch(`${getApiUrl()}/api/users/${uid}/profile`, { headers });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setProfileStats(json.data.stats);
+      }
+
+      // Fetch posts
+      const postsRes = await fetch(`${getApiUrl()}/api/users/${uid}/posts`, { headers });
+      if (postsRes.ok) {
+        const postsJson = await postsRes.json();
+        if (postsJson.success) setProfilePosts(postsJson.data || []);
+      }
+
+      // Fetch media
+      const mediaRes = await fetch(`${getApiUrl()}/api/users/${uid}/media`, { headers });
+      if (mediaRes.ok) {
+        const mediaJson = await mediaRes.json();
+        if (mediaJson.success) setProfileMedia(mediaJson.data || []);
+      }
+
+      // Fetch friends
+      const friendsRes = await fetch(`${getApiUrl()}/api/users/${uid}/friends`, { headers });
+      if (friendsRes.ok) {
+        const friendsJson = await friendsRes.json();
+        if (friendsJson.success) setProfileFriends(friendsJson.data || []);
+      }
+
+      // Fetch followers
+      const followersRes = await fetch(`${getApiUrl()}/api/users/${uid}/followers`, { headers });
+      if (followersRes.ok) {
+        const followersJson = await followersRes.json();
+        if (followersJson.success) setProfileFollowers(followersJson.data || []);
+      }
+    } catch (e) {
+      console.error("Failed to load user profile stats/data:", e);
+    }
+  };
   
   const [showBlock, setShowBlock] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -154,6 +204,7 @@ export default function ProfilePage() {
     if (uid) {
       loadProfile(uid);
       loadSavedReferrals();
+      fetchStats();
     }
   }, [uid, loadProfile]);
 
@@ -374,742 +425,908 @@ export default function ProfilePage() {
   const strokeDashoffset = progressCircleCircumference - (progressCircleCircumference * profileCompletion) / 100;
 
   return (
-    <div className="min-h-screen bg-background pb-20 page-transition">
-      {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="px-5 pt-5 pb-3 flex items-center justify-between">
-        <h1 className="font-display text-xl font-bold text-foreground">Profile</h1>
-        <motion.button 
-          whileTap={{ scale: 0.9 }} 
-          onClick={() => setEditing(!editing)} 
-          className="p-2.5 rounded-xl hover:bg-secondary/50 transition-colors"
-          title={editing ? "View Profile" : "Edit Profile"}
-        >
-          <Edit2 className={`h-5 w-5 transition-colors ${editing ? 'text-primary' : 'text-muted-foreground'}`} />
-        </motion.button>
-      </motion.div>
-
-      <div className="px-5">
-        {/* Avatar & Name Panel */}
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-4 mb-5">
-          <div className="relative">
-            <div className="h-20 w-20 rounded-2xl border-2 border-primary/30 overflow-hidden bg-secondary/30">
-              <img
-                src={profile.photos[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=me'}
-                alt=""
-                className="h-full w-full object-cover"
-              />
-            </div>
-            <button 
-              onClick={() => document.getElementById('avatar-upload')?.click()}
-              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-lg gradient-primary flex items-center justify-center cursor-pointer shadow-lg hover:scale-105 transition-transform"
-            >
-              <Camera className="h-3.5 w-3.5 text-primary-foreground" />
-            </button>
-            <input 
-              id="avatar-upload" 
-              type="file" 
-              accept="image/*" 
-              className="hidden" 
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => {
-                  const result = reader.result as string;
-                  const photos = profile.photos.length > 0 ? [result, ...profile.photos.slice(1)] : [result];
-                  updateProfile({ photos });
-                  toast.success('Avatar image updated. Save changes to store permanently!');
-                };
-                reader.readAsDataURL(file);
-              }}
-            />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h2 className="font-display text-lg font-bold text-foreground truncate">{profile.name || 'Set Name'}</h2>
-              {isVerified && <BadgeCheck className="h-4 w-4 text-primary flex-shrink-0" />}
-            </div>
-            {profile.course && <p className="text-xs text-primary font-medium truncate">{profile.course}{profile.year ? ` · ${profile.year}` : ''}</p>}
-            {email && <p className="text-[10px] text-muted-foreground/60 mt-0.5 flex items-center gap-1"><Mail className="h-3 w-3" /> {email}</p>}
+    <div className="min-h-screen bg-[#070709] pb-24 page-transition w-full text-zinc-100 overflow-x-hidden">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 lg:px-8 py-6">
+        
+        {/* Responsive Grid Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
+          
+          {/* Main Profile Area (75% Width) */}
+          <div className="lg:col-span-3 space-y-6">
             
-            {/* Social profiles row */}
-            <div className="flex flex-wrap gap-2 mt-2">
-              {profile.linkedinUrl && (
-                <a 
-                  href={profile.linkedinUrl} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[10px] font-semibold text-blue-400 hover:bg-blue-500/15 transition-colors"
-                >
-                  <Linkedin className="w-3 h-3" /> LinkedIn
-                </a>
-              )}
-              {profile.githubUrl && (
-                <a 
-                  href={profile.githubUrl} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-foreground/10 border border-foreground/20 text-[10px] font-semibold text-foreground hover:bg-foreground/15 transition-colors"
-                >
-                  <Github className="w-3 h-3" /> GitHub
-                </a>
-              )}
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Profile Strength Card */}
-        <div className="glass-card p-5 mb-5 border border-white/[0.08] bg-slate-900/40 relative overflow-hidden">
-          <div className="flex flex-col sm:flex-row items-center gap-5">
-            {/* Circle Progress ring */}
-            <div className="relative h-24 w-24 flex-shrink-0">
-              <svg className="w-full h-full transform -rotate-90">
-                <circle
-                  cx="48"
-                  cy="48"
-                  r="40"
-                  className="stroke-muted-foreground/10"
-                  strokeWidth="6"
-                  fill="transparent"
-                />
-                <motion.circle
-                  cx="48"
-                  cy="48"
-                  r="40"
-                  className="stroke-primary"
-                  strokeWidth="6"
-                  fill="transparent"
-                  strokeDasharray={progressCircleCircumference}
-                  initial={{ strokeDashoffset: progressCircleCircumference }}
-                  animate={{ strokeDashoffset }}
-                  transition={{ duration: 0.8, ease: "easeOut" }}
-                  strokeLinecap="round"
-                  style={{
-                    stroke: `url(#progressGradient-${profileCompletion})`
-                  }}
-                />
-                <defs>
-                  <linearGradient id={`progressGradient-${profileCompletion}`} x1="0%" y1="0%" x2="100%" y2="100%">
-                    {profileCompletion <= 30 ? (
-                      <>
-                        <stop offset="0%" stopColor="#f43f5e" />
-                        <stop offset="100%" stopColor="#f97316" />
-                      </>
-                    ) : profileCompletion <= 60 ? (
-                      <>
-                        <stop offset="0%" stopColor="#f59e0b" />
-                        <stop offset="100%" stopColor="#eab308" />
-                      </>
-                    ) : profileCompletion <= 85 ? (
-                      <>
-                        <stop offset="0%" stopColor="#6366f1" />
-                        <stop offset="100%" stopColor="#a855f7" />
-                      </>
-                    ) : profileCompletion <= 99 ? (
-                      <>
-                        <stop offset="0%" stopColor="#a855f7" />
-                        <stop offset="100%" stopColor="#d946ef" />
-                      </>
-                    ) : (
-                      <>
-                        <stop offset="0%" stopColor="#10b981" />
-                        <stop offset="100%" stopColor="#06b6d4" />
-                      </>
-                    )}
-                  </linearGradient>
-                </defs>
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-lg font-display font-extrabold text-foreground">{profileCompletion}%</span>
-                <span className="text-[7px] text-muted-foreground uppercase tracking-widest font-extrabold">Strength</span>
+            {/* Header: Cover Banner & Overlapping Avatar */}
+            <div className="relative rounded-[32px] overflow-hidden bg-zinc-950/40 border border-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+              {/* Cover Banner */}
+              <div className="h-44 sm:h-56 md:h-64 bg-gradient-to-r from-violet-650 via-fuchsia-600 to-indigo-705 relative overflow-hidden">
+                <div className="absolute inset-0 bg-black/10 backdrop-blur-[1px]" />
+                <div className="absolute -inset-[10px] opacity-30 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-indigo-500 via-pink-500 to-purple-900 filter blur-xl animate-pulse" />
               </div>
-            </div>
-
-            {/* Profile Level details */}
-            <div className="flex-1 text-center sm:text-left">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-1">
-                <span className="text-sm font-bold text-foreground">Profile Strength</span>
-                <span className={`inline-block mx-auto sm:mx-0 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-gradient-to-r ${levelInfo.color} text-white shadow-sm ${levelInfo.glow}`}>
-                  {levelInfo.name}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {profileCompletion === 100 ? (
-                  "Your profile is fully completed! Enjoy maximum visibility and credibility across the Campus Connect ecosystem."
-                ) : (
-                  `Complete ${missingItems.length} more section${missingItems.length > 1 ? 's' : ''} to strengthen your profile and improve visibility across Campus Connect.`
+              
+              {/* Overlapping Avatar & Metadata */}
+              <div className="relative px-6 pb-6 pt-0">
+                <div className="flex flex-col sm:flex-row sm:items-end gap-5 -mt-16 sm:-mt-20">
+                  {/* Large Circular Avatar */}
+                  <div className="relative h-28 w-28 sm:h-36 sm:w-36 rounded-full border-4 border-[#070709] overflow-hidden bg-zinc-900/80 shadow-2xl flex-shrink-0 group">
+                    <img
+                      src={profile.photos[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=me'}
+                      alt=""
+                      className="h-full w-full object-cover transition-transform group-hover:scale-105 duration-500"
+                    />
+                    <button 
+                      onClick={() => document.getElementById('avatar-upload')?.click()}
+                      className="absolute bottom-1 right-1 h-8 w-8 rounded-full gradient-primary flex items-center justify-center cursor-pointer shadow-lg hover:scale-110 transition-transform border border-white/20"
+                      title="Update Avatar"
+                    >
+                      <Camera className="h-4 w-4 text-primary-foreground" />
+                    </button>
+                    <input 
+                      id="avatar-upload" 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const result = reader.result as string;
+                          const photos = profile.photos.length > 0 ? [result, ...profile.photos.slice(1)] : [result];
+                          updateProfile({ photos });
+                          toast.success('Avatar updated! Save changes to persist.');
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </div>
+                  
+                  {/* User Details & Action Tray */}
+                  <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-2 sm:mt-0">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h2 className="font-display text-xl sm:text-2xl font-black text-white tracking-tight truncate">
+                          {profile.name || 'Set Name'}
+                        </h2>
+                        {isVerified && <BadgeCheck className="h-5.5 w-5.5 text-primary flex-shrink-0 animate-pulse" />}
+                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" title="Online" />
+                      </div>
+                      
+                      <p className="text-xs text-zinc-400 font-semibold mt-0.5">
+                        @${profile.name ? profile.name.toLowerCase().replace(/[^a-z0-9]/g, '') : 'user'}
+                      </p>
+                      
+                      {/* Department / Batch */}
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-2 text-xs text-zinc-350 font-bold">
+                        {profile.course && <span>{profile.course}</span>}
+                        {profile.course && profile.year && <span className="text-zinc-700">•</span>}
+                        {profile.year && <span>Batch of {profile.year}</span>}
+                        {email && <span className="text-zinc-700">•</span>}
+                        {email && <span className="text-zinc-450 hover:text-white transition-colors">{email}</span>}
+                      </div>
+                    </div>
+                    
+                    {/* Actions Row */}
+                    <div className="flex flex-wrap gap-2.5 items-center">
+                      <Button 
+                        onClick={() => setEditing(!editing)} 
+                        className={`rounded-2xl h-11 px-5 text-xs font-black tracking-wide transition-all duration-300 border flex items-center gap-2 ${
+                          editing 
+                            ? 'bg-primary text-primary-foreground glow-primary border-transparent' 
+                            : 'bg-zinc-950/40 text-white border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700'
+                        }`}
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        {editing ? "View Profile" : "Edit Profile"}
+                      </Button>
+                      
+                      <Button 
+                        variant="outline"
+                        onClick={() => {
+                          navigator.clipboard.writeText(window.location.href);
+                          toast.success('Profile link copied to clipboard!');
+                        }}
+                        className="rounded-2xl h-11 w-11 border-zinc-800 bg-zinc-950/40 text-white hover:bg-zinc-900 hover:border-zinc-700 flex items-center justify-center p-0"
+                        title="Share Profile"
+                      >
+                        <ChevronRight className="w-4.5 h-4.5 rotate-90" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Bio (Header Level) */}
+                {profile.bio && (
+                  <p className="text-xs sm:text-sm text-zinc-350 mt-5 max-w-2xl leading-relaxed whitespace-pre-wrap font-medium">
+                    {profile.bio}
+                  </p>
                 )}
-              </p>
-            </div>
-          </div>
-
-          {/* Missing Suggestions */}
-          {missingItems.length > 0 ? (
-            <div className="mt-4 pt-4 border-t border-white/[0.06]">
-              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-primary" />
-                Improve Your Profile
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {missingItems.slice(0, 4).map(item => (
-                  <motion.button
-                    key={item.id}
-                    whileHover={{ scale: 1.01, x: 2 }}
-                    whileTap={{ scale: 0.99 }}
-                    onClick={() => handleMissingItemClick(item.tab, item.id)}
-                    className="flex items-center justify-between p-2.5 rounded-2xl bg-secondary/30 hover:bg-secondary/60 border border-white/[0.04] hover:border-primary/20 transition-all text-left group"
-                  >
-                    <span className="text-xs text-foreground font-medium group-hover:text-primary transition-colors flex items-center gap-2">
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary/40 group-hover:bg-primary" />
-                      {item.actionText}
-                    </span>
-                    <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors font-bold">+</span>
-                  </motion.button>
-                ))}
+                
+                {/* Social Badges Row */}
+                {(profile.linkedinUrl || profile.githubUrl) && (
+                  <div className="flex flex-wrap gap-2.5 mt-4">
+                    {profile.linkedinUrl && (
+                      <a 
+                        href={profile.linkedinUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[10px] font-extrabold uppercase tracking-wider text-blue-400 hover:bg-blue-500/15 transition-all"
+                      >
+                        <Linkedin className="w-3.5 h-3.5" /> LinkedIn
+                      </a>
+                    )}
+                    {profile.githubUrl && (
+                      <a 
+                        href={profile.githubUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/5 border border-white/10 text-[10px] font-extrabold uppercase tracking-wider text-zinc-200 hover:bg-white/10 transition-all"
+                      >
+                        <Github className="w-3.5 h-3.5" /> GitHub
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="mt-4 pt-4 border-t border-white/[0.06] flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 p-3.5 rounded-2xl"
-            >
-              <div className="h-9 w-9 rounded-xl bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
-                <Check className="h-4 w-4 text-emerald-400" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                  Complete Profile ✓
-                </p>
-                <p className="text-[10px] text-muted-foreground leading-normal mt-0.5">
-                  Congratulations! Your profile is 100% complete and fully verified. You are completely optimized for discovery, referrals, and networking.
-                </p>
-              </div>
-            </motion.div>
-          )}
-        </div>
 
-        {/* Profile viewers */}
-        <div className="glass-card p-4 mb-5 border border-white/[0.08]">
-          <div className="flex items-center justify-between mb-2.5">
-            <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-              <Eye className="h-3.5 w-3.5 text-primary" />
-              Who viewed your profile
-            </p>
-          </div>
-          {viewersLoading ? (
-            <p className="text-[11px] text-muted-foreground">Loading...</p>
-          ) : viewers && viewers.length > 0 ? (
-            <div className="flex gap-2 overflow-x-auto pb-1 hide-scrollbar">
-              {viewers.map((viewer) => (
-                <motion.div
-                  key={viewer._id}
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="flex flex-col items-center gap-1 flex-shrink-0"
-                >
-                  <img
-                    src={viewer.viewerId?.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${viewer.viewerId?.email}`}
-                    alt={viewer.viewerId?.name}
-                    className="h-9 w-9 rounded-full border border-primary/20 object-cover"
-                    title={viewer.viewerId?.name}
-                  />
-                  <span className="text-[9px] text-muted-foreground text-center truncate max-w-[50px]">{viewer.viewerId?.name?.split(' ')[0]}</span>
-                </motion.div>
+            {/* Statistics Cards Row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {[
+                { label: 'Posts', value: profileStats?.posts || 0, color: 'text-violet-400', bg: 'bg-violet-500/5 border-violet-500/10' },
+                { label: 'Friends', value: profileStats?.friends || 0, color: 'text-blue-400', bg: 'bg-blue-500/5 border-blue-500/10' },
+                { label: 'Followers', value: profileStats?.followers || 0, color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/5 border-fuchsia-500/10' },
+                { label: 'Following', value: profileStats?.following || 0, color: 'text-indigo-400', bg: 'bg-indigo-500/5 border-indigo-500/10' },
+                { label: 'Circles', value: profileStats?.circles || 0, color: 'text-teal-400', bg: 'bg-teal-500/5 border-teal-500/10' },
+                { label: 'Achievements', value: profileStats?.achievements || 0, color: 'text-amber-400', bg: 'bg-amber-500/5 border-amber-500/10' },
+                { label: 'Projects', value: profile?.projects?.length || 0, color: 'text-rose-400', bg: 'bg-rose-500/5 border-rose-500/10' },
+                { label: 'Mutual', value: 0, color: 'text-emerald-400', bg: 'bg-emerald-500/5 border-emerald-500/10' },
+              ].map((stat, i) => (
+                <div key={i} className={`p-4 rounded-2xl border ${stat.bg} flex flex-col items-center justify-center text-center shadow-lg transition-all hover:-translate-y-0.5 duration-300`}>
+                  <span className={`text-2xl font-black ${stat.color} tracking-tight`}>{stat.value}</span>
+                  <span className="text-[9px] text-zinc-400 font-extrabold uppercase mt-1 tracking-wider">{stat.label}</span>
+                </div>
               ))}
             </div>
-          ) : (
-            <p className="text-[11px] text-muted-foreground italic">No one has viewed your profile yet</p>
-          )}
-        </div>
 
-        {/* Animate edit form vs view details */}
-        <AnimatePresence mode="wait">
-          {editing ? (
-            <motion.div 
-              key="edit" 
-              initial={{ opacity: 0, y: 10 }} 
-              animate={{ opacity: 1, y: 0 }} 
-              exit={{ opacity: 0, y: -10 }} 
-              className="space-y-4"
-            >
-              {/* Tabs list */}
-              <div className="flex gap-2 border-b border-border/15 pb-2 mb-4 overflow-x-auto hide-scrollbar flex-shrink-0">
-                {[
-                  { id: 'basic', label: 'Basic Info' },
-                  { id: 'social', label: 'Social & Links' },
-                  { id: 'skills', label: 'Skills & Clubs' },
-                  { id: 'career', label: 'Career & Projects' }
-                ].map(t => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setEditTab(t.id as any)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                      editTab === t.id ? 'gradient-primary text-primary-foreground glow-primary' : 'bg-secondary/40 text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Edit Basic Info Tab */}
-              {editTab === 'basic' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Full Name</label>
-                    <input 
-                      id="field-name"
-                      value={profile.name || ''} 
-                      onChange={e => updateProfile({ name: e.target.value })} 
-                      placeholder="e.g. Alice Cooper"
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Personal Email</label>
-                    <input 
-                      id="field-personalEmail"
-                      value={profile.personalEmail || ''} 
-                      onChange={e => updateProfile({ personalEmail: e.target.value })} 
-                      placeholder="e.g. alice@example.com"
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Department</label>
-                      <select 
-                        id="field-course"
-                        value={profile.course || ''} 
-                        onChange={e => updateProfile({ course: e.target.value })} 
-                        className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow appearance-none"
+            {/* Editing State vs Tabs Details View */}
+            <AnimatePresence mode="wait">
+              {editing ? (
+                <motion.div 
+                  key="edit" 
+                  initial={{ opacity: 0, y: 15 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  exit={{ opacity: 0, y: -15 }} 
+                  className="space-y-4"
+                >
+                  {/* Form Tabs list */}
+                  <div className="flex gap-2 border-b border-white/5 pb-2 mb-4 overflow-x-auto hide-scrollbar">
+                    {[
+                      { id: 'basic', label: 'Basic Info' },
+                      { id: 'social', label: 'Social & Links' },
+                      { id: 'skills', label: 'Skills & Clubs' },
+                      { id: 'career', label: 'Career & Projects' }
+                    ].map(t => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setEditTab(t.id as any)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                          editTab === t.id ? 'gradient-primary text-primary-foreground glow-primary' : 'bg-zinc-900/40 text-zinc-400 hover:text-white'
+                        }`}
                       >
-                        <option value="">Select Course</option>
-                        {COURSES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Batch</label>
-                      <select 
-                        id="field-year"
-                        value={profile.year || ''} 
-                        onChange={e => updateProfile({ year: e.target.value })} 
-                        className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow appearance-none"
-                      >
-                        <option value="">Select Year</option>
-                        {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-                      </select>
-                    </div>
+                        {t.label}
+                      </button>
+                    ))}
                   </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Academic Year</label>
-                    <select 
-                      id="field-academicYear"
-                      value={profile.academicYear || ''} 
-                      onChange={e => updateProfile({ academicYear: e.target.value })} 
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow appearance-none"
-                    >
-                      <option value="">Select Academic Year</option>
-                      <option value="1st Year">1st Year</option>
-                      <option value="2nd Year">2nd Year</option>
-                      <option value="3rd Year">3rd Year</option>
-                      <option value="4th Year">4th Year</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">CGPA</label>
-                      <input 
-                        id="field-cgpa"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        max="10"
-                        value={profile.cgpa !== undefined ? profile.cgpa : ''} 
-                        onChange={e => updateProfile({ cgpa: e.target.value ? parseFloat(e.target.value) : 0 })} 
-                        placeholder="e.g. 8.5"
-                        className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Active Backlogs</label>
-                      <input 
-                        id="field-backlogs"
-                        type="number"
-                        min="0"
-                        max="50"
-                        value={profile.backlogs !== undefined ? profile.backlogs : ''} 
-                        onChange={e => updateProfile({ backlogs: e.target.value ? parseInt(e.target.value) : 0 })} 
-                        placeholder="e.g. 0"
-                        className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Bio</label>
-                    <textarea 
-                      id="field-bio"
-                      value={profile.bio || ''} 
-                      onChange={e => updateProfile({ bio: e.target.value })} 
-                      rows={3} 
-                      maxLength={200} 
-                      placeholder="Tell us about yourself, your interests, or what you study..."
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-shadow" 
-                    />
-                  </div>
-                </div>
-              )}
 
-              {/* Edit Social & Links Tab */}
-              {editTab === 'social' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium flex items-center gap-1.5">
-                      <Linkedin className="h-3.5 w-3.5 text-blue-400" />
-                      LinkedIn Profile URL
-                    </label>
-                    <input 
-                      id="field-linkedinUrl"
-                      value={profile.linkedinUrl || ''} 
-                      onChange={e => updateProfile({ linkedinUrl: e.target.value })} 
-                      placeholder="e.g. https://linkedin.com/in/username"
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium flex items-center gap-1.5">
-                      <Github className="h-3.5 w-3.5" />
-                      GitHub Profile URL
-                    </label>
-                    <input 
-                      id="field-githubUrl"
-                      value={profile.githubUrl || ''} 
-                      onChange={e => updateProfile({ githubUrl: e.target.value })} 
-                      placeholder="e.g. https://github.com/username"
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" 
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Edit Skills & Clubs Tab */}
-              {editTab === 'skills' && (
-                <div className="space-y-4">
-                  <TagBuilder
-                    id="field-skills"
-                    label="Skills"
-                    placeholder="e.g. React (Press Enter or Add)"
-                    tags={profile.skills || []}
-                    onAdd={(tag) => updateProfile({ skills: [...(profile.skills || []), tag] })}
-                    onRemove={(tag) => updateProfile({ skills: (profile.skills || []).filter(s => s !== tag) })}
-                  />
-
-                  <TagBuilder
-                    id="field-clubs"
-                    label="Clubs & Organizations"
-                    placeholder="e.g. Coding Club (Press Enter or Add)"
-                    tags={profile.clubs || []}
-                    onAdd={(tag) => updateProfile({ clubs: [...(profile.clubs || []), tag] })}
-                    onRemove={(tag) => updateProfile({ clubs: (profile.clubs || []).filter(c => c !== tag) })}
-                  />
-
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-2 block font-medium">Interests</label>
-                    <div className="flex flex-wrap gap-1.5 p-2 bg-black/20 rounded-2xl border border-white/[0.04] max-h-48 overflow-y-auto">
-                      {INTERESTS.map(interest => {
-                        const hasInterest = profile.interests?.includes(interest);
-                        return (
-                          <motion.button
-                            key={interest}
-                            type="button"
-                            whileTap={{ scale: 0.92 }}
-                            onClick={() => {
-                              const interests = hasInterest
-                                ? (profile.interests || []).filter(i => i !== interest)
-                                : [...(profile.interests || []), interest];
-                              updateProfile({ interests });
-                            }}
-                            className={`rounded-full px-3 py-1.5 text-[11px] font-medium transition-all ${
-                              hasInterest ? 'gradient-primary text-primary-foreground glow-primary' : 'bg-secondary/80 text-muted-foreground hover:text-foreground'
-                            }`}
+                  {/* Edit Basic Info Tab */}
+                  {editTab === 'basic' && (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Full Name</label>
+                        <input 
+                          id="field-name"
+                          value={profile.name || ''} 
+                          onChange={e => updateProfile({ name: e.target.value })} 
+                          placeholder="e.g. Alice Cooper"
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all shadow-inner" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Personal Email</label>
+                        <input 
+                          id="field-personalEmail"
+                          value={profile.personalEmail || ''} 
+                          onChange={e => updateProfile({ personalEmail: e.target.value })} 
+                          placeholder="e.g. alice@example.com"
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all shadow-inner" 
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Department</label>
+                          <select 
+                            id="field-course"
+                            value={profile.course || ''} 
+                            onChange={e => updateProfile({ course: e.target.value })} 
+                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
                           >
-                            {interest}
-                          </motion.button>
-                        );
-                      })}
+                            <option value="">Select Course</option>
+                            {COURSES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Batch</label>
+                          <select 
+                            id="field-year"
+                            value={profile.year || ''} 
+                            onChange={e => updateProfile({ year: e.target.value })} 
+                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
+                          >
+                            <option value="">Select Year</option>
+                            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Academic Year</label>
+                        <select 
+                          id="field-academicYear"
+                          value={profile.academicYear || ''} 
+                          onChange={e => updateProfile({ academicYear: e.target.value })} 
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
+                        >
+                          <option value="">Select Academic Year</option>
+                          <option value="1st Year">1st Year</option>
+                          <option value="2nd Year">2nd Year</option>
+                          <option value="3rd Year">3rd Year</option>
+                          <option value="4th Year">4th Year</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">CGPA</label>
+                          <input 
+                            id="field-cgpa"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="10"
+                            value={profile.cgpa !== undefined ? profile.cgpa : ''} 
+                            onChange={e => updateProfile({ cgpa: e.target.value ? parseFloat(e.target.value) : 0 })} 
+                            placeholder="e.g. 8.5"
+                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Active Backlogs</label>
+                          <input 
+                            id="field-backlogs"
+                            type="number"
+                            min="0"
+                            max="50"
+                            value={profile.backlogs !== undefined ? profile.backlogs : ''} 
+                            onChange={e => updateProfile({ backlogs: e.target.value ? parseInt(e.target.value) : 0 })} 
+                            placeholder="e.g. 0"
+                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Bio</label>
+                        <textarea 
+                          id="field-bio"
+                          value={profile.bio || ''} 
+                          onChange={e => updateProfile({ bio: e.target.value })} 
+                          rows={3} 
+                          maxLength={200} 
+                          placeholder="Tell us about yourself, your interests, or what you study..."
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-all" 
+                        />
+                      </div>
                     </div>
-                  </div>
-                </div>
-              )}
+                  )}
 
-              {/* Edit Career & Projects Tab */}
-              {editTab === 'career' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block font-medium flex items-center gap-1.5">
-                      <Target className="h-3.5 w-3.5 text-primary" />
-                      Career Goals
-                    </label>
-                    <textarea 
-                      id="field-careerGoals"
-                      value={profile.careerGoals || ''} 
-                      onChange={e => updateProfile({ careerGoals: e.target.value })} 
-                      rows={3} 
-                      placeholder="What are your career objectives? (e.g. Seeking full-time roles in Frontend engineering, interested in AI startups...)"
-                      className="w-full bg-secondary/80 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-shadow" 
-                    />
-                  </div>
-
-                  <TagBuilder
-                    id="field-projects"
-                    label="Projects"
-                    placeholder="e.g. Portfolio Website (Press Enter or Add)"
-                    tags={profile.projects || []}
-                    onAdd={(tag) => updateProfile({ projects: [...(profile.projects || []), tag] })}
-                    onRemove={(tag) => updateProfile({ projects: (profile.projects || []).filter(p => p !== tag) })}
-                  />
-
-                  <TagBuilder
-                    id="field-achievements"
-                    label="Achievements & Awards"
-                    placeholder="e.g. HackMIT Finalist (Press Enter or Add)"
-                    tags={profile.achievements || []}
-                    onAdd={(tag) => updateProfile({ achievements: [...(profile.achievements || []), tag] })}
-                    onRemove={(tag) => updateProfile({ achievements: (profile.achievements || []).filter(a => a !== tag) })}
-                  />
-                </div>
-              )}
-
-              {/* Save changes button */}
-              <Button onClick={handleSave} disabled={isLoading} className="w-full gradient-primary rounded-2xl h-12 font-semibold glow-primary mt-6">
-                {isLoading ? 'Saving...' : 'Save Changes'}
-              </Button>
-            </motion.div>
-          ) : (
-            <motion.div 
-              key="view" 
-              initial={{ opacity: 0, y: 10 }} 
-              animate={{ opacity: 1, y: 0 }} 
-              exit={{ opacity: 0, y: -10 }} 
-              className="space-y-4"
-            >
-              {/* Academic Metrics Row */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 flex flex-col justify-between shadow-lg">
-                  <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Academic CGPA</span>
-                  <div className="flex items-baseline gap-1 mt-3">
-                    <span className="text-3xl font-black text-[#16C784] tracking-tight">{profile.cgpa || '0.0'}</span>
-                    <span className="text-xs text-slate-400 font-semibold">/ 10.0</span>
-                  </div>
-                  <div className="w-full bg-white/5 h-1.5 rounded-full mt-4 overflow-hidden">
-                    <div className="bg-[#16C784] h-full rounded-full transition-all duration-500" style={{ width: `${(profile.cgpa || 0) * 10}%` }} />
-                  </div>
-                </div>
-
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 flex flex-col justify-between shadow-lg">
-                  <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Active Backlogs</span>
-                  <div className="flex items-baseline gap-1 mt-3">
-                    <span className={`text-3xl font-black tracking-tight ${profile.backlogs > 0 ? 'text-[#F04438]' : 'text-slate-200'}`}>
-                      {profile.backlogs !== undefined ? profile.backlogs : '0'}
-                    </span>
-                    <span className="text-xs text-slate-400 font-semibold">Pending</span>
-                  </div>
-                  <div className="w-full bg-white/5 h-1.5 rounded-full mt-4 overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-500 ${profile.backlogs > 0 ? 'bg-[#F04438]' : 'bg-white/10'}`} style={{ width: profile.backlogs > 0 ? '50%' : '0%' }} />
-                  </div>
-                </div>
-              </div>
-
-              {profile.bio && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-2">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 text-[#6D5EF5]" /> About Me
-                  </p>
-                  <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{profile.bio}</p>
-                </div>
-              )}
-
-              {profile.careerGoals && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-2">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <Target className="h-3.5 w-3.5 text-[#6D5EF5]" /> Career Objectives
-                  </p>
-                  <p className="text-xs text-slate-300 leading-relaxed">{profile.careerGoals}</p>
-                </div>
-              )}
-
-              {profile.skills && profile.skills.length > 0 && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <Briefcase className="h-3.5 w-3.5 text-[#6D5EF5]" /> Target Skills
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {profile.skills.map(s => (
-                      <span key={s} className="text-[10px] px-3 py-1.5 rounded-xl bg-[#6D5EF5]/10 text-[#6D5EF5] border border-[#6D5EF5]/20 font-bold uppercase tracking-wide">{s}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {profile.interests && profile.interests.length > 0 && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-[#6D5EF5]" /> Areas of Interest
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {profile.interests.map(i => (
-                      <span key={i} className="text-[10px] px-3 py-1.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold uppercase tracking-wide">{i}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {profile.projects && profile.projects.length > 0 && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <GraduationCap className="h-3.5 w-3.5 text-[#6D5EF5]" /> Academic Projects
-                  </p>
-                  <div className="space-y-2">
-                    {profile.projects.map((proj, index) => (
-                      <div key={index} className="flex gap-2.5 items-center bg-white/[0.02] border border-white/[0.04] p-3.5 rounded-2xl">
-                        <span className="h-2 w-2 rounded-full bg-[#6D5EF5]" />
-                        <span className="text-xs text-slate-200 font-bold">{proj}</span>
+                  {/* Edit Social Links */}
+                  {editTab === 'social' && (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide flex items-center gap-1.5">
+                          <Linkedin className="h-3.5 w-3.5 text-blue-400" />
+                          LinkedIn Profile URL
+                        </label>
+                        <input 
+                          id="field-linkedinUrl"
+                          value={profile.linkedinUrl || ''} 
+                          onChange={e => updateProfile({ linkedinUrl: e.target.value })} 
+                          placeholder="e.g. https://linkedin.com/in/username"
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
+                        />
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {profile.achievements && profile.achievements.length > 0 && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <Trophy className="h-3.5 w-3.5 text-[#6D5EF5]" /> Accomplishments & Awards
-                  </p>
-                  <div className="space-y-2">
-                    {profile.achievements.map((ach, index) => (
-                      <div key={index} className="flex gap-2.5 items-center bg-white/[0.02] border border-white/[0.04] p-3.5 rounded-2xl">
-                        <span className="h-2 w-2 rounded-full bg-[#16C784]" />
-                        <span className="text-xs text-slate-200 font-bold">{ach}</span>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide flex items-center gap-1.5">
+                          <Github className="h-3.5 w-3.5" />
+                          GitHub Profile URL
+                        </label>
+                        <input 
+                          id="field-githubUrl"
+                          value={profile.githubUrl || ''} 
+                          onChange={e => updateProfile({ githubUrl: e.target.value })} 
+                          placeholder="e.g. https://github.com/username"
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
+                        />
                       </div>
+                    </div>
+                  )}
+
+                  {/* Edit Skills & Clubs */}
+                  {editTab === 'skills' && (
+                    <div className="space-y-4">
+                      <TagBuilder
+                        id="field-skills"
+                        label="Skills"
+                        placeholder="e.g. React (Press Enter or Add)"
+                        tags={profile.skills || []}
+                        onAdd={(tag) => updateProfile({ skills: [...(profile.skills || []), tag] })}
+                        onRemove={(tag) => updateProfile({ skills: (profile.skills || []).filter(s => s !== tag) })}
+                      />
+
+                      <TagBuilder
+                        id="field-clubs"
+                        label="Clubs & Organizations"
+                        placeholder="e.g. Coding Club (Press Enter or Add)"
+                        tags={profile.clubs || []}
+                        onAdd={(tag) => updateProfile({ clubs: [...(profile.clubs || []), tag] })}
+                        onRemove={(tag) => updateProfile({ clubs: (profile.clubs || []).filter(c => c !== tag) })}
+                      />
+
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-2 block font-bold uppercase tracking-wide">Interests</label>
+                        <div className="flex flex-wrap gap-1.5 p-2 bg-zinc-950/60 rounded-2xl border border-white/5 max-h-48 overflow-y-auto">
+                          {INTERESTS.map(interest => {
+                            const hasInterest = profile.interests?.includes(interest);
+                            return (
+                              <motion.button
+                                key={interest}
+                                type="button"
+                                whileTap={{ scale: 0.92 }}
+                                onClick={() => {
+                                  const interests = hasInterest
+                                    ? (profile.interests || []).filter(i => i !== interest)
+                                    : [...(profile.interests || []), interest];
+                                  updateProfile({ interests });
+                                }}
+                                className={`rounded-full px-3 py-1.5 text-[11px] font-bold tracking-wide uppercase transition-all ${
+                                  hasInterest ? 'gradient-primary text-primary-foreground glow-primary' : 'bg-zinc-900/40 text-zinc-400 hover:text-white'
+                                }`}
+                              >
+                                {interest}
+                              </motion.button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Edit Career & Projects */}
+                  {editTab === 'career' && (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide flex items-center gap-1.5">
+                          <Target className="h-3.5 w-3.5 text-primary" />
+                          Career Goals
+                        </label>
+                        <textarea 
+                          id="field-careerGoals"
+                          value={profile.careerGoals || ''} 
+                          onChange={e => updateProfile({ careerGoals: e.target.value })} 
+                          rows={3} 
+                          placeholder="What are your career objectives?..."
+                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-all" 
+                        />
+                      </div>
+
+                      <TagBuilder
+                        id="field-projects"
+                        label="Projects"
+                        placeholder="e.g. Portfolio Website (Press Enter or Add)"
+                        tags={profile.projects || []}
+                        onAdd={(tag) => updateProfile({ projects: [...(profile.projects || []), tag] })}
+                        onRemove={(tag) => updateProfile({ projects: (profile.projects || []).filter(p => p !== tag) })}
+                      />
+
+                      <TagBuilder
+                        id="field-achievements"
+                        label="Achievements & Awards"
+                        placeholder="e.g. HackMIT Finalist (Press Enter or Add)"
+                        tags={profile.achievements || []}
+                        onAdd={(tag) => updateProfile({ achievements: [...(profile.achievements || []), tag] })}
+                        onRemove={(tag) => updateProfile({ achievements: (profile.achievements || []).filter(a => a !== tag) })}
+                      />
+                    </div>
+                  )}
+
+                  <Button onClick={handleSave} disabled={isLoading} className="w-full gradient-primary rounded-2xl h-12 font-bold tracking-wide uppercase glow-primary mt-6">
+                    {isLoading ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="view" 
+                  initial={{ opacity: 0, y: 15 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  exit={{ opacity: 0, y: -15 }} 
+                  className="space-y-6 w-full"
+                >
+                  
+                  {/* Full Width Dynamic Navigation Tabs */}
+                  <div className="flex border-b border-white/5 pb-0 mb-4 overflow-x-auto hide-scrollbar scroll-smooth">
+                    {[
+                      { id: 'about', label: 'About' },
+                      { id: 'feed', label: 'Feed' },
+                      { id: 'photos', label: 'Photos' },
+                      { id: 'videos', label: 'Videos' },
+                      { id: 'projects', label: 'Projects' },
+                      { id: 'achievements', label: 'Achievements' },
+                      { id: 'friends', label: 'Friends' }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={`pb-3 px-5 text-xs font-black uppercase tracking-wider transition-all relative whitespace-nowrap ${
+                          activeTab === tab.id 
+                            ? 'text-primary border-b-2 border-primary font-black' 
+                            : 'text-zinc-450 hover:text-zinc-200'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
                     ))}
                   </div>
-                </div>
-              )}
 
-              {profile.clubs && profile.clubs.length > 0 && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <Award className="h-3.5 w-3.5 text-[#6D5EF5]" /> Clubs & Societies
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {profile.clubs.map(c => (
-                      <span key={c} className="text-[10px] px-3 py-1.5 rounded-xl bg-pink-500/10 text-pink-400 border border-pink-500/20 font-bold uppercase tracking-wide">{c}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Saved Referrals Section */}
-              {savedReferrals && savedReferrals.length > 0 && (
-                <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-5 shadow-lg space-y-3">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                    <Briefcase className="h-3.5 w-3.5 text-[#6D5EF5]" /> Bookmarked Referrals
-                  </p>
-                  <div className="space-y-3">
-                    {savedReferrals.map((ref) => (
-                      <div key={ref.id || ref._id} className="flex flex-col bg-white/[0.02] p-4 rounded-2xl border border-white/[0.04] relative group">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="text-xs font-black text-white">{ref.jobTitle || ref.role}</h4>
-                            <p className="text-[10px] text-slate-400 mt-0.5">{ref.companyName || ref.company} • {ref.location || 'Remote'}</p>
+                  {/* TAB CONTENTS */}
+                  <div className="w-full">
+                    
+                    {/* 1. ABOUT TAB */}
+                    {activeTab === 'about' && (
+                      <div className="space-y-6">
+                        
+                        {/* Mobile Only: Profile strength layout */}
+                        <div className="block lg:hidden">
+                          <div className="glass-card p-5 mb-5 border border-white/[0.08] bg-zinc-950/20 relative overflow-hidden">
+                            <div className="flex items-center gap-4">
+                              <span className="text-xl font-black text-white">{profileCompletion}%</span>
+                              <div className="flex-1">
+                                <p className="text-xs font-bold text-white">{levelInfo.name}</p>
+                                <p className="text-[10px] text-zinc-400">Profile strength score</p>
+                              </div>
+                            </div>
                           </div>
-                          {(ref.applicationUrl || ref.applicationLink) && (
-                            <button
-                              onClick={() => {
-                                alumniProfileService.trackReferralClick(ref.id || ref._id).catch(console.error);
-                                alumniProfileService.trackReferralApply(ref.id || ref._id).catch(console.error);
-                                window.open(ref.applicationUrl || ref.applicationLink, '_blank');
-                              }}
-                              className="inline-flex items-center gap-1 text-[10px] text-[#6D5EF5] hover:underline font-black uppercase tracking-wider"
-                            >
-                              Apply Now
-                            </button>
-                          )}
                         </div>
-                        {ref.description && (
-                          <p className="text-xs text-slate-400 mt-2 line-clamp-2">{ref.description}</p>
+
+                        {/* Academic CGPA Cards */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 flex flex-col justify-between shadow-lg">
+                            <span className="text-[10px] text-zinc-450 font-extrabold uppercase tracking-widest">Academic CGPA</span>
+                            <div className="flex items-baseline gap-1 mt-3">
+                              <span className="text-3xl font-black text-[#16C784] tracking-tight">{profile.cgpa || '0.0'}</span>
+                              <span className="text-xs text-zinc-450 font-semibold">/ 10.0</span>
+                            </div>
+                            <div className="w-full bg-white/5 h-1.5 rounded-full mt-4 overflow-hidden">
+                              <div className="bg-[#16C784] h-full rounded-full transition-all duration-500" style={{ width: `${(profile.cgpa || 0) * 10}%` }} />
+                            </div>
+                          </div>
+
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 flex flex-col justify-between shadow-lg">
+                            <span className="text-[10px] text-zinc-450 font-extrabold uppercase tracking-widest">Active Backlogs</span>
+                            <div className="flex items-baseline gap-1 mt-3">
+                              <span className={`text-3xl font-black tracking-tight ${profile.backlogs > 0 ? 'text-[#F04438]' : 'text-slate-200'}`}>
+                                {profile.backlogs !== undefined ? profile.backlogs : '0'}
+                              </span>
+                              <span className="text-xs text-zinc-450 font-semibold">Pending</span>
+                            </div>
+                            <div className="w-full bg-white/5 h-1.5 rounded-full mt-4 overflow-hidden">
+                              <div className={`h-full rounded-full transition-all duration-500 ${profile.backlogs > 0 ? 'bg-[#F04438]' : 'bg-white/10'}`} style={{ width: profile.backlogs > 0 ? '50%' : '0%' }} />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Objectives */}
+                        {profile.careerGoals && (
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 shadow-lg space-y-2">
+                            <p className="text-[10px] text-zinc-450 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
+                              <Target className="h-4 w-4 text-primary" /> Career Objectives
+                            </p>
+                            <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed font-medium">{profile.careerGoals}</p>
+                          </div>
                         )}
-                        <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-white/[0.04] text-[10px] text-slate-500">
-                          <span className="font-medium">Shared by {ref.authorName}</span>
-                          <button
-                            onClick={async () => {
-                              try {
-                                if (!uid) return;
-                                await alumniProfileService.saveReferral(ref.id || ref._id, uid);
-                                setSavedReferrals(prev => prev.filter(r => (r.id || r._id) !== (ref.id || ref._id)));
-                                toast.success('Removed from saved referrals');
-                              } catch (err) {
-                                toast.error('Failed to unsave');
-                              }
-                            }}
-                            className="text-[#F04438] hover:text-[#F04438]/80 font-bold uppercase tracking-wider"
-                          >
-                            Remove
-                          </button>
-                        </div>
+
+                        {/* Skills */}
+                        {profile.skills && profile.skills.length > 0 && (
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 shadow-lg space-y-3">
+                            <p className="text-[10px] text-zinc-450 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
+                              <Briefcase className="h-4 w-4 text-primary" /> Target Skills
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {profile.skills.map(s => (
+                                <span key={s} className="text-[10px] px-3 py-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20 font-black uppercase tracking-wide">{s}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Areas of Interest */}
+                        {profile.interests && profile.interests.length > 0 && (
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 shadow-lg space-y-3">
+                            <p className="text-[10px] text-zinc-450 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
+                              <Sparkles className="h-4 w-4 text-primary" /> Areas of Interest
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {profile.interests.map(i => (
+                                <span key={i} className="text-[10px] px-3 py-1.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black uppercase tracking-wide">{i}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Clubs & Orgs */}
+                        {profile.clubs && profile.clubs.length > 0 && (
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 shadow-lg space-y-3">
+                            <p className="text-[10px] text-zinc-450 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
+                              <Award className="h-4 w-4 text-primary" /> Clubs & Societies
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {profile.clubs.map(c => (
+                                <span key={c} className="text-[10px] px-3 py-1.5 rounded-xl bg-pink-500/10 text-pink-400 border border-pink-500/20 font-black uppercase tracking-wide">{c}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Saved Referrals Section */}
+                        {savedReferrals && savedReferrals.length > 0 && (
+                          <div className="rounded-[24px] border border-white/[0.06] bg-zinc-950/20 p-5 shadow-lg space-y-3">
+                            <p className="text-[10px] text-zinc-450 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
+                              <Briefcase className="h-4 w-4 text-primary" /> Bookmarked Referrals
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {savedReferrals.map((ref) => (
+                                <div key={ref.id || ref._id} className="flex flex-col bg-zinc-900/10 p-4 rounded-2xl border border-white/5 relative group">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <h4 className="text-xs font-black text-white">{ref.jobTitle || ref.role}</h4>
+                                      <p className="text-[10px] text-zinc-400 mt-0.5">{ref.companyName || ref.company} • {ref.location || 'Remote'}</p>
+                                    </div>
+                                    {(ref.applicationUrl || ref.applicationLink) && (
+                                      <button
+                                        onClick={() => {
+                                          alumniProfileService.trackReferralClick(ref.id || ref._id).catch(console.error);
+                                          alumniProfileService.trackReferralApply(ref.id || ref._id).catch(console.error);
+                                          window.open(ref.applicationUrl || ref.applicationLink, '_blank');
+                                        }}
+                                        className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline font-black uppercase tracking-wider"
+                                      >
+                                        Apply
+                                      </button>
+                                    )}
+                                  </div>
+                                  {ref.description && (
+                                    <p className="text-xs text-zinc-450 mt-2 line-clamp-2">{ref.description}</p>
+                                  )}
+                                  <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-white/5 text-[10px] text-zinc-500">
+                                    <span className="font-semibold">By {ref.authorName}</span>
+                                    <button
+                                      onClick={async () => {
+                                        try {
+                                          if (!uid) return;
+                                          await alumniProfileService.saveReferral(ref.id || ref._id, uid);
+                                          setSavedReferrals(prev => prev.filter(r => (r.id || r._id) !== (ref.id || ref._id)));
+                                          toast.success('Removed bookmark');
+                                        } catch (err) {
+                                          toast.error('Failed to unsave');
+                                        }
+                                      }}
+                                      className="text-red-400 hover:text-red-500 font-bold uppercase tracking-wider"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
+                    )}
+
+                    {/* 2. FEED TAB */}
+                    {activeTab === 'feed' && (
+                      <div className="space-y-4">
+                        {profilePosts.length === 0 ? (
+                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
+                            No posts shared on feed yet.
+                          </div>
+                        ) : (
+                          profilePosts.map(post => (
+                            <div key={post.id || post._id} className="p-5 rounded-[24px] border border-white/[0.06] bg-zinc-950/20 shadow-md space-y-3">
+                              <div className="flex items-center gap-3">
+                                <img
+                                  src={profile.photos[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=me'}
+                                  alt=""
+                                  className="h-9 w-9 rounded-full object-cover border border-primary/30"
+                                />
+                                <div>
+                                  <h4 className="text-xs font-bold text-white">{profile.name}</h4>
+                                  <span className="text-[9px] text-zinc-500 font-medium">{new Date(post.createdAt).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                              <p className="text-xs sm:text-sm text-zinc-350 leading-relaxed">{post.content}</p>
+                              {post.image && (
+                                <div className="rounded-2xl overflow-hidden border border-white/5 bg-black/40 max-h-96">
+                                  <img src={post.image} alt="" className="w-full h-full object-cover" />
+                                </div>
+                              )}
+                              <div className="flex gap-4 pt-2 text-[10px] text-zinc-500 font-extrabold uppercase">
+                                <span>👍 {post.likes} Likes</span>
+                                <span>💬 {post.commentsCount} Comments</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    {/* 3. PHOTOS TAB */}
+                    {activeTab === 'photos' && (
+                      <div>
+                        {profileMedia.length === 0 ? (
+                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
+                            No photos shared yet.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {profileMedia.map(m => (
+                              <div key={m.id} className="aspect-square rounded-2xl overflow-hidden border border-white/5 bg-zinc-950/20 relative group cursor-pointer shadow-md">
+                                <img
+                                  src={m.url}
+                                  alt=""
+                                  className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-500"
+                                />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                  <span className="text-[10px] text-white font-extrabold uppercase tracking-widest">View Image</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 4. VIDEOS TAB */}
+                    {activeTab === 'videos' && (
+                      <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
+                        No videos uploaded yet.
+                      </div>
+                    )}
+
+                    {/* 5. PROJECTS TAB */}
+                    {activeTab === 'projects' && (
+                      <div className="space-y-3">
+                        {!profile.projects || profile.projects.length === 0 ? (
+                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
+                            No projects added yet.
+                          </div>
+                        ) : (
+                          profile.projects.map((proj, idx) => (
+                            <div key={idx} className="flex gap-4 items-center bg-zinc-950/20 border border-white/[0.04] p-4 rounded-2xl">
+                              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                <GraduationCap className="h-5 w-5 text-primary" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h4 className="text-xs sm:text-sm font-bold text-slate-200">{proj}</h4>
+                                <p className="text-[10px] text-zinc-500 mt-0.5">Academic / Personal Project</p>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    {/* 6. ACHIEVEMENTS TAB */}
+                    {activeTab === 'achievements' && (
+                      <div className="space-y-3">
+                        {!profile.achievements || profile.achievements.length === 0 ? (
+                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
+                            No achievements added yet.
+                          </div>
+                        ) : (
+                          profile.achievements.map((ach, idx) => (
+                            <div key={idx} className="flex gap-4 items-center bg-zinc-950/20 border border-white/[0.04] p-4 rounded-2xl">
+                              <div className="h-10 w-10 rounded-xl bg-[#16C784]/10 flex items-center justify-center flex-shrink-0">
+                                <Trophy className="h-5 w-5 text-[#16C784]" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h4 className="text-xs sm:text-sm font-bold text-slate-200">{ach}</h4>
+                                <p className="text-[10px] text-[#16C784] font-semibold mt-0.5">Verified accomplishment</p>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    {/* 7. FRIENDS TAB */}
+                    {activeTab === 'friends' && (
+                      <div>
+                        {profileFriends.length === 0 ? (
+                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
+                            No connections found.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                            {profileFriends.map(friend => (
+                              <div key={friend.id} className="flex items-center gap-3 p-3 rounded-2xl bg-zinc-950/20 border border-white/5 hover:bg-zinc-900/40 transition-colors cursor-pointer">
+                                <div className="relative flex-shrink-0">
+                                  <img
+                                    src={friend.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${friend.name}`}
+                                    alt=""
+                                    className="h-10 w-10 rounded-full object-cover border border-primary/20"
+                                  />
+                                  {friend.isOnline && (
+                                    <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-[#070709]" />
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <h4 className="text-xs font-bold text-white truncate">{friend.name}</h4>
+                                  <p className="text-[9px] text-zinc-500 truncate">{friend.department} • {friend.batch}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Right Panel widgets (25% Width) */}
+          <div className="lg:col-span-1 space-y-6 sticky top-6 hidden lg:block">
+            
+            {/* Widget 1: Profile strength ring */}
+            <div className="rounded-[24px] border border-white/[0.08] bg-zinc-950/40 p-5 space-y-4 shadow-[0_15px_30px_rgba(0,0,0,0.3)]">
+              <span className="text-[10px] text-zinc-450 font-black uppercase tracking-widest block">Profile Completeness</span>
+              
+              <div className="flex items-center gap-4">
+                <div className="relative h-16 w-16 flex-shrink-0">
+                  <svg className="w-full h-full transform -rotate-90">
+                    <circle
+                      cx="32"
+                      cy="32"
+                      r="26"
+                      className="stroke-white/5"
+                      strokeWidth="4.5"
+                      fill="transparent"
+                    />
+                    <circle
+                      cx="32"
+                      cy="32"
+                      r="26"
+                      className="stroke-primary"
+                      strokeWidth="4.5"
+                      fill="transparent"
+                      strokeDasharray={2 * Math.PI * 26}
+                      strokeDashoffset={2 * Math.PI * 26 - (2 * Math.PI * 26 * profileCompletion) / 100}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-xs font-black text-white">{profileCompletion}%</span>
+                  </div>
+                </div>
+                
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-xs font-bold text-white truncate">{levelInfo.name}</h4>
+                  <p className="text-[9px] text-zinc-450 mt-0.5 leading-snug">Strengthen profile to boost platform visibility.</p>
+                </div>
+              </div>
+
+              {missingItems.length > 0 && (
+                <div className="space-y-1.5 pt-3 border-t border-white/5">
+                  <span className="text-[9px] text-zinc-450 font-extrabold uppercase tracking-wide block">Next Steps:</span>
+                  <div className="space-y-1">
+                    {missingItems.slice(0, 2).map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => handleMissingItemClick(item.tab, item.id)}
+                        className="w-full text-[10px] text-zinc-350 hover:text-primary transition-colors flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/[0.04]"
+                      >
+                        <span>{item.actionText}</span>
+                        <span className="font-bold">+</span>
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Settings options */}
-        <div className="mt-8 space-y-2">
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-3">Settings</p>
-          <motion.button whileTap={{ scale: 0.98 }} onClick={() => setShowBlock(true)} className="w-full glass-card p-4 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-accent/10 flex items-center justify-center"><UserX className="h-4 w-4 text-accent" /></div>
-            <span className="text-sm text-foreground flex-1 text-left font-medium">Block / Report</span>
-            <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-          </motion.button>
-          <motion.button whileTap={{ scale: 0.98 }} onClick={() => navigate('/settings/privacy')} className="w-full glass-card p-4 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center"><Shield className="h-4 w-4 text-primary" /></div>
-            <span className="text-sm text-foreground flex-1 text-left font-medium">Privacy & Safety</span>
-            <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-          </motion.button>
-          <motion.button whileTap={{ scale: 0.98 }} onClick={() => navigate('/support')} className="w-full glass-card p-4 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-secondary flex items-center justify-center"><HelpCircle className="h-4 w-4 text-muted-foreground" /></div>
-            <span className="text-sm text-foreground flex-1 text-left font-medium">Help & Support</span>
-            <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-          </motion.button>
-          <motion.button 
-            whileTap={{ scale: 0.98 }} 
-            onClick={async () => {
-              setLoggingOut(true);
-              try {
-                await logout();
-              } catch (err) {
-                console.error('Logout failed:', err);
-                setLoggingOut(false);
-              }
-            }}
-            disabled={loggingOut}
-            className="w-full glass-card p-4 flex items-center gap-3 disabled:opacity-50"
-          >
-            <div className="h-9 w-9 rounded-xl bg-accent/10 flex items-center justify-center">
-              <LogOut className="h-4 w-4 text-accent" />
             </div>
-            <span className="text-sm text-accent flex-1 text-left font-semibold">
-              {loggingOut ? 'Logging out...' : 'Logout'}
-            </span>
-          </motion.button>
+
+            {/* Widget 2: Recent Profile Viewers */}
+            <div className="rounded-[24px] border border-white/[0.08] bg-zinc-950/40 p-5 space-y-4 shadow-[0_15px_30px_rgba(0,0,0,0.3)]">
+              <span className="text-[10px] text-zinc-450 font-black uppercase tracking-widest block flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-primary" /> Profile Viewers
+              </span>
+              
+              {viewersLoading ? (
+                <span className="text-[10px] text-zinc-500 italic block">Loading viewers...</span>
+              ) : viewers && viewers.length > 0 ? (
+                <div className="space-y-2.5">
+                  {viewers.slice(0, 4).map(v => (
+                    <div key={v._id} className="flex items-center gap-2.5">
+                      <img
+                        src={v.viewerId?.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${v.viewerId?.email}`}
+                        alt=""
+                        className="h-8 w-8 rounded-full border border-white/5 object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-white truncate">{v.viewerId?.name}</h4>
+                        <span className="text-[9px] text-zinc-550 block">Viewed profile recently</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[10px] text-zinc-500 italic block">No recent views.</span>
+              )}
+            </div>
+
+            {/* Widget 3: Quick Settings Action Panel */}
+            <div className="rounded-[24px] border border-white/[0.08] bg-zinc-950/40 p-5 space-y-2 shadow-[0_15px_30px_rgba(0,0,0,0.3)]">
+              <span className="text-[10px] text-zinc-450 font-black uppercase tracking-widest block mb-2">Quick Shortcuts</span>
+              
+              {[
+                { label: 'Privacy & Safety', icon: Shield, path: '/settings/privacy', color: 'text-primary bg-primary/10' },
+                { label: 'Help & Support', icon: HelpCircle, path: '/support', color: 'text-zinc-400 bg-secondary' },
+                { label: 'Block & Report', icon: UserX, action: () => setShowBlock(true), color: 'text-accent bg-accent/10' },
+              ].map((act, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => act.action ? act.action() : navigate(act.path!)}
+                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.02] hover:bg-white/5 transition-all text-left border border-white/[0.02]"
+                >
+                  <div className={`h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 ${act.color}`}>
+                    <act.icon className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs text-zinc-300 font-bold">{act.label}</span>
+                </button>
+              ))}
+
+              <button 
+                onClick={async () => {
+                  setLoggingOut(true);
+                  try {
+                    await logout();
+                  } catch (e) {
+                    setLoggingOut(false);
+                  }
+                }}
+                disabled={loggingOut}
+                className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-red-500/5 hover:bg-red-500/10 transition-all text-left border border-red-500/10 mt-2"
+              >
+                <div className="h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-red-500/10 text-red-400">
+                  <LogOut className="h-4 w-4" />
+                </div>
+                <span className="text-xs text-red-400 font-extrabold">{loggingOut ? 'Logging out...' : 'Logout'}</span>
+              </button>
+            </div>
+            
+          </div>
+
         </div>
       </div>
-
       {/* Block Modal */}
       <AnimatePresence>
         {showBlock && (

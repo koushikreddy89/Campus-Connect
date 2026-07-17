@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
-const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification } = require('./models');
+const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity } = require('./models');
 const emailService = require('./emailService');
 const crypto = require('crypto');
 const { validatePasswordStrength, isDisposableEmail, generateCaptcha, verifyCaptcha } = require('./securityUtils');
@@ -3607,8 +3607,20 @@ router.post('/connections/request', async (req, res) => {
       );
 
       // Create dual links or single connection doc
-      const conn = new Connection({ user1: fromUserId, user2: toUserId });
-      await conn.save();
+      const sortedIds = [fromUserId, toUserId].sort();
+      const conversationKey = `${sortedIds[0]}_${sortedIds[1]}`;
+      let conn = await Connection.findOne({ conversationKey });
+      if (!conn) {
+        conn = new Connection({
+          user1: fromUserId,
+          user2: toUserId,
+          conversationKey,
+          participants: sortedIds,
+          lastMessage: '',
+          lastMessageAt: new Date()
+        });
+        await conn.save();
+      }
 
       // Trigger notifications for both users
       const senderObj = await User.findOne({ userId: fromUserId });
@@ -3677,8 +3689,20 @@ router.post('/connections/accept', async (req, res) => {
     request.status = 'accepted';
     await request.save();
 
-    const conn = new Connection({ user1: request.fromUserId, user2: request.toUserId });
-    await conn.save();
+    const sortedIds = [request.fromUserId, request.toUserId].sort();
+    const conversationKey = `${sortedIds[0]}_${sortedIds[1]}`;
+    let conn = await Connection.findOne({ conversationKey });
+    if (!conn) {
+      conn = new Connection({
+        user1: request.fromUserId,
+        user2: request.toUserId,
+        conversationKey,
+        participants: sortedIds,
+        lastMessage: '',
+        lastMessageAt: new Date()
+      });
+      await conn.save();
+    }
 
     const recipientObj = await User.findOne({ userId: request.toUserId });
     await createNotification({
@@ -3949,11 +3973,20 @@ router.get('/connections', requireAuth, async (req, res) => {
     const userId = req.user.userId;
     const connections = await Connection.find({
       $or: [{ user1: userId }, { user2: userId }]
-    });
+    }).sort({ lastMessageAt: -1, updatedAt: -1 });
 
     const matches = [];
+    const seenUserIds = new Set();
+
     for (const conn of connections) {
       const otherUserId = conn.user1 === userId ? conn.user2 : conn.user1;
+      
+      // Prevent duplicate rendering
+      if (seenUserIds.has(otherUserId)) {
+        continue;
+      }
+      seenUserIds.add(otherUserId);
+
       let otherUser = await User.findOne({ userId: otherUserId }) || await Alumni.findOne({ userId: otherUserId });
       
       if (otherUser) {
@@ -3991,7 +4024,9 @@ router.get('/connections', requireAuth, async (req, res) => {
           },
           matchedAt: conn.createdAt.toISOString(),
           unreadCount,
-          isRevealed: conn.isRevealed
+          isRevealed: true, // Always true to ensure real name & avatar are displayed (Never Anonymous)
+          lastMessage: conn.lastMessage || '',
+          lastMessageTime: conn.lastMessageAt ? conn.lastMessageAt.toISOString() : (conn.updatedAt || conn.createdAt).toISOString()
         });
       }
     }
@@ -4217,6 +4252,11 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       retentionMode: retentionMode || 'NEVER_DELETE'
     });
     await newMsg.save();
+
+    // Update connection lastMessage and lastMessageAt
+    conn.lastMessage = finalMessageType === 'image' ? 'Sent an image' : (text || 'Sent an attachment');
+    conn.lastMessageAt = newMsg.timestamp || new Date();
+    await conn.save();
 
     let notificationText = finalMessageType === 'image' ? 'Sent an image' : (text || 'Sent an attachment');
     if (isViewOnce) {
@@ -4886,6 +4926,11 @@ router.post('/messages/:id/share', requireAuth, async (req, res) => {
     });
     await newMsg.save();
 
+    // Update connection lastMessage and lastMessageAt
+    connTarget.lastMessage = msg.messageType === 'image' ? 'Sent an image' : (msg.text || 'Sent an attachment');
+    connTarget.lastMessageAt = newMsg.timestamp || new Date();
+    await connTarget.save();
+
     if (global.io) {
       global.io.to(`match_${targetMatchId}`).emit('message:received', newMsg);
     }
@@ -5037,7 +5082,7 @@ router.post('/chats/forward', requireAuth, async (req, res) => {
         }
 
         const gMsg = new GroupMessage({
-          groupId: targetId,
+          circleId: targetId,
           senderId: req.user._id,
           senderName,
           messageType: messageType || 'text',
@@ -5291,7 +5336,7 @@ router.get('/groups/:groupId/messages', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied: Group belongs to a different college.' });
     }
 
-    const list = await GroupMessage.find({ groupId }).sort({ timestamp: 1 });
+    const list = await GroupMessage.find({ circleId: groupId }).sort({ timestamp: 1 });
     res.json({ success: true, data: list });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -5324,8 +5369,8 @@ router.post('/groups/:groupId/messages', requireAuth, async (req, res) => {
     }
 
     const gMsg = new GroupMessage({
-      groupId,
-      senderId: req.user._id, // Save Mongoose ObjectId!
+      circleId: groupId,
+      senderId: req.user.userId, // Save custom string userId so frontend logic can match it natively!
       senderName,
       text,
       timestamp: new Date()
@@ -5337,7 +5382,514 @@ router.post('/groups/:groupId/messages', requireAuth, async (req, res) => {
       lastMessageAt: new Date()
     });
 
+    if (global.io) {
+      console.log(`📡 Emitting newCircleMessage to room circle:${groupId}:`, gMsg.text);
+      global.io.to(`circle:${groupId}`).emit('newCircleMessage', gMsg);
+    }
+
     res.json({ success: true, data: gMsg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/circles/:id - Retrieve group details
+router.get('/circles/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+    if (!group.members.includes(req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied: You are not a member of this circle.' });
+    }
+    if (req.user.role !== 'super_admin' && group.college !== req.user.college) {
+      return res.status(403).json({ success: false, error: 'Access denied: Group belongs to a different college.' });
+    }
+    res.json({ success: true, data: group });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/circles/:id/members - Retrieve group members details
+router.get('/circles/:id/members', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+    if (!group.members.includes(req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied: You are not a member.' });
+    }
+
+    const membersInfo = [];
+    for (const memberId of group.members) {
+      let profile = await User.findOne({ userId: memberId }).select('userId name photos department batch college isOnline lastSeen') ||
+                    await Alumni.findOne({ userId: memberId }).select('userId name photos department batch college isOnline lastSeen');
+      
+      if (profile) {
+        let role = 'member';
+        if (memberId === group.createdBy) {
+          role = 'owner';
+        } else if (group.admins && group.admins.includes(memberId)) {
+          role = 'admin';
+        }
+        membersInfo.push({
+          id: profile.userId,
+          name: profile.name,
+          avatar: profile.photos?.[0] || '',
+          department: profile.department || 'General',
+          batch: profile.batch || 'N/A',
+          college: profile.college || 'SR University',
+          isOnline: profile.isOnline || false,
+          lastSeen: profile.lastSeen || '',
+          role
+        });
+      }
+    }
+
+    res.json({ success: true, data: membersInfo });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/circles/:id/media - Get group shared media, docs, links
+router.get('/circles/:id/media', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+    if (!group.members.includes(req.user.userId)) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const messages = await GroupMessage.find({ circleId: id });
+    const photos = [];
+    const videos = [];
+    const documents = [];
+    const links = [];
+
+    messages.forEach(m => {
+      // Process attachments
+      if (m.attachments && m.attachments.length > 0) {
+        m.attachments.forEach(att => {
+          const payload = {
+            fileName: att.fileName,
+            fileSize: att.fileSize,
+            downloadUrl: att.downloadUrl,
+            mimeType: att.mimeType,
+            timestamp: m.timestamp
+          };
+          if (att.mimeType.startsWith('image/')) {
+            photos.push(payload);
+          } else if (att.mimeType.startsWith('video/')) {
+            videos.push(payload);
+          } else {
+            documents.push(payload);
+          }
+        });
+      }
+
+      // Detect links in message text
+      if (m.text) {
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const matches = m.text.match(urlRegex);
+        if (matches) {
+          matches.forEach(url => {
+            links.push({
+              url,
+              text: m.text,
+              senderName: m.senderName,
+              timestamp: m.timestamp
+            });
+          });
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      data: { photos, videos, documents, links }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/circles/:id/activity - Fetch circle activity timeline
+router.get('/circles/:id/activity', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const logs = await GroupActivity.find({ circleId: id }).sort({ timestamp: -1 }).limit(50);
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/circles/:id - Edit group settings
+router.patch('/circles/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, avatar, privacy } = req.body;
+    
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+
+    const isOwner = group.createdBy === req.user.userId;
+    const isAdmin = group.admins && group.admins.includes(req.user.userId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, error: 'Access denied: Requires admin privileges.' });
+    }
+
+    let actorName = 'Someone';
+    const user = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (user) actorName = user.name;
+
+    const updates = {};
+    const activities = [];
+
+    if (name && name !== group.name) {
+      updates.name = name;
+      activities.push({
+        circleId: id,
+        actorId: req.user.userId,
+        actorName,
+        action: 'name_change',
+        targetName: name
+      });
+    }
+
+    if (description !== undefined && description !== group.description) {
+      updates.description = description;
+      activities.push({
+        circleId: id,
+        actorId: req.user.userId,
+        actorName,
+        action: 'description_change',
+        targetName: description
+      });
+    }
+
+    if (avatar && avatar !== group.avatar) {
+      updates.avatar = avatar;
+      activities.push({
+        circleId: id,
+        actorId: req.user.userId,
+        actorName,
+        action: 'photo_change'
+      });
+    }
+
+    if (privacy && privacy !== group.privacy) {
+      updates.privacy = privacy;
+    }
+
+    const updated = await GroupChat.findByIdAndUpdate(id, updates, { new: true });
+    
+    if (activities.length > 0) {
+      await GroupActivity.insertMany(activities);
+    }
+
+    if (global.io) {
+      global.io.to(`circle:${id}`).emit('circleUpdated', { circleId: id, updates: updated });
+      activities.forEach(act => {
+        global.io.to(`circle:${id}`).emit('newCircleActivity', act);
+      });
+    }
+
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/circles/:id/members - Add members to circle
+router.post('/circles/:id/members', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { memberIds } = req.body; // array of userIds
+    
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+
+    const isOwner = group.createdBy === req.user.userId;
+    const isAdmin = group.admins && group.admins.includes(req.user.userId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    let actorName = 'Someone';
+    const actorObj = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (actorObj) actorName = actorObj.name;
+
+    const newMembers = memberIds.filter(mid => !group.members.includes(mid));
+    if (newMembers.length === 0) {
+      return res.json({ success: true, data: group });
+    }
+
+    group.members.push(...newMembers);
+    await group.save();
+
+    const logs = [];
+    for (const mid of newMembers) {
+      let targetName = 'User';
+      const u = await User.findOne({ userId: mid }) || await Alumni.findOne({ userId: mid });
+      if (u) targetName = u.name;
+
+      logs.push({
+        circleId: id,
+        actorId: req.user.userId,
+        actorName,
+        action: 'join',
+        targetId: mid,
+        targetName
+      });
+    }
+
+    await GroupActivity.insertMany(logs);
+
+    if (global.io) {
+      global.io.to(`circle:${id}`).emit('membersUpdated', { circleId: id, members: group.members });
+      logs.forEach(log => {
+        global.io.to(`circle:${id}`).emit('newCircleActivity', log);
+      });
+    }
+
+    res.json({ success: true, data: group });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE /api/circles/:id/members/:memberId - Remove member / leave group
+router.delete('/circles/:id/members/:memberId', requireAuth, async (req, res) => {
+  try {
+    const { id, memberId } = req.params;
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+
+    const isOwner = group.createdBy === req.user.userId;
+    const isAdmin = group.admins && group.admins.includes(req.user.userId);
+    const isSelf = memberId === req.user.userId;
+
+    if (!isSelf && !isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, error: 'Access denied: Insufficient permissions.' });
+    }
+
+    // Owner cannot be removed
+    if (memberId === group.createdBy) {
+      return res.status(400).json({ success: false, error: 'Owner cannot leave or be removed. Transfer ownership first.' });
+    }
+
+    // Admin cannot remove other admin/owner
+    if (!isSelf && isAdmin && !isOwner && group.admins.includes(memberId)) {
+      return res.status(403).json({ success: false, error: 'Admins cannot remove other admins.' });
+    }
+
+    group.members = group.members.filter(m => m !== memberId);
+    if (group.admins) {
+      group.admins = group.admins.filter(a => a !== memberId);
+    }
+    await group.save();
+
+    let actorName = 'Someone';
+    const actorObj = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (actorObj) actorName = actorObj.name;
+
+    let targetName = 'User';
+    const targetObj = await User.findOne({ userId: memberId }) || await Alumni.findOne({ userId: memberId });
+    if (targetObj) targetName = targetObj.name;
+
+    const log = new GroupActivity({
+      circleId: id,
+      actorId: req.user.userId,
+      actorName,
+      action: isSelf ? 'leave' : 'remove',
+      targetId: memberId,
+      targetName
+    });
+    await log.save();
+
+    if (global.io) {
+      global.io.to(`circle:${id}`).emit('membersUpdated', { circleId: id, members: group.members });
+      global.io.to(`circle:${id}`).emit('newCircleActivity', log);
+    }
+
+    res.json({ success: true, message: 'Member removed successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/circles/:id/member-role - Promote or demote group members
+router.patch('/circles/:id/member-role', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { targetUserId, action } = req.body; // action: 'promote' | 'demote'
+
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+
+    if (group.createdBy !== req.user.userId) {
+      return res.status(403).json({ success: false, error: 'Access denied: Requires Group Owner privileges.' });
+    }
+
+    if (!group.members.includes(targetUserId)) {
+      return res.status(400).json({ success: false, error: 'Target user is not a member of this group.' });
+    }
+
+    let actorName = 'Owner';
+    const actorObj = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (actorObj) actorName = actorObj.name;
+
+    let targetName = 'Member';
+    const targetObj = await User.findOne({ userId: targetUserId }) || await Alumni.findOne({ userId: targetUserId });
+    if (targetObj) targetName = targetObj.name;
+
+    if (action === 'promote') {
+      if (!group.admins.includes(targetUserId)) {
+        group.admins.push(targetUserId);
+      }
+    } else if (action === 'demote') {
+      group.admins = group.admins.filter(a => a !== targetUserId);
+    }
+
+    await group.save();
+
+    const log = new GroupActivity({
+      circleId: id,
+      actorId: req.user.userId,
+      actorName,
+      action: action === 'promote' ? 'promote' : 'demote',
+      targetId: targetUserId,
+      targetName
+    });
+    await log.save();
+
+    if (global.io) {
+      global.io.to(`circle:${id}`).emit('circleUpdated', { circleId: id, updates: group });
+      global.io.to(`circle:${id}`).emit('newCircleActivity', log);
+    }
+
+    res.json({ success: true, data: group });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/circles/:id/invite - Generate/regenerate group invite link
+router.post('/circles/:id/invite', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+
+    const isOwner = group.createdBy === req.user.userId;
+    const isAdmin = group.admins && group.admins.includes(req.user.userId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+
+    const inviteCode = crypto.randomBytes(6).toString('hex');
+    group.inviteCode = inviteCode;
+    await group.save();
+
+    res.json({
+      success: true,
+      data: {
+        inviteCode,
+        inviteLink: `http://localhost:8081/circles/join/${inviteCode}`
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/circles/join/:inviteCode - Join via invite link
+router.post('/circles/join/:inviteCode', requireAuth, async (req, res) => {
+  try {
+    const { inviteCode } = req.params;
+    const group = await GroupChat.findOne({ inviteCode });
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Invalid invite code.' });
+    }
+
+    if (group.members.includes(req.user.userId)) {
+      return res.json({ success: true, message: 'Already a member of this circle.', data: group });
+    }
+
+    // College check
+    if (req.user.role !== 'super_admin' && group.college !== req.user.college) {
+      return res.status(403).json({ success: false, error: 'Access denied: College mismatch.' });
+    }
+
+    group.members.push(req.user.userId);
+    await group.save();
+
+    let actorName = 'Someone';
+    const actorObj = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (actorObj) actorName = actorObj.name;
+
+    const log = new GroupActivity({
+      circleId: group._id.toString(),
+      actorId: req.user.userId,
+      actorName,
+      action: 'join',
+      targetName: 'via Invite Link'
+    });
+    await log.save();
+
+    if (global.io) {
+      global.io.to(`circle:${group._id}`).emit('membersUpdated', { circleId: group._id.toString(), members: group.members });
+      global.io.to(`circle:${group._id}`).emit('newCircleActivity', log);
+    }
+
+    res.json({ success: true, message: 'Successfully joined the circle.', data: group });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE /api/circles/:id - Delete group
+router.delete('/circles/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const group = await GroupChat.findById(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found.' });
+    }
+
+    if (group.createdBy !== req.user.userId) {
+      return res.status(403).json({ success: false, error: 'Access denied: Only the group owner can delete the group.' });
+    }
+
+    await GroupChat.findByIdAndDelete(id);
+    await GroupMessage.deleteMany({ circleId: id });
+    await GroupActivity.deleteMany({ circleId: id });
+
+    if (global.io) {
+      global.io.to(`circle:${id}`).emit('circleDeleted', { circleId: id });
+    }
+
+    res.json({ success: true, message: 'Group deleted successfully.' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -7885,7 +8437,436 @@ router.post('/notifications/delete', requireAuth, async (req, res) => {
   }
 });
 
-// Export createNotification so other service logic can call it
+// Helper to look up users by userId field or MongoDB ObjectId
+const findUserByIdOrUid = async (id) => {
+  if (!id) return null;
+  const query = mongoose.isValidObjectId(id) ? { $or: [{ userId: id }, { _id: id }] } : { userId: id };
+  return await User.findOne(query) || await Alumni.findOne(query);
+};
+
+// GET /api/users/:id/profile - Fetch complete user profile details
+router.get('/users/:id/profile', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const isSelf = id === req.user.userId;
+
+    let target = await findUserByIdOrUid(id);
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    const resolvedId = target.userId;
+
+    // Determine relationship
+    const isFriend = target.connections && target.connections.includes(req.user.userId);
+    const isFollowing = target.followers && target.followers.includes(req.user.userId);
+    const isBlocked = target.blockedUsers && target.blockedUsers.includes(req.user.userId);
+
+    // Calculate stats counts
+    const friendsCount = target.connections ? target.connections.length : 0;
+    const followersCount = target.followers ? target.followers.length : 0;
+    
+    const followingCount = await User.countDocuments({ followers: resolvedId }) + 
+                           await Alumni.countDocuments({ followers: resolvedId });
+    
+    const circlesCount = await GroupChat.countDocuments({ members: resolvedId });
+    
+    // Count posts
+    const postsCount = await Post.countDocuments({ authorId: resolvedId }) + 
+                       await StudentPost.countDocuments({ userId: resolvedId });
+    
+    const achievementsCount = await Achievement.countDocuments({ userId: resolvedId });
+
+    // Privacy logic
+    const isPrivate = target.isPrivateProfile || target.profileVisibility === 'Private' || 
+                      (target.profileVisibility === 'Connections Only' && !isFriend && !isSelf);
+
+    const profileData = {
+      id: resolvedId,
+      name: target.name || target.fullName || 'Anonymous',
+      username: target.email ? target.email.split('@')[0] : 'user',
+      avatar: target.photos?.[0] || target.profileImage || '',
+      college: target.college || 'SR University',
+      department: target.department || target.designation || 'General',
+      year: target.year || 'N/A',
+      batch: target.batch || target.batchYear || 'N/A',
+      bio: target.bio || target.careerJourney || 'Welcome to my profile!',
+      isOnline: target.isOnline || false,
+      lastSeen: target.lastSeen || '',
+      createdAt: target.createdAt,
+      isVerified: target.approvalStatus === 'approved' || target.isFeatured,
+      stats: {
+        friends: friendsCount,
+        followers: followersCount,
+        following: followingCount,
+        circles: circlesCount,
+        posts: postsCount,
+        achievements: achievementsCount
+      },
+      skills: target.skills || [],
+      interests: target.interests || [],
+      languages: ['English', 'Telugu', 'Hindi'],
+      portfolioUrl: target.portfolioUrl || '',
+      githubUrl: target.githubUrl || '',
+      linkedinUrl: target.linkedinUrl || '',
+      email: (!isPrivate || isSelf) ? target.email : undefined,
+      isPrivateProfile: isPrivate,
+      relationship: {
+        isFriend,
+        isFollowing,
+        isBlocked,
+        hasBlockedYou: target.blockedUsers && target.blockedUsers.includes(req.user.userId)
+      }
+    };
+
+    res.json({ success: true, data: profileData });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/users/:id/posts - Fetch posts created by the user
+router.get('/users/:id/posts', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // College isolation/privacy check
+    let target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const resolvedId = target.userId;
+    const isFriend = target.connections && target.connections.includes(req.user.userId);
+    const isSelf = resolvedId === req.user.userId;
+    const isPrivate = target.isPrivateProfile || target.profileVisibility === 'Private' || 
+                      (target.profileVisibility === 'Connections Only' && !isFriend && !isSelf);
+
+    if (isPrivate && !isSelf) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const posts = await Post.find({ authorId: resolvedId }).sort({ createdAt: -1 });
+    const studentPosts = await StudentPost.find({ userId: resolvedId }).sort({ createdAt: -1 });
+    
+    // Combine and format
+    const allPosts = [
+      ...posts.map(p => ({
+        id: p._id,
+        content: p.content,
+        image: p.image || p.imageUrl,
+        likes: p.likes || 0,
+        commentsCount: p.comments ? p.comments.length : 0,
+        createdAt: p.createdAt,
+        type: 'general'
+      })),
+      ...studentPosts.map(sp => ({
+        id: sp._id,
+        content: sp.content,
+        image: sp.image || sp.imageUrl,
+        likes: sp.likes || 0,
+        commentsCount: sp.comments ? sp.comments.length : 0,
+        createdAt: sp.createdAt,
+        type: 'student'
+      }))
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    res.json({ success: true, data: allPosts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/users/:id/media - Fetch images/videos shared by the user
+router.get('/users/:id/media', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    let target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const resolvedId = target.userId;
+    const isFriend = target.connections && target.connections.includes(req.user.userId);
+    const isSelf = resolvedId === req.user.userId;
+    const isPrivate = target.isPrivateProfile || target.profileVisibility === 'Private' || 
+                      (target.profileVisibility === 'Connections Only' && !isFriend && !isSelf);
+
+    if (isPrivate && !isSelf) {
+      return res.json({ success: true, data: [] });
+    }
+
+    // Grab images from posts
+    const posts = await Post.find({ authorId: resolvedId, image: { $ne: null, $ne: '' } });
+    const studentPosts = await StudentPost.find({ userId: resolvedId, image: { $ne: null, $ne: '' } });
+    
+    // Grab shared files from GroupMessage
+    const groupMessages = await GroupMessage.find({ senderId: resolvedId, messageType: 'image' });
+
+    const mediaList = [
+      ...posts.map(p => ({
+        id: p._id,
+        url: p.image || p.imageUrl,
+        type: 'image',
+        createdAt: p.createdAt
+      })),
+      ...studentPosts.map(sp => ({
+        id: sp._id,
+        url: sp.image || sp.imageUrl,
+        type: 'image',
+        createdAt: sp.createdAt
+      })),
+      ...groupMessages.map(gm => ({
+        id: gm._id,
+        url: gm.text || (gm.attachments && gm.attachments[0]?.downloadUrl) || '',
+        type: 'image',
+        createdAt: gm.timestamp
+      }))
+    ].filter(m => m.url).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    res.json({ success: true, data: mediaList });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/users/:id/friends - Fetch friends/connections
+router.get('/users/:id/friends', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const friendIds = target.connections || [];
+    const friends = [];
+    for (const fId of friendIds) {
+      const u = await User.findOne({ userId: fId }).select('userId name photos department batch college isOnline') ||
+                await Alumni.findOne({ userId: fId }).select('userId name photos department batch college isOnline');
+      if (u) {
+        friends.push({
+          id: u.userId,
+          name: u.name,
+          avatar: u.photos?.[0] || '',
+          department: u.department || 'General',
+          batch: u.batch || 'N/A',
+          isOnline: u.isOnline || false
+        });
+      }
+    }
+
+    res.json({ success: true, data: friends });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/users/:id/followers - Fetch followers
+router.get('/users/:id/followers', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const followerIds = target.followers || [];
+    const followers = [];
+    for (const fId of followerIds) {
+      const u = await User.findOne({ userId: fId }).select('userId name photos department batch college isOnline') ||
+                await Alumni.findOne({ userId: fId }).select('userId name photos department batch college isOnline');
+      if (u) {
+        followers.push({
+          id: u.userId,
+          name: u.name,
+          avatar: u.photos?.[0] || '',
+          department: u.department || 'General',
+          batch: u.batch || 'N/A',
+          isOnline: u.isOnline || false
+        });
+      }
+    }
+
+    res.json({ success: true, data: followers });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/users/:id/mutual - Calculate mutual friends & mutual groups
+router.get('/users/:id/mutual', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const resolvedId = target.userId;
+    const isSelf = resolvedId === req.user.userId;
+    if (isSelf) return res.json({ success: true, data: { friends: [], circles: [] } });
+
+    const me = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (!me) return res.status(404).json({ success: false, error: 'Current user not found.' });
+
+    const myFriends = new Set(me.connections || []);
+    const targetFriends = target.connections || [];
+    const mutualFriendIds = targetFriends.filter(fId => myFriends.has(fId));
+
+    const mutualFriends = [];
+    for (const fId of mutualFriendIds) {
+      const u = await User.findOne({ userId: fId }).select('userId name photos department batch isOnline') ||
+                await Alumni.findOne({ userId: fId }).select('userId name photos department batch isOnline');
+      if (u) {
+        mutualFriends.push({
+          id: u.userId,
+          name: u.name,
+          avatar: u.photos?.[0] || '',
+          department: u.department || 'General',
+          batch: u.batch || 'N/A',
+          isOnline: u.isOnline || false
+        });
+      }
+    }
+
+    // Mutual groups
+    const myGroups = await GroupChat.find({ members: req.user.userId });
+    const mutualCircles = [];
+    for (const g of myGroups) {
+      if (g.members.includes(resolvedId)) {
+        mutualCircles.push({
+          id: g._id.toString(),
+          name: g.name,
+          avatar: g.avatar,
+          membersCount: g.members.length
+        });
+      }
+    }
+
+    res.json({ success: true, data: { friends: mutualFriends, circles: mutualCircles } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/users/:id/follow - Toggle follow status
+router.post('/api/users/:id/follow', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const resolvedId = target.userId;
+    if (resolvedId === req.user.userId) return res.status(400).json({ success: false, error: 'Cannot follow yourself.' });
+
+    const isFollowing = target.followers && target.followers.includes(req.user.userId);
+    if (isFollowing) {
+      target.followers = target.followers.filter(fId => fId !== req.user.userId);
+    } else {
+      if (!target.followers) target.followers = [];
+      target.followers.push(req.user.userId);
+    }
+    await target.save();
+
+    if (global.io) {
+      global.io.to(`user_${resolvedId}`).emit('relationshipChanged', {
+        userId: req.user.userId,
+        isFollowing: !isFollowing
+      });
+    }
+
+    res.json({ success: true, isFollowing: !isFollowing });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/users/:id/block - Toggle block status
+router.post('/api/users/:id/block', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const resolvedId = target.userId;
+    if (resolvedId === req.user.userId) return res.status(400).json({ success: false, error: 'Cannot block yourself.' });
+
+    let me = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (!me) return res.status(404).json({ success: false, error: 'Current user not found.' });
+
+    const isBlocked = me.blockedUsers && me.blockedUsers.includes(resolvedId);
+    if (isBlocked) {
+      me.blockedUsers = me.blockedUsers.filter(bId => bId !== resolvedId);
+    } else {
+      if (!me.blockedUsers) me.blockedUsers = [];
+      me.blockedUsers.push(resolvedId);
+    }
+    await me.save();
+
+    res.json({ success: true, isBlocked: !isBlocked });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/users/:id/report - Report profile
+router.post('/api/users/:id/report', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await findUserByIdOrUid(id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const resolvedId = target.userId;
+    const { reason, category } = req.body;
+
+    const report = new Report({
+      reporterId: req.user.userId,
+      targetUserId: resolvedId,
+      reason: reason || 'Inappropriate profile description or avatar.',
+      category: category || 'profile',
+      status: 'pending',
+      timestamp: new Date()
+    });
+    await report.save();
+
+    res.json({ success: true, message: 'Report submitted successfully. Thank you for keeping Campus Connect safe! 🛡️' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/circles/:circleId/invite/:userId - Invite user to circle
+router.post('/circles/:circleId/invite/:userId', requireAuth, async (req, res) => {
+  try {
+    const { circleId, userId } = req.params;
+
+    const group = await GroupChat.findById(circleId);
+    if (!group) return res.status(404).json({ success: false, error: 'Group not found.' });
+
+    // Try resolving target user
+    const targetUser = await findUserByIdOrUid(userId);
+    if (!targetUser) return res.status(404).json({ success: false, error: 'Target user not found.' });
+
+    const resolvedUserId = targetUser.userId;
+
+    if (group.members.includes(resolvedUserId)) {
+      return res.status(400).json({ success: false, error: 'User is already a member of this circle.' });
+    }
+
+    let actorName = 'Someone';
+    const actorObj = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    if (actorObj) actorName = actorObj.name;
+
+    // Send notification to the user
+    await createNotification(
+      resolvedUserId,
+      null,
+      req.user.userId,
+      'group_invite',
+      'Circle Group Invitation',
+      `${actorName} invited you to join the circle: "${group.name}".`,
+      `Join this circle to chat and collaborate.`,
+      circleId
+    );
+
+    res.json({ success: true, message: 'Invitation sent successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports.createNotification = createNotification;
 
 module.exports = router;

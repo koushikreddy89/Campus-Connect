@@ -25,7 +25,11 @@ export const useGroupChatStore = create<GroupChatState>((set, get) => ({
     try {
       const res = await groupChatApi.getGroups();
       if (res && res.success) {
-        set({ groups: res.data || [] });
+        const mapped = (res.data || []).map((g: any) => ({
+          ...g,
+          id: g.id || g._id
+        }));
+        set({ groups: mapped });
       }
     } catch (error) {
       console.error('Error fetching groups in store:', error);
@@ -37,10 +41,14 @@ export const useGroupChatStore = create<GroupChatState>((set, get) => ({
       const res = await groupChatApi.getGroupMessages(groupId);
       if (res && res.success) {
         const currentMessages = get().groupMessages;
+        const mapped = (res.data || []).map((m: any) => ({
+          ...m,
+          id: m.id || m._id
+        }));
         set({
           groupMessages: {
             ...currentMessages,
-            [groupId]: res.data || []
+            [groupId]: mapped
           }
         });
       }
@@ -54,7 +62,11 @@ export const useGroupChatStore = create<GroupChatState>((set, get) => ({
       const res = await groupChatApi.createGroup(name, memberIds);
       if (res && res.success && res.data) {
         const list = get().groups;
-        set({ groups: [res.data, ...list] });
+        const newGroup = {
+          ...res.data,
+          id: res.data.id || res.data._id
+        };
+        set({ groups: [newGroup, ...list] });
       }
     } catch (error) {
       console.error('Error creating group in store:', error);
@@ -67,6 +79,10 @@ export const useGroupChatStore = create<GroupChatState>((set, get) => ({
       if (res && res.success && res.data) {
         const currentMessages = get().groupMessages;
         const list = currentMessages[groupId] || [];
+        const newMsg = {
+          ...res.data,
+          id: res.data.id || res.data._id
+        };
         
         // Update last message details in groups list
         const updatedGroups = get().groups.map(g =>
@@ -78,7 +94,7 @@ export const useGroupChatStore = create<GroupChatState>((set, get) => ({
         set({
           groupMessages: {
             ...currentMessages,
-            [groupId]: [...list, res.data]
+            [groupId]: [...list, newMsg]
           },
           groups: updatedGroups
         });

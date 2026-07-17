@@ -606,11 +606,23 @@ module.exports = {
     content: { type: String, required: true }
   }, { timestamps: true }), 'comments'),
 
-  Connection: mongoose.model('Connection', new mongoose.Schema({
-    user1: { type: String, required: true },
-    user2: { type: String, required: true },
-    isRevealed: { type: Boolean, default: false }
-  }, { timestamps: true }), 'connections'),
+  Connection: mongoose.model('Connection', (() => {
+    const schema = new mongoose.Schema({
+      user1: { type: String, required: true },
+      user2: { type: String, required: true },
+      isRevealed: { type: Boolean, default: false },
+      conversationKey: { type: String, unique: true, index: true },
+      participants: { type: [String] },
+      lastMessage: { type: String, default: '' },
+      lastMessageAt: { type: Date }
+    }, { timestamps: true });
+    
+    schema.index({ participants: 1 });
+    schema.index({ updatedAt: -1 });
+    schema.index({ lastMessageAt: -1 });
+    
+    return schema;
+  })(), 'connections'),
 
   FriendRequest: mongoose.model('FriendRequest', new mongoose.Schema({
     fromUserId: { type: String, required: true },
@@ -699,11 +711,16 @@ module.exports = {
     members: { type: [String], required: true },
     createdBy: { type: String, required: true },
     lastMessage: { type: String, default: '' },
-    lastMessageAt: { type: Date }
+    lastMessageAt: { type: Date },
+    description: { type: String, default: 'Welcome to this circle!' },
+    privacy: { type: String, enum: ['public', 'private'], default: 'public' },
+    admins: { type: [String], default: [] },
+    inviteCode: { type: String, unique: true, sparse: true },
+    mutedBy: { type: [String], default: [] }
   }, { timestamps: true }), 'group_chats'),
 
   GroupMessage: mongoose.model('GroupMessage', new mongoose.Schema({
-    groupId: { type: String, required: true },
+    circleId: { type: String, required: true },
     senderId: { type: String, required: true },
     senderName: { type: String, default: '' },
     messageType: { type: String, enum: ['text', 'image', 'file'], default: 'text' },
@@ -735,7 +752,17 @@ module.exports = {
     bgColor: { type: String, default: '' },
     viewers: { type: [String], default: [] },
     expiresAt: { type: Date, required: true }
-  }, { timestamps: true }), 'stories')
+  }, { timestamps: true }), 'stories'),
+
+  GroupActivity: mongoose.model('GroupActivity', new mongoose.Schema({
+    circleId: { type: String, required: true, index: true },
+    actorId: { type: String, required: true },
+    actorName: { type: String, required: true },
+    action: { type: String, required: true }, // 'create', 'join', 'leave', 'photo_change', 'name_change', 'description_change', 'promote', 'demote', 'remove'
+    targetId: { type: String },
+    targetName: { type: String },
+    timestamp: { type: Date, default: Date.now }
+  }, { timestamps: true }), 'group_activity')
 };
 
 // New models schemas

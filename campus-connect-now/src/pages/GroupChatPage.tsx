@@ -10,6 +10,8 @@ import { toast } from 'sonner';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { socketService } from '@/services/socketService';
 
+const EMPTY_MESSAGES: any[] = [];
+
 export default function GroupChatPage({ 
   embeddedGroupId,
   toggleSidebar 
@@ -24,9 +26,10 @@ export default function GroupChatPage({
   const messagesEnd = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const lastMessageCount = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const group = useGroupChatStore(s => s.groups.find(g => g.id === groupId));
-  const messages = useGroupChatStore(s => s.groupMessages[groupId!] || []);
+  const messages = useGroupChatStore(s => s.groupMessages[groupId!] || EMPTY_MESSAGES);
   const currentUserId = useAuthStore(s => s._id);
   const sendGroupMessage = useGroupChatStore(s => s.sendGroupMessage);
   const fetchGroupMessages = useGroupChatStore(s => s.fetchGroupMessages);
@@ -40,10 +43,10 @@ export default function GroupChatPage({
     setText(val);
     const socket = socketService.getSocket();
     if (socket?.connected && groupId) {
-      socket.emit('typing', { roomId: groupId, userId: currentUserId, isTyping: true });
+      socket.emit('typing', { roomId: `circle:${groupId}`, userId: currentUserId, isTyping: true });
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit('typing', { roomId: groupId, userId: currentUserId, isTyping: false });
+        socket.emit('typing', { roomId: `circle:${groupId}`, userId: currentUserId, isTyping: false });
       }, 1500);
     }
   };
@@ -56,12 +59,51 @@ export default function GroupChatPage({
     };
   }, []);
 
-  // Join the group chat room on load
+  // Join the group chat room on load & setup socket listeners
   useEffect(() => {
     if (groupId) {
-      socketService.joinRoom(groupId);
+      console.log(`📡 Joining group chat socket room for circle:${groupId}`);
+      const socket = socketService.getSocket();
+      socketService.joinRoom(`circle:${groupId}`);
+
+      const handleNewMessage = (msg: any) => {
+        console.log("🔊 Received new circle message via socket:", msg.text);
+        if (msg.circleId === groupId) {
+          const mappedMsg = {
+            ...msg,
+            id: msg.id || msg._id
+          };
+          useGroupChatStore.setState(state => {
+            const currentMessages = state.groupMessages[groupId] || [];
+            // Prevent duplicate message appends
+            if (currentMessages.some(m => m.id === mappedMsg.id || m._id === mappedMsg._id || (m as any)._id === mappedMsg.id || m.id === (mappedMsg as any)._id)) {
+              return state;
+            }
+            return {
+              groupMessages: {
+                ...state.groupMessages,
+                [groupId]: [...currentMessages, mappedMsg]
+              }
+            };
+          });
+        }
+      };
+
+      if (socket) {
+        socket.on('newCircleMessage', handleNewMessage);
+      }
+
+      // Auto-focus input on change of chat
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+
       return () => {
-        socketService.leaveRoom(groupId);
+        console.log(`📡 Leaving group chat socket room for circle:${groupId}`);
+        socketService.leaveRoom(`circle:${groupId}`);
+        if (socket) {
+          socket.off('newCircleMessage', handleNewMessage);
+        }
       };
     }
   }, [groupId]);
@@ -110,6 +152,9 @@ export default function GroupChatPage({
     if (!text.trim()) return;
     sendGroupMessage(groupId!, text.trim());
     setText('');
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
   };
 
   const handleCopyText = (txt: string) => {
@@ -311,11 +356,15 @@ export default function GroupChatPage({
             </button>
             
             <input
+              ref={inputRef}
+              type="text"
               value={text}
               onChange={e => handleTextChange(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSend()}
+              onMouseDown={e => { e.stopPropagation(); inputRef.current?.focus(); }}
               placeholder={`Message ${group.name}...`}
-              className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-650 outline-none"
+              className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-655 outline-none pointer-events-auto"
+              style={{ caretColor: 'white' }}
             />
 
             <motion.button

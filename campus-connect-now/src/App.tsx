@@ -511,7 +511,7 @@ const App = () => {
                   path="/chat/:matchId"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><ChatPage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />
@@ -519,7 +519,7 @@ const App = () => {
                   path="/chat/group/:groupId"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><GroupChatPage /></ProtectedRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />

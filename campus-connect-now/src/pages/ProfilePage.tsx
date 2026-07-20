@@ -1,9 +1,11 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, memo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useProfileStore } from '@/store/profileStore';
+import { useMatchStore } from '@/store/matchStore';
 import { alumniProfileService } from '@/services/alumniService';
 import { useProfileViewerStore } from '@/store/profileViewerStore';
+import { matchApi } from '@/services/api';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { Button } from '@/components/ui/button';
 import { INTERESTS, COURSES, YEARS } from '@/data/constants';
@@ -29,7 +31,27 @@ import {
   Trophy, 
   GraduationCap, 
   Mail, 
-  AlertCircle 
+  AlertCircle,
+  Newspaper,
+  Users,
+  UserCheck,
+  UserPlus,
+  MessageSquare,
+  Network,
+  Phone,
+  Video,
+  MoreVertical,
+  Share2,
+  Trash2,
+  ShieldOff,
+  AlertTriangle,
+  Link2,
+  Copy,
+  CheckCircle2,
+  UserMinus,
+  Plus,
+  Search,
+  User
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -107,6 +129,305 @@ const TagBuilder = ({
   );
 };
 
+interface FriendCardProps {
+  friend: any;
+  idx: number;
+  navigate: any;
+  mutualCounts: Record<string, number>;
+  setSelectedMutualFriends: (friends: any[]) => void;
+  handleRemoveFriend: (id: string) => void;
+  handleBlockUser: (id: string) => void;
+  chatWithUser: (id: string) => void;
+  activeMenuId: string | null;
+  setActiveMenuId: (id: string | null) => void;
+}
+
+const FriendCard = memo(({
+  friend,
+  idx,
+  navigate,
+  mutualCounts,
+  setSelectedMutualFriends,
+  handleRemoveFriend,
+  handleBlockUser,
+  chatWithUser,
+  activeMenuId,
+  setActiveMenuId
+}: FriendCardProps) => {
+  const [isHovered, setIsHovered] = useState(false);
+
+  const handleCardClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.no-nav')) {
+      return;
+    }
+    navigate(`/profile/${friend.id}`);
+  };
+
+  const handleCardKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      navigate(`/profile/${friend.id}`);
+    } else if (e.key === 'Escape') {
+      setActiveMenuId(null);
+    }
+  };
+
+  const longPressTimeout = useRef<any>(null);
+  const handleTouchStart = () => {
+    longPressTimeout.current = setTimeout(() => {
+      if (navigator.vibrate) navigator.vibrate(60);
+      setIsHovered(true);
+      toast.info(`Quick actions active for ${friend.name}`);
+    }, 600);
+  };
+  const handleTouchEnd = () => {
+    if (longPressTimeout.current) clearTimeout(longPressTimeout.current);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: idx * 0.04 }}
+      whileHover={{ 
+        y: -4,
+        boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.3), 0 8px 10px -6px rgb(0 0 0 / 0.3)",
+        borderColor: "rgba(139, 92, 246, 0.25)"
+      }}
+      onClick={handleCardClick}
+      onKeyDown={handleCardKeyDown}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => {
+        setIsHovered(false);
+        setActiveMenuId(null);
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      tabIndex={0}
+      role="button"
+      aria-label={`Friend card for ${friend.name}. Click to view profile.`}
+      className="group relative glass-card p-4 border border-white/[0.08] bg-zinc-950/20 rounded-2xl flex flex-col justify-between transition-colors duration-300 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50"
+    >
+      <div className="absolute top-3 right-3 z-20 no-nav">
+        <div className="relative inline-block text-left">
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveMenuId(activeMenuId === friend.id ? null : friend.id);
+            }}
+            className="p-1.5 rounded-lg bg-zinc-900 border border-white/10 text-zinc-400 hover:text-white transition-all active:scale-95"
+            aria-haspopup="true"
+            aria-expanded={activeMenuId === friend.id}
+            aria-label="More options menu"
+          >
+            <MoreVertical className="w-3.5 h-3.5" />
+          </button>
+          
+          <AnimatePresence>
+            {activeMenuId === friend.id && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 w-36 bg-zinc-950 border border-white/10 rounded-xl py-1 mt-1 shadow-xl z-50 pointer-events-auto"
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(`${window.location.origin}/profile/${friend.id}`);
+                    toast.success('Profile URL copied to clipboard');
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-zinc-350 hover:bg-white/5 hover:text-white transition-colors flex items-center gap-1.5"
+                >
+                  <Share2 className="w-3 h-3" /> Share Profile
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(`${window.location.origin}/profile/${friend.id}`);
+                    toast.success('Profile link copied! 📋');
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-zinc-350 hover:bg-white/5 hover:text-white transition-colors flex items-center gap-1.5"
+                >
+                  <Link2 className="w-3 h-3" /> Copy Profile Link
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toast.info(`Reported ${friend.name} successfully.`);
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-amber-500 hover:bg-amber-500/10 transition-colors flex items-center gap-1.5"
+                >
+                  <AlertCircle className="w-3 h-3" /> Report User
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveFriend(friend.id);
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-amber-450 hover:bg-amber-500/10 transition-colors flex items-center gap-1.5"
+                >
+                  <UserMinus className="w-3 h-3" /> Remove Friend
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleBlockUser(friend.id);
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-1.5"
+                >
+                  <UserX className="w-3 h-3" /> Block User
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <div className="flex gap-3">
+        <div className="relative flex-shrink-0">
+          <motion.img
+            src={friend.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${friend.name}`}
+            alt=""
+            animate={{ scale: isHovered ? 1.05 : 1 }}
+            transition={{ duration: 0.3 }}
+            className="h-14 w-14 rounded-2xl object-cover border border-white/10 group-hover:border-violet-500/30"
+          />
+          {friend.isOnline ? (
+            <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border-2 border-[#09090b] shadow-glow" />
+          ) : (
+            <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-zinc-650 border-2 border-[#09090b]" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h4 className="text-xs sm:text-sm font-black text-white hover:text-violet-400 transition-colors truncate flex items-center gap-1">
+            {friend.name}
+            {friend.isOnline && (
+              <span className="text-[8px] bg-emerald-500/10 text-emerald-400 px-1 rounded font-bold uppercase tracking-widest scale-90">Active</span>
+            )}
+          </h4>
+          <p className="text-[10px] text-zinc-400 truncate mt-0.5 font-medium">{friend.department} • Batch {friend.batch}</p>
+          <p className="text-[9px] text-zinc-555 truncate mt-1">SR University</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5 relative min-h-[40px]">
+        <div className="flex items-center gap-1.5">
+          <div className="flex -space-x-1.5">
+            {[1, 2, 3].map(i => (
+              <img
+                key={i}
+                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=mutual${i * idx}`}
+                className="h-4.5 w-4.5 rounded-full border border-[#09090b] object-cover"
+                alt=""
+              />
+            ))}
+          </div>
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              try {
+                const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+                const headers = { 'Authorization': `Bearer ${token}` };
+                const res = await fetch(`${getApiUrl()}/api/users/${friend.id}/mutual`, { headers });
+                const json = await res.json();
+                if (json.success && json.data) {
+                  setSelectedMutualFriends(json.data.friends || []);
+                }
+              } catch (err) {
+                toast.error("Failed to load mutual connections");
+              }
+            }}
+            className="text-[9px] text-zinc-450 hover:text-violet-400 transition-colors font-bold no-nav"
+          >
+            +{mutualCounts[friend.id] || 0} Mutual
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {isHovered && (
+            <motion.div 
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 5 }}
+              transition={{ duration: 0.2 }}
+              className="absolute right-0 bottom-0 flex gap-1.5 no-nav bg-zinc-950/80 backdrop-blur-md px-2 py-1 rounded-xl border border-white/[0.04] shadow-lg shadow-black/50"
+            >
+              <div className="relative group/btn">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    chatWithUser(friend.id);
+                  }}
+                  className="h-7 w-7 rounded-full bg-zinc-900 border border-white/10 hover:bg-violet-600 hover:text-white text-zinc-350 transition-all flex items-center justify-center hover:scale-110 active:scale-95"
+                >
+                  <MessageSquare className="w-3 h-3" />
+                </button>
+                <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-zinc-950 border border-white/15 text-[8px] font-bold text-white rounded-md opacity-0 group-hover/btn:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap shadow-xl">
+                  Message
+                </span>
+              </div>
+
+              <div className="relative group/btn">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toast.info(`Initiating voice call to ${friend.name}...`);
+                  }}
+                  className="h-7 w-7 rounded-full bg-zinc-900 border border-white/10 hover:bg-violet-600 hover:text-white text-zinc-350 transition-all flex items-center justify-center hover:scale-110 active:scale-95"
+                >
+                  <Phone className="w-3 h-3" />
+                </button>
+                <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-zinc-950 border border-white/15 text-[8px] font-bold text-white rounded-md opacity-0 group-hover/btn:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap shadow-xl">
+                  Voice Call
+                </span>
+              </div>
+
+              <div className="relative group/btn">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toast.info(`Initiating video call to ${friend.name}...`);
+                  }}
+                  className="h-7 w-7 rounded-full bg-zinc-900 border border-white/10 hover:bg-violet-600 hover:text-white text-zinc-350 transition-all flex items-center justify-center hover:scale-110 active:scale-95"
+                >
+                  <Video className="w-3 h-3" />
+                </button>
+                <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-zinc-950 border border-white/15 text-[8px] font-bold text-white rounded-md opacity-0 group-hover/btn:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap shadow-xl">
+                  Video Call
+                </span>
+              </div>
+
+              <div className="relative group/btn">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/profile/${friend.id}`);
+                  }}
+                  className="h-7 w-7 rounded-full bg-zinc-900 border border-white/10 hover:bg-violet-600 hover:text-white text-zinc-350 transition-all flex items-center justify-center hover:scale-110 active:scale-95"
+                >
+                  <User className="w-3 h-3" />
+                </button>
+                <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-zinc-950 border border-white/15 text-[8px] font-bold text-white rounded-md opacity-0 group-hover/btn:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap shadow-xl">
+                  View Profile
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+});
+
+FriendCard.displayName = 'FriendCard';
+
 export default function ProfilePage() {
   const navigate = useNavigate();
   const profile = useProfileStore(s => s.profile);
@@ -129,6 +450,157 @@ export default function ProfilePage() {
   const [profileFriends, setProfileFriends] = useState<any[]>([]);
   const [profileFollowers, setProfileFollowers] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'feed' | 'photos' | 'videos' | 'projects' | 'achievements' | 'documents' | 'about' | 'friends'>('about');
+
+  // Friends Page Redesign states
+  const [friendsSubTab, setFriendsSubTab] = useState<'all' | 'requests' | 'suggestions' | 'mutual' | 'recent' | 'online' | 'blocked'>('all');
+  const [friendsSearchQuery, setFriendsSearchQuery] = useState('');
+  const [friendsFilterDept, setFriendsFilterDept] = useState('all');
+  const [friendsFilterBatch, setFriendsFilterBatch] = useState('all');
+  const [friendsFilterOnlineOnly, setFriendsFilterOnlineOnly] = useState(false);
+  const [friendsSortBy, setFriendsSortBy] = useState<'name' | 'recent' | 'mutual'>('name');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [selectedMutualFriends, setSelectedMutualFriends] = useState<any[] | null>(null);
+  const [activeFriendMenuId, setActiveFriendMenuId] = useState<string | null>(null);
+
+  const [showBlock, setShowBlock] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [savedReferrals, setSavedReferrals] = useState<any[]>([]);
+
+  // Block & Report variables
+  const [modalTab, setModalTab] = useState<'block' | 'report'>('block');
+  const [blockSearch, setBlockSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [blockedUsersList, setBlockedUsersList] = useState<any[]>([]);
+  const [reportReason, setReportReason] = useState('Spam');
+  const [reportDescription, setReportDescription] = useState('');
+  const [selectedReportUser, setSelectedReportUser] = useState<any>(null);
+  const [submittingReport, setSubmittingReport] = useState(false);
+
+  const [mutualCounts, setMutualCounts] = useState<Record<string, number>>({});
+
+  const fetchMutualCount = async (friendId: string) => {
+    if (mutualCounts[friendId] !== undefined) return;
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+      const headers = { 'Authorization': `Bearer ${token}` };
+      const res = await fetch(`${getApiUrl()}/api/users/${friendId}/mutual`, { headers });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setMutualCounts(prev => ({ ...prev, [friendId]: json.data.friends?.length || 0 }));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId: string) => {
+    try {
+      const res = await matchApi.removeConnection(friendId);
+      if (res && res.success) {
+        toast.success("Friend removed successfully");
+        fetchStats(); // re-fetch connections
+      } else {
+        toast.error(res.error || "Failed to remove friend");
+      }
+    } catch (e) {
+      toast.error("Failed to remove friend");
+    }
+  };
+
+  // Dynamic Departments from current connections pool
+  const dynamicDepartments = useMemo(() => {
+    const depts = new Set<string>();
+    profileFriends.forEach(f => { if (f.department) depts.add(f.department); });
+    suggestions.forEach(s => { if (s.department) depts.add(s.department); });
+    return Array.from(depts);
+  }, [profileFriends, suggestions]);
+
+  // Dynamic Batches from current connections pool
+  const dynamicBatches = useMemo(() => {
+    const batches = new Set<string>();
+    profileFriends.forEach(f => { if (f.batch) batches.add(String(f.batch)); });
+    suggestions.forEach(s => { if (s.batch) batches.add(String(s.batch)); });
+    return Array.from(batches).sort();
+  }, [profileFriends, suggestions]);
+
+  // Filtered lists for Friends tab redesign
+  const filteredFriends = useMemo(() => {
+    return profileFriends.filter(friend => {
+      const query = friendsSearchQuery.toLowerCase();
+      const matchesSearch = 
+        friend.name.toLowerCase().includes(query) ||
+        (friend.department || '').toLowerCase().includes(query) ||
+        (friend.username || '').toLowerCase().includes(query) ||
+        (friend.skills || []).some((s: string) => s.toLowerCase().includes(query)) ||
+        (friend.interests || []).some((i: string) => i.toLowerCase().includes(query));
+      
+      const matchesDept = friendsFilterDept === 'all' || friend.department === friendsFilterDept;
+      const matchesBatch = friendsFilterBatch === 'all' || String(friend.batch).includes(friendsFilterBatch);
+      const matchesOnline = !friendsFilterOnlineOnly || friend.isOnline;
+      return matchesSearch && matchesDept && matchesBatch && matchesOnline;
+    }).sort((a, b) => {
+      if (friendsSortBy === 'name') return a.name.localeCompare(b.name);
+      if (friendsSortBy === 'recent') return (b.joinedAt || 0) - (a.joinedAt || 0); // fallback or sorted joined date
+      if (friendsSortBy === 'mutual') return (mutualCounts[b.id] || 0) - (mutualCounts[a.id] || 0);
+      if (friendsSortBy === 'active') return (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0);
+      return 0;
+    });
+  }, [profileFriends, friendsSearchQuery, friendsFilterDept, friendsFilterBatch, friendsFilterOnlineOnly, friendsSortBy, mutualCounts]);
+
+  const filteredRequests = useMemo(() => {
+    return pendingRequests.filter(req => 
+      (req.fromUser?.name || '').toLowerCase().includes(friendsSearchQuery.toLowerCase())
+    );
+  }, [pendingRequests, friendsSearchQuery]);
+
+  const filteredSuggestions = useMemo(() => {
+    return suggestions.filter(sug => 
+      (sug.name || '').toLowerCase().includes(friendsSearchQuery.toLowerCase()) ||
+      (sug.department || '').toLowerCase().includes(friendsSearchQuery.toLowerCase())
+    );
+  }, [suggestions, friendsSearchQuery]);
+
+  const filteredBlocked = useMemo(() => {
+    return blockedUsersList.filter(u => 
+      (u.name || '').toLowerCase().includes(friendsSearchQuery.toLowerCase())
+    );
+  }, [blockedUsersList, friendsSearchQuery]);
+
+  const displayCount = useMemo(() => {
+    if (friendsSubTab === 'all' || friendsSubTab === 'recent') return filteredFriends.length;
+    if (friendsSubTab === 'requests') return filteredRequests.length;
+    if (friendsSubTab === 'suggestions') return filteredSuggestions.length;
+    if (friendsSubTab === 'online') return filteredFriends.filter(f => f.isOnline).length;
+    if (friendsSubTab === 'blocked') return filteredBlocked.length;
+    if (friendsSubTab === 'mutual') return filteredFriends.filter(f => (mutualCounts[f.id] || 0) > 0).length;
+    return 0;
+  }, [friendsSubTab, filteredFriends, filteredRequests, filteredSuggestions, blockedUsersList, mutualCounts]);
+
+  const chatWithUser = async (friendId: string) => {
+    try {
+      toast.loading('Opening messaging channel...', { id: 'chat-nav' });
+      const res = await matchApi.resolveConnection(friendId);
+      if (res && res.success && res.data) {
+        const matchData = res.data;
+        const currentMatches = useMatchStore.getState().matches;
+        if (!currentMatches.find(m => m.id === matchData.id)) {
+          useMatchStore.getState().setMatches([matchData, ...currentMatches]);
+        }
+        toast.success('Connected!', { id: 'chat-nav' });
+        navigate(`/chat/${matchData.id}`);
+      } else {
+        toast.error(res?.error || 'Failed to establish messaging channel.', { id: 'chat-nav' });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to resolve conversation.', { id: 'chat-nav' });
+    }
+  };
 
   const fetchStats = async () => {
     try {
@@ -173,20 +645,7 @@ export default function ProfilePage() {
     }
   };
   
-  const [showBlock, setShowBlock] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [savedReferrals, setSavedReferrals] = useState<any[]>([]);
 
-  // Block & Report variables
-  const [modalTab, setModalTab] = useState<'block' | 'report'>('block');
-  const [blockSearch, setBlockSearch] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [blockedUsersList, setBlockedUsersList] = useState<any[]>([]);
-  const [reportReason, setReportReason] = useState('Spam');
-  const [reportDescription, setReportDescription] = useState('');
-  const [selectedReportUser, setSelectedReportUser] = useState<any>(null);
-  const [submittingReport, setSubmittingReport] = useState(false);
 
   const loadSavedReferrals = async () => {
     try {
@@ -199,12 +658,42 @@ export default function ProfilePage() {
     }
   };
 
+  const fetchSuggestions = async () => {
+    setSuggestionsLoading(true);
+    try {
+      const res = await matchApi.getSwipePool();
+      if (res && res.success) {
+        setSuggestions(res.data || []);
+      }
+    } catch (e) {
+      console.error('Error fetching suggestions:', e);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  const fetchConnectionRequests = async () => {
+    setRequestsLoading(true);
+    try {
+      const res = await matchApi.getConnectionRequests();
+      if (res && res.success) {
+        setPendingRequests(res.data || []);
+      }
+    } catch (e) {
+      console.error('Error fetching connection requests:', e);
+    } finally {
+      setRequestsLoading(false);
+    }
+  };
+
   // Sync profile from backend on mount
   useEffect(() => {
     if (uid) {
       loadProfile(uid);
       loadSavedReferrals();
       fetchStats();
+      fetchSuggestions();
+      fetchConnectionRequests();
     }
   }, [uid, loadProfile]);
 
@@ -212,6 +701,30 @@ export default function ProfilePage() {
   useEffect(() => {
     fetchViewers(10);
   }, [fetchViewers]);
+
+  // Fetch mutual friends count for connections and recommendations
+  useEffect(() => {
+    if (profileFriends.length > 0) {
+      profileFriends.forEach(f => {
+        fetchMutualCount(f.id);
+      });
+    }
+  }, [profileFriends]);
+
+  useEffect(() => {
+    if (suggestions.length > 0) {
+      suggestions.forEach(s => {
+        fetchMutualCount(s.userId);
+      });
+    }
+  }, [suggestions]);
+
+  // Load blocked users when Blocked tab is selected
+  useEffect(() => {
+    if (friendsSubTab === 'blocked') {
+      fetchBlockedUsers();
+    }
+  }, [friendsSubTab]);
 
   // Handle ESC key to close Block Modal
   useEffect(() => {
@@ -240,9 +753,10 @@ export default function ProfilePage() {
       if (blockSearch.trim()) {
         setSearchLoading(true);
         try {
-          const res = await fetch(`http://localhost:5000/api/users/search?q=${encodeURIComponent(blockSearch)}`, {
+          const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+          const res = await fetch(`${getApiUrl()}/api/users/search?q=${encodeURIComponent(blockSearch)}`, {
             headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`
+              'Authorization': `Bearer ${token}`
             }
           });
           const json = await res.json();
@@ -265,9 +779,10 @@ export default function ProfilePage() {
   // Fetch Blocked users list
   const fetchBlockedUsers = async () => {
     try {
-      const res = await fetch(`http://localhost:5000/api/privacy-settings`, {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+      const res = await fetch(`${getApiUrl()}/api/privacy-settings`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         }
       });
       const json = await res.json();
@@ -287,11 +802,12 @@ export default function ProfilePage() {
 
   const handleBlockUser = async (userIdToBlock: string) => {
     try {
-      const res = await fetch('http://localhost:5000/api/users/block', {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+      const res = await fetch(`${getApiUrl()}/api/users/block`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ userIdToBlock })
       });
@@ -310,11 +826,12 @@ export default function ProfilePage() {
 
   const handleUnblockUser = async (userIdToUnblock: string) => {
     try {
-      const res = await fetch('http://localhost:5000/api/users/unblock', {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+      const res = await fetch(`${getApiUrl()}/api/users/unblock`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ userIdToUnblock })
       });
@@ -567,24 +1084,37 @@ export default function ProfilePage() {
                 )}
               </div>
             </div>
-
-            {/* Statistics Cards Row */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+            {/* Redesigned Premium Glassmorphism Statistics Cards Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3.5">
               {[
-                { label: 'Posts', value: profileStats?.posts || 0, color: 'text-violet-400', bg: 'bg-violet-500/5 border-violet-500/10' },
-                { label: 'Friends', value: profileStats?.friends || 0, color: 'text-blue-400', bg: 'bg-blue-500/5 border-blue-500/10' },
-                { label: 'Followers', value: profileStats?.followers || 0, color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/5 border-fuchsia-500/10' },
-                { label: 'Following', value: profileStats?.following || 0, color: 'text-indigo-400', bg: 'bg-indigo-500/5 border-indigo-500/10' },
-                { label: 'Circles', value: profileStats?.circles || 0, color: 'text-teal-400', bg: 'bg-teal-500/5 border-teal-500/10' },
-                { label: 'Achievements', value: profileStats?.achievements || 0, color: 'text-amber-400', bg: 'bg-amber-500/5 border-amber-500/10' },
-                { label: 'Projects', value: profile?.projects?.length || 0, color: 'text-rose-400', bg: 'bg-rose-500/5 border-rose-500/10' },
-                { label: 'Mutual', value: 0, color: 'text-emerald-400', bg: 'bg-emerald-500/5 border-emerald-500/10' },
-              ].map((stat, i) => (
-                <div key={i} className={`p-4 rounded-2xl border ${stat.bg} flex flex-col items-center justify-center text-center shadow-lg transition-all hover:-translate-y-0.5 duration-300`}>
-                  <span className={`text-2xl font-black ${stat.color} tracking-tight`}>{stat.value}</span>
-                  <span className="text-[9px] text-zinc-400 font-extrabold uppercase mt-1 tracking-wider">{stat.label}</span>
-                </div>
-              ))}
+                { label: 'Posts', value: profileStats?.posts || 0, color: 'from-violet-500/20 to-purple-500/5', border: 'border-violet-500/20 hover:border-violet-500/40', textColor: 'text-violet-400', glow: 'shadow-violet-500/5', icon: Newspaper },
+                { label: 'Friends', value: profileStats?.friends || 0, color: 'from-blue-500/20 to-cyan-500/5', border: 'border-blue-500/20 hover:border-blue-500/40', textColor: 'text-blue-400', glow: 'shadow-blue-500/5', icon: Users },
+                { label: 'Followers', value: profileStats?.followers || 0, color: 'from-fuchsia-500/20 to-pink-500/5', border: 'border-fuchsia-500/20 hover:border-fuchsia-500/40', textColor: 'text-fuchsia-400', glow: 'shadow-fuchsia-500/5', icon: UserCheck },
+                { label: 'Following', value: profileStats?.following || 0, color: 'from-indigo-500/20 to-blue-500/5', border: 'border-indigo-500/20 hover:border-indigo-500/40', textColor: 'text-indigo-400', glow: 'shadow-indigo-500/5', icon: UserPlus },
+                { label: 'Circles', value: profileStats?.circles || 0, color: 'from-teal-500/20 to-emerald-500/5', border: 'border-teal-500/20 hover:border-teal-500/40', textColor: 'text-teal-400', glow: 'shadow-teal-500/5', icon: Network },
+                { label: 'Achievements', value: profileStats?.achievements || 0, color: 'from-amber-500/20 to-yellow-500/5', border: 'border-amber-500/20 hover:border-amber-500/40', textColor: 'text-amber-400', glow: 'shadow-amber-500/5', icon: Trophy },
+                { label: 'Projects', value: profile?.projects?.length || 0, color: 'from-rose-500/20 to-red-500/5', border: 'border-rose-500/20 hover:border-rose-500/40', textColor: 'text-rose-400', glow: 'shadow-rose-500/5', icon: Briefcase },
+                { label: 'Mutual', value: 0, color: 'from-emerald-500/20 to-teal-500/5', border: 'border-emerald-500/20 hover:border-emerald-500/40', textColor: 'text-emerald-400', glow: 'shadow-emerald-500/5', icon: Sparkles },
+              ].map((stat, i) => {
+                const IconComponent = stat.icon;
+                return (
+                  <motion.div
+                    key={i}
+                    whileHover={{ y: -4, scale: 1.02 }}
+                    className={`relative p-4 rounded-2xl bg-gradient-to-b ${stat.color} border ${stat.border} flex flex-col items-center justify-center text-center shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-md ${stat.glow}`}
+                  >
+                    <div className="absolute top-2.5 right-2.5 opacity-20">
+                      <IconComponent className="w-3.5 h-3.5 text-white" />
+                    </div>
+                    <span className={`text-2xl font-black ${stat.textColor} tracking-tight font-display`}>
+                      {stat.value}
+                    </span>
+                    <span className="text-[9px] text-zinc-400 font-extrabold uppercase mt-1 tracking-wider">
+                      {stat.label}
+                    </span>
+                  </motion.div>
+                );
+              })}
             </div>
 
             {/* Editing State vs Tabs Details View */}
@@ -859,8 +1389,8 @@ export default function ProfilePage() {
                   className="space-y-6 w-full"
                 >
                   
-                  {/* Full Width Dynamic Navigation Tabs */}
-                  <div className="flex border-b border-white/5 pb-0 mb-4 overflow-x-auto hide-scrollbar scroll-smooth">
+                  {/* Premium Segmented Navigation Tabs */}
+                  <div className="relative flex bg-zinc-950/60 border border-white/5 p-1 rounded-2xl mb-6 overflow-x-auto hide-scrollbar scroll-smooth gap-1">
                     {[
                       { id: 'about', label: 'About' },
                       { id: 'feed', label: 'Feed' },
@@ -869,20 +1399,28 @@ export default function ProfilePage() {
                       { id: 'projects', label: 'Projects' },
                       { id: 'achievements', label: 'Achievements' },
                       { id: 'friends', label: 'Friends' }
-                    ].map(tab => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setActiveTab(tab.id as any)}
-                        className={`pb-3 px-5 text-xs font-black uppercase tracking-wider transition-all relative whitespace-nowrap ${
-                          activeTab === tab.id 
-                            ? 'text-primary border-b-2 border-primary font-black' 
-                            : 'text-zinc-450 hover:text-zinc-200'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
+                    ].map(tab => {
+                      const isActive = activeTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setActiveTab(tab.id as any)}
+                          className={`relative py-2 px-4 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-all duration-300 whitespace-nowrap z-10 flex-1 text-center ${
+                            isActive ? 'text-white font-black' : 'text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {isActive && (
+                            <motion.div
+                              layoutId="activeTabPill"
+                              className="absolute inset-0 bg-violet-600/20 border border-violet-500/30 rounded-xl -z-10"
+                              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                            />
+                          )}
+                          {tab.label}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {/* TAB CONTENTS */}
@@ -1155,38 +1693,396 @@ export default function ProfilePage() {
                         )}
                       </div>
                     )}
-
                     {/* 7. FRIENDS TAB */}
                     {activeTab === 'friends' && (
-                      <div>
-                        {profileFriends.length === 0 ? (
-                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
-                            No connections found.
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                            {profileFriends.map(friend => (
-                              <div key={friend.id} className="flex items-center gap-3 p-3 rounded-2xl bg-zinc-950/20 border border-white/5 hover:bg-zinc-900/40 transition-colors cursor-pointer">
-                                <div className="relative flex-shrink-0">
-                                  <img
-                                    src={friend.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${friend.name}`}
-                                    alt=""
-                                    className="h-10 w-10 rounded-full object-cover border border-primary/20"
-                                  />
-                                  {friend.isOnline && (
-                                    <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-[#070709]" />
-                                  )}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <h4 className="text-xs font-bold text-white truncate">{friend.name}</h4>
-                                  <p className="text-[9px] text-zinc-500 truncate">{friend.department} • {friend.batch}</p>
-                                </div>
+                      <div className="space-y-6">
+                          {/* Search and Filters Glass Control Panel */}
+                          <div className="glass-card p-5 border border-white/[0.08] bg-zinc-950/40 space-y-4">
+                            <div className="flex flex-col lg:flex-row gap-3 items-center justify-between">
+                              <div className="relative w-full lg:w-80">
+                                <Search className="absolute left-4 top-3.5 w-4 h-4 text-zinc-400" />
+                                <input
+                                  type="text"
+                                  placeholder="Search students..."
+                                  value={friendsSearchQuery}
+                                  onChange={e => setFriendsSearchQuery(e.target.value)}
+                                  className="w-full bg-zinc-900/60 border border-white/5 rounded-2xl pl-11 pr-4 py-3 text-xs text-foreground placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transition-all"
+                                />
                               </div>
-                            ))}
+                              
+                              <div className="flex flex-wrap gap-2 items-center w-full lg:w-auto justify-end">
+                                <select
+                                  value={friendsFilterDept}
+                                  onChange={e => setFriendsFilterDept(e.target.value)}
+                                  className="bg-zinc-900/60 border border-white/5 rounded-xl px-3 py-2.5 text-[11px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-violet-500/40 cursor-pointer"
+                                >
+                                  <option value="all">All Departments</option>
+                                  {dynamicDepartments.map(dept => (
+                                    <option key={dept} value={dept}>{dept}</option>
+                                  ))}
+                                </select>
+                                
+                                <select
+                                  value={friendsFilterBatch}
+                                  onChange={e => setFriendsFilterBatch(e.target.value)}
+                                  className="bg-zinc-900/60 border border-white/5 rounded-xl px-3 py-2.5 text-[11px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-violet-500/40 cursor-pointer"
+                                >
+                                  <option value="all">All Batches</option>
+                                  {dynamicBatches.map(batch => (
+                                    <option key={batch} value={batch}>{batch}</option>
+                                  ))}
+                                </select>
+
+                                <select
+                                  value={friendsSortBy}
+                                  onChange={e => setFriendsSortBy(e.target.value as any)}
+                                  className="bg-zinc-900/60 border border-white/5 rounded-xl px-3 py-2.5 text-[11px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-violet-500/40 cursor-pointer"
+                                >
+                                  <option value="name">Sort: A-Z</option>
+                                  <option value="name-desc">Sort: Z-A</option>
+                                  <option value="recent">Sort: Recently Joined</option>
+                                  <option value="mutual">Sort: Most Mutual Friends</option>
+                                  <option value="active">Sort: Most Active</option>
+                                </select>
+                                
+                                <button
+                                  onClick={() => setFriendsFilterOnlineOnly(prev => !prev)}
+                                  className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold border transition-all duration-300 ${
+                                    friendsFilterOnlineOnly 
+                                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                                      : 'bg-zinc-900/60 border-white/5 text-zinc-400 hover:text-zinc-200'
+                                  }`}
+                                >
+                                  <span className={`h-1.5 w-1.5 rounded-full ${friendsFilterOnlineOnly ? 'bg-emerald-400 animate-ping' : 'bg-zinc-500'}`} />
+                                  Online Only
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Segmented Sub-tabs */}
+                            <div className="flex border-t border-white/5 pt-3 overflow-x-auto hide-scrollbar scroll-smooth gap-1">
+                              {[
+                                { id: 'all', label: 'Friends', count: profileFriends.length },
+                                { id: 'requests', label: 'Requests', count: pendingRequests.length },
+                                { id: 'suggestions', label: 'Suggestions', count: suggestions.length },
+                                { id: 'mutual', label: 'Mutual', count: profileFriends.filter(f => (f.mutualCount || 0) > 0).length },
+                                { id: 'recent', label: 'Recently Added', count: profileFriends.length },
+                                { id: 'online', label: 'Online', count: profileFriends.filter(f => f.isOnline).length },
+                                { id: 'blocked', label: 'Blocked', count: blockedUsersList.length }
+                              ].map(sub => {
+                                const isActive = friendsSubTab === sub.id;
+                                return (
+                                  <button
+                                    key={sub.id}
+                                    onClick={() => setFriendsSubTab(sub.id as any)}
+                                    className={`relative py-1.5 px-3.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all duration-300 flex items-center gap-1.5 whitespace-nowrap ${
+                                      isActive ? 'bg-violet-600 text-white shadow-lg' : 'bg-transparent text-zinc-400 hover:text-zinc-200'
+                                    }`}
+                                  >
+                                    {sub.label}
+                                    {sub.count > 0 && (
+                                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-white/5 text-zinc-450'}`}>
+                                        {sub.count}
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    )}
+
+                          {/* Friends Empty State & Suggestions */}
+                          {displayCount === 0 && (
+                            <div className="space-y-8">
+                              {profileFriends.length === 0 && (friendsSubTab === 'all' || friendsSubTab === 'recent') ? (
+                                 /* Premium Onboarding Empty State */
+                                <motion.div
+                                  initial={{ opacity: 0, scale: 0.98 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  className="glass-card p-10 border border-white/[0.08] bg-zinc-950/20 text-center flex flex-col items-center justify-center relative overflow-hidden"
+                                >
+                                  <div className="absolute inset-0 bg-radial-gradient from-violet-500/5 to-transparent pointer-events-none" />
+                                  <div className="h-16 w-16 rounded-[24px] bg-gradient-to-tr from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/10 mb-5 text-white">
+                                    <Users className="h-8 w-8" />
+                                  </div>
+                                  <h3 className="font-display text-lg sm:text-xl font-black text-white tracking-tight mb-2">
+                                    Your network starts here
+                                  </h3>
+                                  <p className="text-xs text-zinc-400 max-w-sm leading-relaxed mb-6 font-medium">
+                                    Connect with your classmates, share insights, find mentors, and grow your professional college circle. Let's make your network alive!
+                                  </p>
+                                  
+                                  <div className="flex flex-wrap gap-3 justify-center">
+                                    <Button 
+                                      onClick={() => setFriendsSubTab('suggestions')} 
+                                      className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-5 h-10 rounded-xl transition-all duration-300"
+                                    >
+                                      Find Friends
+                                    </Button>
+                                    <Button 
+                                      onClick={() => navigate('/alumni/discover')} 
+                                      className="bg-zinc-900 border border-white/10 hover:bg-zinc-800 text-white text-xs font-bold px-5 h-10 rounded-xl transition-all duration-300"
+                                    >
+                                      Explore Students
+                                    </Button>
+                                    <Button 
+                                      onClick={() => setShowInviteModal(true)} 
+                                      className="bg-gradient-to-r from-violet-500 to-indigo-500 hover:opacity-90 text-white text-xs font-bold px-5 h-10 rounded-xl shadow-lg transition-all duration-300"
+                                    >
+                                      Invite Friends
+                                    </Button>
+                                  </div>
+                                </motion.div>
+                              ) : (
+                                /* Clean Localized Tab-Specific Empty State */
+                                <motion.div
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="glass-card p-8 border border-white/5 bg-zinc-950/20 text-center flex flex-col items-center justify-center rounded-2xl"
+                                >
+                                  <div className="h-10 w-10 rounded-xl bg-white/5 text-zinc-400 flex items-center justify-center mb-3">
+                                    <Users className="h-5 w-5" />
+                                  </div>
+                                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                                    {friendsSubTab === 'requests' && 'No Pending Requests'}
+                                    {friendsSubTab === 'suggestions' && 'No Recommendations'}
+                                    {friendsSubTab === 'online' && 'No Friends Online'}
+                                    {friendsSubTab === 'blocked' && 'No Blocked Users'}
+                                    {friendsSubTab === 'mutual' && 'No Mutual Friends'}
+                                    {(friendsSubTab === 'all' || friendsSubTab === 'recent') && 'No friends matching filters'}
+                                  </h4>
+                                  <p className="text-[10px] text-zinc-400 mt-1 max-w-xs leading-relaxed font-medium">
+                                    {friendsSubTab === 'requests' && 'You have resolved all incoming peer connection requests.'}
+                                    {friendsSubTab === 'suggestions' && 'Check back later for personalized classmate discovery.'}
+                                    {friendsSubTab === 'online' && 'None of your connected peers are active right now.'}
+                                    {friendsSubTab === 'blocked' && 'You have not blocked any campus accounts.'}
+                                    {friendsSubTab === 'mutual' && 'No overlapping classmates found with this student.'}
+                                    {(friendsSubTab === 'all' || friendsSubTab === 'recent') && 'Try adjusting your search query or department filters.'}
+                                  </p>
+                                </motion.div>
+                              )}
+
+                              {/* People You May Know - Suggestions Tray */}
+                              {suggestions.length > 0 && (
+                                <div className="space-y-4">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="font-display text-sm font-black text-white tracking-tight flex items-center gap-1.5">
+                                      <Sparkles className="w-4 h-4 text-violet-400 animate-pulse" /> People You May Know
+                                    </h4>
+                                  </div>
+                                  
+                                  <div className="flex gap-4 overflow-x-auto pb-4 hide-scrollbar snap-x snap-mandatory">
+                                    {suggestions.map((sug, i) => (
+                                      <motion.div
+                                        key={sug.userId}
+                                        initial={{ opacity: 0, x: 20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ delay: i * 0.05 }}
+                                        className="snap-start flex-shrink-0 w-72 glass-card p-4 border border-white/[0.08] bg-zinc-950/40 rounded-2xl flex flex-col justify-between"
+                                      >
+                                        <div className="flex gap-3">
+                                          <img
+                                            src={sug.profileImageUrl || (sug.photos && sug.photos[0]) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sug.userId}`}
+                                            alt=""
+                                            className="h-12 w-12 rounded-xl object-cover border border-white/5"
+                                          />
+                                          <div className="min-w-0 flex-1">
+                                            <h5 className="text-xs font-bold text-white truncate flex items-center gap-1">
+                                              {sug.name}
+                                              {sug.isOnline && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+                                            </h5>
+                                            <p className="text-[10px] text-zinc-400 truncate">{sug.department || 'General'} • Batch {sug.batch || 'N/A'}</p>
+                                            <p className="text-[9px] text-zinc-550 truncate mt-1">SR University</p>
+                                          </div>
+                                        </div>
+                                        
+                                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
+                                          <span className="text-[9px] text-zinc-450 font-bold">{mutualCounts[sug.userId] || 0} Mutual Friends</span>
+                                          <Button
+                                            onClick={async () => {
+                                              try {
+                                                const res = await matchApi.sendConnectionRequest(sug.userId);
+                                                if (res && res.success) {
+                                                  toast.success(`Request sent to ${sug.name}!`);
+                                                  fetchSuggestions();
+                                                  fetchConnectionRequests();
+                                                }
+                                              } catch (err) {
+                                                toast.error('Failed to send request');
+                                              }
+                                            }}
+                                            className="h-7 px-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-lg text-[10px] font-bold"
+                                          >
+                                            Add Friend
+                                          </Button>
+                                        </div>
+                                      </motion.div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Friends list main responsive grid */}
+                          {displayCount > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                              {/* 1. Render FRIENDS Tab */}
+                              {(friendsSubTab === 'all' || friendsSubTab === 'recent' || friendsSubTab === 'online' || friendsSubTab === 'mutual') && (
+                                filteredFriends
+                                  .filter(f => friendsSubTab !== 'online' || f.isOnline)
+                                  .filter(f => friendsSubTab !== 'mutual' || (f.mutualCount || 0) > 0)
+                                  .map((friend, idx) => (
+                                    <FriendCard
+                                      key={friend.id}
+                                      friend={friend}
+                                      idx={idx}
+                                      navigate={navigate}
+                                      mutualCounts={mutualCounts}
+                                      setSelectedMutualFriends={setSelectedMutualFriends}
+                                      handleRemoveFriend={handleRemoveFriend}
+                                      handleBlockUser={handleBlockUser}
+                                      chatWithUser={chatWithUser}
+                                      activeMenuId={activeFriendMenuId}
+                                      setActiveMenuId={setActiveFriendMenuId}
+                                    />
+                                  ))
+                              )}
+
+                              {/* 2. Render Friend REQUESTS Tab */}
+                              {friendsSubTab === 'requests' && (
+                                filteredRequests.map((req, idx) => (
+                                  <motion.div
+                                    key={req.id}
+                                    initial={{ opacity: 0, y: 15 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: idx * 0.04 }}
+                                    className="glass-card p-4 border border-white/[0.08] bg-zinc-950/20 rounded-2xl flex flex-col justify-between"
+                                  >
+                                    <div className="flex gap-3">
+                                      <img
+                                        src={req.fromUser?.photos?.[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=student'}
+                                        alt=""
+                                        className="h-12 w-12 rounded-xl object-cover border border-white/5"
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <h4 className="text-xs sm:text-sm font-bold text-white truncate">{req.fromUser?.name || 'A Student'}</h4>
+                                        <p className="text-[10px] text-zinc-400 mt-0.5">Wants to connect 💌</p>
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-2 mt-4 pt-3 border-t border-white/5">
+                                      <Button
+                                        onClick={async () => {
+                                          setPendingRequests(prev => prev.filter(r => r.id !== req.id));
+                                          toast.info('Request declined');
+                                        }}
+                                        className="flex-1 h-8 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl text-[10px] font-bold border border-white/5"
+                                      >
+                                        Decline
+                                      </Button>
+                                      <Button
+                                        onClick={async () => {
+                                          try {
+                                            const res = await matchApi.acceptRequest(req.id);
+                                            if (res && res.success) {
+                                              toast.success('Connected successfully!');
+                                              fetchStats();
+                                              fetchConnectionRequests();
+                                            }
+                                          } catch (err) {
+                                            toast.error('Failed to accept connection');
+                                          }
+                                        }}
+                                        className="flex-1 h-8 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-[10px] font-bold"
+                                      >
+                                        Accept
+                                      </Button>
+                                    </div>
+                                  </motion.div>
+                                ))
+                              )}
+
+                              {/* 3. Render SUGGESTIONS Tab */}
+                              {friendsSubTab === 'suggestions' && (
+                                filteredSuggestions.map((sug, idx) => (
+                                  <motion.div
+                                    key={sug.userId}
+                                    initial={{ opacity: 0, y: 15 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: idx * 0.04 }}
+                                    className="glass-card p-4 border border-white/[0.08] bg-zinc-950/20 rounded-2xl flex flex-col justify-between"
+                                  >
+                                    <div className="flex gap-3">
+                                      <img
+                                        src={sug.profileImageUrl || (sug.photos && sug.photos[0]) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sug.userId}`}
+                                        alt=""
+                                        className="h-12 w-12 rounded-xl object-cover border border-white/5"
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <h4 className="text-xs sm:text-sm font-bold text-white truncate">{sug.name}</h4>
+                                        <p className="text-[10px] text-zinc-400 mt-0.5">{sug.department || 'General'} • Batch {sug.batch || 'N/A'}</p>
+                                      </div>
+                                    </div>
+                                    <Button
+                                      onClick={async () => {
+                                        try {
+                                          const res = await matchApi.sendConnectionRequest(sug.userId);
+                                          if (res && res.success) {
+                                            toast.success(`Request sent to ${sug.name}!`);
+                                            fetchSuggestions();
+                                            fetchConnectionRequests();
+                                          }
+                                        } catch (err) {
+                                          toast.error('Failed to send request');
+                                        }
+                                      }}
+                                      className="w-full h-8 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-[10px] font-bold mt-4"
+                                    >
+                                      Add Friend
+                                    </Button>
+                                  </motion.div>
+                                ))
+                              )}
+
+                              {/* 4. Render BLOCKED Tab */}
+                              {friendsSubTab === 'blocked' && (
+                                filteredBlocked.map((u, idx) => (
+                                  <motion.div
+                                    key={u.userId}
+                                    initial={{ opacity: 0, y: 15 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: idx * 0.04 }}
+                                    className="glass-card p-4 border border-white/[0.08] bg-zinc-950/20 rounded-2xl flex items-center justify-between"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">{u.name}</h4>
+                                      <p className="text-[10px] text-zinc-550 truncate">{u.email}</p>
+                                    </div>
+                                    <Button
+                                      onClick={() => handleUnblockUser(u.userId)}
+                                      className="h-8 bg-zinc-900 border border-white/10 hover:bg-zinc-800 text-zinc-350 hover:text-white rounded-xl text-[10px] font-bold"
+                                    >
+                                      Unblock
+                                    </Button>
+                                  </motion.div>
+                                ))
+                              )}
+                            </div>
+                          )}
+
+                          {/* Floating Invite Friends trigger */}
+                          <div className="fixed bottom-24 right-6 z-40 hidden md:block">
+                            <motion.button
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={() => setShowInviteModal(true)}
+                              className="px-5 py-3 rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-bold text-xs shadow-xl flex items-center gap-2 border border-violet-500/20 glow-primary"
+                            >
+                              <Plus className="w-4 h-4" /> Invite Classmates
+                            </motion.button>
+                          </div>
+                        </div>
+                      )}
 
                   </div>
                 </motion.div>
@@ -1559,6 +2455,135 @@ export default function ProfilePage() {
                   )}
                 </div>
               )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Invite Friends Modal */}
+      <AnimatePresence>
+        {showInviteModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowInviteModal(false)}
+            className="fixed inset-0 z-55 flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              onClick={e => e.stopPropagation()}
+              className="glass-strong rounded-[24px] p-6 w-full max-w-md border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] text-center relative"
+            >
+              <button
+                onClick={() => setShowInviteModal(false)}
+                className="absolute top-4 right-4 p-1.5 rounded-lg bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="h-12 w-12 rounded-xl bg-violet-600/20 text-violet-400 flex items-center justify-center mx-auto mb-4 border border-violet-500/20">
+                <Share2 className="w-6 h-6 animate-pulse" />
+              </div>
+
+              <h3 className="font-display text-base font-black text-white tracking-tight mb-1">Invite Classmates</h3>
+              <p className="text-[11px] text-zinc-400 max-w-xs mx-auto mb-6 font-medium">
+                Share this QR code or invite link to get your fellow students and alumni connected on CampusConnect!
+              </p>
+
+              {/* QR Code section */}
+              <div className="bg-white p-3 rounded-2xl w-44 h-44 mx-auto mb-6 flex items-center justify-center shadow-inner">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`${window.location.origin}/setup?referrer=${uid}`)}`}
+                  alt="CampusConnect Invite QR"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+
+              {/* Link copying container */}
+              <div className="flex gap-2 bg-zinc-900/60 border border-white/5 p-1.5 rounded-xl mb-6 items-center justify-between">
+                <span className="text-[10px] text-zinc-450 truncate pl-2 flex-1 text-left">
+                  {`${window.location.origin}/setup?referrer=${uid}`}
+                </span>
+                <Button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/setup?referrer=${uid}`);
+                    toast.success('Invitation link copied successfully!');
+                  }}
+                  className="h-8 bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-bold rounded-lg px-3 flex items-center gap-1.5"
+                >
+                  <Copy className="w-3 h-3" /> Copy
+                </Button>
+              </div>
+
+              {/* Sharing Grid */}
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'WhatsApp', href: `https://api.whatsapp.com/send?text=${encodeURIComponent(`Hey, connect with me on CampusConnect: ${window.location.origin}/setup?referrer=${uid}`)}`, color: 'bg-emerald-600/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-600/20' },
+                  { label: 'Telegram', href: `https://t.me/share/url?url=${encodeURIComponent(`${window.location.origin}/setup?referrer=${uid}`)}&text=${encodeURIComponent('Join CampusConnect Network!')}`, color: 'bg-blue-600/10 text-blue-400 border-blue-500/20 hover:bg-blue-600/20' },
+                  { label: 'Email', href: `mailto:?subject=Join CampusConnect&body=${encodeURIComponent(`Connect with me on CampusConnect: ${window.location.origin}/setup?referrer=${uid}`)}`, color: 'bg-zinc-805 text-zinc-300 border-white/5 hover:bg-zinc-700' }
+                ].map(share => (
+                  <a
+                    key={share.label}
+                    href={share.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`py-2 border rounded-xl text-[10px] font-bold text-center transition-all ${share.color}`}
+                  >
+                    {share.label}
+                  </a>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mutual Friends Modal */}
+      <AnimatePresence>
+        {selectedMutualFriends && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedMutualFriends(null)}
+            className="fixed inset-0 z-55 flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              onClick={e => e.stopPropagation()}
+              className="glass-strong rounded-[24px] p-6 w-full max-w-sm border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] relative"
+            >
+              <button
+                onClick={() => setSelectedMutualFriends(null)}
+                className="absolute top-4 right-4 p-1.5 rounded-lg bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <h3 className="font-display text-base font-black text-white tracking-tight mb-4 flex items-center gap-2">
+                <Users className="w-4 h-4 text-violet-400" /> Mutual Connections
+              </h3>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1 hide-scrollbar">
+                {selectedMutualFriends.map((mut, i) => (
+                  <div key={i} className="flex items-center gap-3 p-2.5 bg-white/[0.02] border border-white/[0.04] rounded-xl">
+                    <img
+                      src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${mut.name}`}
+                      alt=""
+                      className="h-8 w-8 rounded-full border border-white/5 object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-xs font-bold text-white truncate">{mut.name}</h4>
+                      <p className="text-[9px] text-zinc-400 truncate">{mut.dept || 'CSE'} Department</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </motion.div>
           </motion.div>
         )}

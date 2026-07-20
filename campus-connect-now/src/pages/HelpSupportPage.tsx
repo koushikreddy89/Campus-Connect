@@ -155,16 +155,16 @@ export default function HelpSupportPage() {
     };
 
     try {
-      const res = await fetch('http://localhost:5000/api/feature-requests', {
+      const res = await fetch('http://localhost:5000/api/bugs', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({
-          type: 'bug',
           description: bugDescription,
           deviceInfo,
+          screenshotUrl: bugScreenshot,
           screenshot: bugScreenshot
         })
       });

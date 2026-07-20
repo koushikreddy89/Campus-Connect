@@ -6,6 +6,7 @@ import { getCurrentUserEmail } from '@/utils/userUtils';
 import { chatApi } from '@/services/api';
 import { ResonanceState } from '@/components/chat/ResonanceThread';
 import { socketService } from '@/services/socketService';
+import { getApiUrl } from '@/services/connectionService';
 
 interface ChatState {
   messages: Record<string, Message[]>;
@@ -142,10 +143,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         useMatchStore.getState().incrementUnreadCount(msg.matchId, msg.text || 'New message');
       }
 
+      const seen = new Set<string>();
+      const deduped = [...list, msg].filter(m => {
+        const mid = m.id || (m as any)._id;
+        if (!mid) return true;
+        if (seen.has(mid)) return false;
+        seen.add(mid);
+        return true;
+      });
+
       set({
         messages: {
           ...currentMsgs,
-          [msg.matchId]: [...list, msg]
+          [msg.matchId]: deduped
         }
       });
     });
@@ -327,8 +337,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   openMessage: async (matchId: string, messageId: string) => {
     try {
-      const token = localStorage.getItem('token') || '';
-      const res = await fetch(`http://localhost:5000/api/chats/${matchId}/messages/${messageId}/open`, {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
+      const res = await fetch(`${getApiUrl()}/api/chats/${matchId}/messages/${messageId}/open`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -347,7 +357,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return {
               ...m,
               viewed: true,
-              viewedAt: new Date().toISOString(),
+              viewedAt: data.data?.viewedAt || new Date().toISOString(),
               text: isOwn ? 'Opened' : 'You opened this message. This message disappeared.',
               attachments: [],
               documentUrl: undefined,
@@ -368,10 +378,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             [matchId]: updated
           }
         });
+        return data.data?.text || '';
       }
     } catch (e) {
       console.error('Error opening View Once message:', e);
     }
+    return '';
   },
 
   fetchMessages: async (matchId: string) => {
@@ -431,10 +443,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (index > -1) {
           const listCopy = [...freshList];
           listCopy[index] = res.data;
+
+          const seen = new Set<string>();
+          const deduped = listCopy.filter(m => {
+            const mid = m.id || (m as any)._id;
+            if (!mid) return true;
+            if (seen.has(mid)) return false;
+            seen.add(mid);
+            return true;
+          });
+
           set({
             messages: {
               ...updatedMsgs,
-              [matchId]: listCopy
+              [matchId]: deduped
             }
           });
         }

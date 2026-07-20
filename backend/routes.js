@@ -4,10 +4,45 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
-const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity } = require('./models');
+const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug } = require('./models');
 const emailService = require('./emailService');
 const crypto = require('crypto');
 const { validatePasswordStrength, isDisposableEmail, generateCaptcha, verifyCaptcha } = require('./securityUtils');
+
+// AES-256-CBC Encryption/Decryption Helpers for View Once text messages
+const ENCRYPTION_KEY = Buffer.alloc(32, 'cc_secure_encryption_key_32_bytes!');
+const IV_LENGTH = 16;
+
+function encryptText(text) {
+  if (!text) return '';
+  try {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+  } catch (err) {
+    console.error('Encryption failed:', err);
+    return text;
+  }
+}
+
+function decryptText(text) {
+  if (!text) return '';
+  try {
+    const parts = text.split(':');
+    if (parts.length !== 2) return text;
+    const iv = Buffer.from(parts.shift(), 'hex');
+    const encryptedText = Buffer.from(parts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  } catch (err) {
+    console.error('Decryption failed:', err);
+    return text;
+  }
+}
 
 // Cookie options definitions
 const COOKIE_OPTIONS = {
@@ -3704,6 +3739,12 @@ router.post('/connections/accept', async (req, res) => {
       await conn.save();
     }
 
+    // Add to connections array for both users
+    await User.findOneAndUpdate({ userId: request.fromUserId }, { $addToSet: { connections: request.toUserId } });
+    await Alumni.findOneAndUpdate({ userId: request.fromUserId }, { $addToSet: { connections: request.toUserId } });
+    await User.findOneAndUpdate({ userId: request.toUserId }, { $addToSet: { connections: request.fromUserId } });
+    await Alumni.findOneAndUpdate({ userId: request.toUserId }, { $addToSet: { connections: request.fromUserId } });
+
     const recipientObj = await User.findOne({ userId: request.toUserId });
     await createNotification({
       recipientId: request.fromUserId,
@@ -3716,6 +3757,40 @@ router.post('/connections/accept', async (req, res) => {
     });
 
     res.json({ success: true, data: request });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/connections/remove - Remove a connection / unfriend
+router.post('/connections/remove', requireAuth, async (req, res) => {
+  try {
+    const { friendId } = req.body;
+    const userId = req.user.userId;
+    if (!friendId) {
+      return res.status(400).json({ success: false, error: 'friendId is required' });
+    }
+
+    // Pull from connections array for both users
+    await User.findOneAndUpdate({ userId }, { $pull: { connections: friendId } });
+    await Alumni.findOneAndUpdate({ userId }, { $pull: { connections: friendId } });
+    await User.findOneAndUpdate({ userId: friendId }, { $pull: { connections: userId } });
+    await Alumni.findOneAndUpdate({ userId: friendId }, { $pull: { connections: userId } });
+
+    // Also delete any Connection document
+    const sortedIds = [userId, friendId].sort();
+    const conversationKey = `${sortedIds[0]}_${sortedIds[1]}`;
+    await Connection.deleteOne({ conversationKey });
+
+    // Optionally delete FriendRequest documents
+    await FriendRequest.deleteMany({
+      $or: [
+        { fromUserId: userId, toUserId: friendId },
+        { fromUserId: friendId, toUserId: userId }
+      ]
+    });
+
+    res.json({ success: true, message: 'Friend removed successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4036,6 +4111,77 @@ router.get('/connections', requireAuth, async (req, res) => {
   }
 });
 
+// POST /connections/resolve - Resolve or create a direct connection with a friend
+router.post('/connections/resolve', requireAuth, async (req, res) => {
+  try {
+    const fromUserId = req.user.userId;
+    const { friendId } = req.body;
+    if (!friendId) {
+      return res.status(400).json({ success: false, error: 'friendId is required' });
+    }
+
+    const sortedIds = [fromUserId, friendId].sort();
+    const conversationKey = `${sortedIds[0]}_${sortedIds[1]}`;
+
+    let conn = await Connection.findOne({ conversationKey });
+    if (!conn) {
+      conn = new Connection({
+        user1: fromUserId,
+        user2: friendId,
+        conversationKey,
+        participants: sortedIds,
+        lastMessage: '',
+        lastMessageAt: new Date()
+      });
+      await conn.save();
+    }
+
+    // Now, return the resolved connection object formatted just like getMatches output
+    const otherUser = await User.findOne({ userId: friendId }) || await Alumni.findOne({ userId: friendId });
+    if (!otherUser) {
+      return res.status(404).json({ success: false, error: 'Friend not found' });
+    }
+
+    const unreadCount = await Message.countDocuments({
+      matchId: conn._id.toString(),
+      receiverId: fromUserId,
+      read: false
+    });
+
+    const matchData = {
+      id: conn._id.toString(),
+      userId: friendId,
+      user: {
+        id: otherUser.userId,
+        name: otherUser.name || 'Anonymous Student',
+        email: otherUser.email,
+        role: otherUser.role || 'student',
+        department: otherUser.department || '',
+        batch: otherUser.batch || '',
+        skills: otherUser.skills || [],
+        bio: otherUser.bio || otherUser.story || '',
+        interests: otherUser.interests || [],
+        clubs: otherUser.clubs || [],
+        achievements: otherUser.achievements || [],
+        profileImageUrl: otherUser.profileImageUrl || otherUser.profileImage || '',
+        photos: otherUser.photos || (otherUser.profileImageUrl ? [otherUser.profileImageUrl] : []),
+        college: otherUser.college || '',
+        isOnline: otherUser.isOnline || false,
+        lastSeen: otherUser.lastSeen || otherUser.updatedAt || new Date()
+      },
+      matchedAt: conn.createdAt.toISOString(),
+      unreadCount,
+      isRevealed: true,
+      lastMessage: conn.lastMessage || '',
+      lastMessageTime: conn.lastMessageAt ? conn.lastMessageAt.toISOString() : (conn.updatedAt || conn.createdAt).toISOString()
+    };
+
+    res.json({ success: true, data: matchData });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST /connections/:matchId/reveal - Reveal identity for a connection
 router.post('/connections/:matchId/reveal', requireAuth, async (req, res) => {
   try {
@@ -4094,11 +4240,11 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
 
     const list = await Message.find({ matchId, deletedForUsers: { $ne: req.user.userId } }).sort({ timestamp: 1 });
     const maskedList = list.map(msg => {
-      if (msg.retentionMode === 'VIEW_ONCE') {
+      if (msg.retentionMode === 'VIEW_ONCE' || msg.visibility === 'view_once') {
         const copy = msg.toObject();
+        copy.visibility = 'view_once';
         if (msg.viewed) {
-          const isOwn = String(msg.senderId) === String(req.user.userId);
-          copy.text = isOwn ? 'Opened' : 'You opened this message. This message disappeared.';
+          copy.text = 'Opened';
           copy.attachments = [];
           copy.documentUrl = undefined;
           copy.documentName = undefined;
@@ -4115,6 +4261,10 @@ router.get('/chats/:matchId/messages', requireAuth, async (req, res) => {
             copy.attachments[0].downloadUrl = secureUrl;
           }
           if (copy.imageUrl) copy.imageUrl = secureUrl;
+          
+          // Securely mask/hide the encrypted database text in message history
+          copy.text = ''; 
+          copy.isLocked = true;
           return copy;
         }
       }
@@ -4229,11 +4379,11 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
     const newMsg = new Message({
       matchId,
       conversationId: matchId,
-      senderId: req.user.userId, // Save custom string userId!
+      senderId: req.user.userId,
       receiverId: otherUserId,
       college: req.user.college,
       messageType: finalMessageType,
-      text: text || '',
+      text: isViewOnce ? encryptText(text || '') : (text || ''),
       attachments: attachments || [],
       documentUrl: docUrl,
       documentName: docName,
@@ -4249,12 +4399,13 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       status: 'sent',
       resonanceState: 'bridged',
       reactions: [],
-      retentionMode: retentionMode || 'NEVER_DELETE'
+      retentionMode: retentionMode || 'NEVER_DELETE',
+      visibility: isViewOnce ? 'view_once' : 'normal'
     });
     await newMsg.save();
 
     // Update connection lastMessage and lastMessageAt
-    conn.lastMessage = finalMessageType === 'image' ? 'Sent an image' : (text || 'Sent an attachment');
+    conn.lastMessage = finalMessageType === 'image' ? 'Sent an image' : (isViewOnce ? 'Sent a View Once Message' : (text || 'Sent an attachment'));
     conn.lastMessageAt = newMsg.timestamp || new Date();
     await conn.save();
 
@@ -4276,14 +4427,21 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       entityType: 'chat'
     });
 
+    const clientMsg = newMsg.toObject();
+    if (isViewOnce) {
+      clientMsg.text = '';
+      clientMsg.isLocked = true;
+      clientMsg.visibility = 'view_once';
+    }
+
     if (global.io) {
-      global.io.to(`match_${matchId}`).emit('message:received', newMsg);
+      global.io.to(`match_${matchId}`).emit('message:received', clientMsg);
       global.io.to(`match_${matchId}`).emit('chat:media_update', {
         matchId,
         messageType: finalMessageType
       });
     }
-    res.json({ success: true, data: newMsg });
+    res.json({ success: true, data: clientMsg });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4305,25 +4463,32 @@ router.get('/chat/:conversationId/shared/photos', requireAuth, async (req, res) 
       ]
     }).sort({ timestamp: -1 });
 
+    const seen = new Set();
     const list = [];
     photos.forEach(msg => {
       if (msg.imageUrl) {
-        list.push({
-          msgId: msg._id,
-          imageUrl: msg.imageUrl,
-          senderId: msg.senderId,
-          createdAt: msg.timestamp || msg.createdAt
-        });
+        if (!seen.has(msg.imageUrl)) {
+          seen.add(msg.imageUrl);
+          list.push({
+            msgId: msg._id,
+            imageUrl: msg.imageUrl,
+            senderId: msg.senderId,
+            createdAt: msg.timestamp || msg.createdAt
+          });
+        }
       }
       if (msg.attachments && msg.attachments.length > 0) {
         msg.attachments.forEach(att => {
           if (att.mimeType && att.mimeType.startsWith('image/')) {
-            list.push({
-              msgId: msg._id,
-              imageUrl: att.downloadUrl,
-              senderId: msg.senderId,
-              createdAt: msg.timestamp || msg.createdAt
-            });
+            if (!seen.has(att.downloadUrl)) {
+              seen.add(att.downloadUrl);
+              list.push({
+                msgId: msg._id,
+                imageUrl: att.downloadUrl,
+                senderId: msg.senderId,
+                createdAt: msg.timestamp || msg.createdAt
+              });
+            }
           }
         });
       }
@@ -4352,31 +4517,38 @@ router.get('/chat/:conversationId/shared/documents', requireAuth, async (req, re
       ]
     }).sort({ timestamp: -1 });
 
+    const seen = new Set();
     const list = [];
     docs.forEach(msg => {
       if (msg.documentUrl) {
-        list.push({
-          msgId: msg._id,
-          documentUrl: msg.documentUrl,
-          documentName: msg.documentName || 'Document',
-          mimeType: msg.mimeType,
-          fileSize: msg.fileSize,
-          senderId: msg.senderId,
-          createdAt: msg.timestamp || msg.createdAt
-        });
+        if (!seen.has(msg.documentUrl)) {
+          seen.add(msg.documentUrl);
+          list.push({
+            msgId: msg._id,
+            documentUrl: msg.documentUrl,
+            documentName: msg.documentName || 'Document',
+            mimeType: msg.mimeType,
+            fileSize: msg.fileSize,
+            senderId: msg.senderId,
+            createdAt: msg.timestamp || msg.createdAt
+          });
+        }
       }
       if (msg.attachments && msg.attachments.length > 0) {
         msg.attachments.forEach(att => {
           if (!att.mimeType || !att.mimeType.startsWith('image/')) {
-            list.push({
-              msgId: msg._id,
-              documentUrl: att.downloadUrl,
-              documentName: att.fileName,
-              mimeType: att.mimeType,
-              fileSize: att.fileSize,
-              senderId: msg.senderId,
-              createdAt: msg.timestamp || msg.createdAt
-            });
+            if (!seen.has(att.downloadUrl)) {
+              seen.add(att.downloadUrl);
+              list.push({
+                msgId: msg._id,
+                documentUrl: att.downloadUrl,
+                documentName: att.fileName,
+                mimeType: att.mimeType,
+                fileSize: att.fileSize,
+                senderId: msg.senderId,
+                createdAt: msg.timestamp || msg.createdAt
+              });
+            }
           }
         });
       }
@@ -4403,7 +4575,21 @@ router.get('/chat/:conversationId/shared/links', requireAuth, async (req, res) =
       ]
     }).sort({ timestamp: -1 });
 
-    res.json({ success: true, count: links.length, data: links });
+    const seen = new Set();
+    const list = [];
+    links.forEach(msg => {
+      const url = msg.url || msg.text;
+      if (url) {
+        if (!seen.has(url)) {
+          seen.add(url);
+          list.push(msg);
+        }
+      } else {
+        list.push(msg);
+      }
+    });
+
+    res.json({ success: true, count: list.length, data: list });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -4605,35 +4791,32 @@ router.post('/chats/:matchId/messages/:messageId/open', requireAuth, async (req,
       return res.status(403).json({ success: false, error: 'Access denied.' });
     }
 
-    // Atomically update the message to prevent race conditions
-    const msg = await Message.findOneAndUpdate(
-      { 
-        _id: messageId, 
-        matchId, 
-        retentionMode: 'VIEW_ONCE', 
-        viewed: false 
-      },
-      { 
-        $set: { 
-          viewed: true, 
-          viewedAt: new Date(), 
-          deletedAt: new Date(),
-          text: 'This message disappeared.', 
-          attachments: [], 
-          imageUrl: null, 
-          documentUrl: null,
-          url: null,
-          title: null,
-          description: null,
-          thumbnail: null
-        } 
-      },
-      { new: true }
-    );
+    const msg = await Message.findOne({ 
+      _id: messageId, 
+      matchId, 
+      retentionMode: 'VIEW_ONCE', 
+      viewed: false 
+    });
 
     if (!msg) {
       return res.status(400).json({ success: false, error: 'Message already opened or invalid request.' });
     }
+
+    const decrypted = msg.messageType === 'text' ? decryptText(msg.text) : '';
+
+    // Permanently overwrite database fields on the spot
+    msg.viewed = true;
+    msg.viewedAt = new Date();
+    msg.deletedAt = new Date();
+    msg.text = 'This message disappeared.';
+    msg.attachments = [];
+    msg.imageUrl = null;
+    msg.documentUrl = null;
+    msg.url = null;
+    msg.title = null;
+    msg.description = null;
+    msg.thumbnail = null;
+    await msg.save();
 
     // Clean up physical disk files if any
     const fs = require('fs');
@@ -4666,7 +4849,7 @@ router.post('/chats/:matchId/messages/:messageId/open', requireAuth, async (req,
       });
     }
 
-    res.json({ success: true, data: msg });
+    res.json({ success: true, data: { ...msg.toObject(), text: decrypted, visibility: 'view_once' } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -6890,6 +7073,103 @@ router.post('/feature-requests', requireAuth, async (req, res) => {
   }
 });
 
+// 14b. Bug reporting and management routes
+router.post('/bugs', requireAuth, async (req, res) => {
+  try {
+    const { title, description, screenshot, screenshotUrl, deviceInfo, browser, operatingSystem, applicationVersion, priority } = req.body;
+    if (!description) {
+      return res.status(400).json({ success: false, error: 'Description is required' });
+    }
+    const user = await User.findOne({ userId: req.user.userId }) || await Alumni.findOne({ userId: req.user.userId });
+    
+    let parsedBrowser = browser || '';
+    let parsedOS = operatingSystem || '';
+    if (deviceInfo) {
+      if (deviceInfo.userAgent) parsedBrowser = deviceInfo.userAgent;
+      if (deviceInfo.platform) parsedOS = deviceInfo.platform;
+    }
+
+    const bug = new Bug({
+      title: title || (description.length > 50 ? description.substring(0, 50) + '...' : description),
+      description,
+      screenshotUrl: screenshotUrl || screenshot || '',
+      userId: req.user.userId,
+      username: user ? user.name : 'Unknown User',
+      email: user ? user.email : '',
+      collegeId: user ? user.college : '',
+      priority: priority || 'Medium',
+      status: 'Pending',
+      browser: parsedBrowser,
+      operatingSystem: parsedOS,
+      applicationVersion: applicationVersion || '1.0.0'
+    });
+    await bug.save();
+    res.json({ success: true, data: bug });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/bugs', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const bugs = await Bug.find({}).sort({ createdAt: -1 });
+    res.json({ success: true, data: bugs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/bugs/:id', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const bug = await Bug.findById(req.params.id);
+    if (!bug) return res.status(404).json({ success: false, error: 'Bug not found' });
+    res.json({ success: true, data: bug });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.patch('/bugs/:id', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const { status, priority, internalNotes, assignedTo } = req.body;
+    const bug = await Bug.findById(req.params.id);
+    if (!bug) return res.status(404).json({ success: false, error: 'Bug not found' });
+
+    if (status) bug.status = status;
+    if (priority) bug.priority = priority;
+    if (internalNotes !== undefined) bug.internalNotes = internalNotes;
+    if (assignedTo !== undefined) bug.assignedTo = assignedTo;
+
+    await bug.save();
+    res.json({ success: true, data: bug });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/bugs/:id', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const bug = await Bug.findByIdAndDelete(req.params.id);
+    if (!bug) return res.status(404).json({ success: false, error: 'Bug not found' });
+    res.json({ success: true, message: 'Bug deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 // ====================================================
 // SESSION MANAGEMENT ROUTES
 // ====================================================
@@ -7302,21 +7582,69 @@ router.get('/security/logs/export', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/security/logs/:userId - Get security logs for a specific user
-router.get('/security/logs/:userId', requireAuth, async (req, res) => {
+// GET /api/security/events - Get distinct list of logged security events
+router.get('/security/events', requireAuth, async (req, res) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
     }
-    const { userId } = req.params;
-    const logs = await SecurityLog.find({ userId }).sort({ createdAt: -1 });
+    const events = await SecurityLog.distinct('event');
+    res.json({ success: true, data: events });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/security/export - Alias for export endpoint
+router.get('/security/export', requireAuth, async (req, res) => {
+  res.redirect('/api/security/logs/export');
+});
+
+// GET /api/security/logs/:idOrUserId - Get log details by ID, or list logs for a user
+router.get('/security/logs/:idOrUserId', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Access denied: Admin only' });
+    }
+    const { idOrUserId } = req.params;
+
+    // Check if the parameter is a valid Mongoose ObjectId
+    if (mongoose.Types.ObjectId.isValid(idOrUserId)) {
+      const log = await SecurityLog.findById(idOrUserId);
+      if (log) {
+        let profile = null;
+        if (log.userId) {
+          profile = await User.findOne({ userId: log.userId }) || await Alumni.findOne({ userId: log.userId });
+        }
+        const logObj = log.toObject();
+        logObj.userProfile = profile ? {
+          name: profile.name,
+          role: profile.role,
+          department: profile.department,
+          batch: profile.batch,
+          cgpa: profile.cgpa,
+          backlogs: profile.backlogs,
+          mfaEnabled: profile.mfaEnabled || false
+        } : {
+          name: log.email === 'admin@sru.edu' ? 'Campus Admin' : 'Unknown User',
+          role: log.email === 'admin@sru.edu' ? 'admin' : 'unknown',
+          department: 'N/A',
+          batch: 'N/A',
+          mfaEnabled: false
+        };
+        return res.json({ success: true, data: logObj });
+      }
+    }
+
+    // Fallback: Query security logs by userId
+    const logs = await SecurityLog.find({ userId: idOrUserId }).sort({ createdAt: -1 });
     res.json({ success: true, data: logs });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// GET /api/security/logs - Get filtered, paginated security audit logs
+// GET /api/security/logs - Get filtered, paginated security audit logs with advanced database filters
 router.get('/security/logs', requireAuth, async (req, res) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
@@ -7333,7 +7661,19 @@ router.get('/security/logs', requireAuth, async (req, res) => {
       fromDate, 
       toDate, 
       sort = '-createdAt',
-      search
+      search,
+      role,
+      department,
+      branch,
+      batch,
+      device,
+      browser,
+      os,
+      ipAddress,
+      location,
+      authMethod,
+      mfaStatus,
+      accountStatus
     } = req.query;
 
     const pageNum = parseInt(page);
@@ -7343,7 +7683,27 @@ router.get('/security/logs', requireAuth, async (req, res) => {
     if (email) query.email = email;
     if (userId) query.userId = userId;
     if (status) query.status = status;
-    if (event) query.event = event;
+    if (ipAddress) query.ipAddress = new RegExp(ipAddress, 'i');
+
+    // Mapped Event Categories (Quick Actions Preset)
+    if (event) {
+      const lowerEvent = event.toLowerCase();
+      if (lowerEvent === 'login') {
+        query.event = { $regex: /login/i };
+      } else if (lowerEvent === 'logout') {
+        query.event = { $regex: /logout/i };
+      } else if (lowerEvent === 'mfa') {
+        query.event = { $regex: /mfa/i };
+      } else if (lowerEvent === 'suspicious') {
+        query.$or = [{ status: 'failure' }, { event: /lock/i }, { event: /suspicious/i }];
+      } else if (lowerEvent === 'lock') {
+        query.event = { $regex: /lock/i };
+      } else if (lowerEvent === 'register') {
+        query.event = { $regex: /register/i };
+      } else {
+        query.event = event;
+      }
+    }
 
     if (fromDate || toDate) {
       query.createdAt = {};
@@ -7351,9 +7711,111 @@ router.get('/security/logs', requireAuth, async (req, res) => {
       if (toDate) query.createdAt.$lte = new Date(toDate);
     }
 
-    if (search) {
+    // Parse User Agent filters
+    if (device) {
+      if (device.toLowerCase() === 'mobile') {
+        query.userAgent = /Mobi|Android|iPhone|iPad/i;
+      } else if (device.toLowerCase() === 'desktop') {
+        query.userAgent = { $not: /Mobi|Android|iPhone|iPad/i };
+      }
+    }
+    if (browser) {
+      query.userAgent = new RegExp(browser, 'i');
+    }
+    if (os) {
+      query.userAgent = new RegExp(os, 'i');
+    }
+
+    // Location filter
+    if (location) {
+      query['details.location'] = new RegExp(location, 'i');
+    }
+
+    // Authentication method filter
+    if (authMethod) {
+      const lowerMethod = authMethod.toLowerCase();
+      if (lowerMethod === 'mfa') {
+        query.event = { $regex: /mfa/i };
+      } else if (lowerMethod === 'password') {
+        query.event = { $regex: /password/i };
+      } else if (lowerMethod === 'captcha') {
+        query.event = { $regex: /captcha/i };
+      }
+    }
+
+    // Profile attributes filtering
+    let profileQuery = {};
+    if (role) profileQuery.role = role;
+    if (department) {
+      profileQuery.$or = [
+        { department: new RegExp(department, 'i') },
+        { branch: new RegExp(department, 'i') }
+      ];
+    }
+    if (branch) {
+      profileQuery.branch = new RegExp(branch, 'i');
+    }
+    if (batch) {
+      profileQuery.batch = new RegExp(batch, 'i');
+    }
+    if (mfaStatus) {
+      profileQuery.mfaEnabled = mfaStatus === 'enabled';
+    }
+    if (accountStatus) {
+      if (accountStatus === 'locked') {
+        profileQuery.lockUntil = { $gt: new Date() };
+      } else if (accountStatus === 'suspended') {
+        profileQuery.isSuspended = true;
+      } else if (accountStatus === 'active') {
+        profileQuery.isSuspended = { $ne: true };
+        profileQuery.$or = [
+          { lockUntil: { $exists: false } },
+          { lockUntil: { $lte: new Date() } }
+        ];
+      }
+    }
+
+    let matchedUserIds = null;
+    const hasProfileFilters = Object.keys(profileQuery).length > 0;
+    const hasProfileSearch = search && search.trim();
+
+    if (hasProfileFilters || hasProfileSearch) {
+      let userProfileQuery = { ...profileQuery };
+      let alumniProfileQuery = { ...profileQuery };
+
+      if (hasProfileSearch) {
+        const searchRegex = new RegExp(search, 'i');
+        const searchOr = [
+          { name: searchRegex },
+          { email: searchRegex },
+          { userId: searchRegex }
+        ];
+        
+        userProfileQuery.$and = userProfileQuery.$and || [];
+        userProfileQuery.$and.push({ $or: searchOr });
+
+        alumniProfileQuery.$and = alumniProfileQuery.$and || [];
+        alumniProfileQuery.$and.push({ $or: searchOr });
+      }
+
+      const [matchedUsers, matchedAlumnis] = await Promise.all([
+        User.find(userProfileQuery, { userId: 1 }),
+        Alumni.find(alumniProfileQuery, { userId: 1 })
+      ]);
+
+      matchedUserIds = [
+        ...matchedUsers.map(u => u.userId),
+        ...matchedAlumnis.map(a => a.userId)
+      ];
+
+      if (matchedUserIds.length === 0) {
+        matchedUserIds = ['non-existent-user-id-to-force-empty-result'];
+      }
+    }
+
+    if (search && search.trim()) {
       const searchRegex = new RegExp(search, 'i');
-      query.$or = [
+      const logOrConditions = [
         { email: searchRegex },
         { userId: searchRegex },
         { event: searchRegex },
@@ -7361,6 +7823,13 @@ router.get('/security/logs', requireAuth, async (req, res) => {
         { userAgent: searchRegex },
         { 'details.sessionId': searchRegex }
       ];
+
+      if (matchedUserIds && matchedUserIds.length > 0) {
+        logOrConditions.push({ userId: { $in: matchedUserIds } });
+      }
+      query.$or = logOrConditions;
+    } else if (matchedUserIds !== null) {
+      query.userId = { $in: matchedUserIds };
     }
 
     let sortOptions = {};
@@ -7380,15 +7849,19 @@ router.get('/security/logs', requireAuth, async (req, res) => {
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum);
 
-    const enrichedLogs = await Promise.all(logs.map(async (log) => {
+    const userIds = [...new Set(logs.map(log => log.userId).filter(Boolean))];
+    const [users, alumni] = await Promise.all([
+      User.find({ userId: { $in: userIds } }),
+      Alumni.find({ userId: { $in: userIds } })
+    ]);
+
+    const profileMap = new Map();
+    users.forEach(u => profileMap.set(u.userId, u));
+    alumni.forEach(a => profileMap.set(a.userId, a));
+
+    const enrichedLogs = logs.map((log) => {
       const logObj = log.toObject();
-      let profile = null;
-      if (log.userId) {
-        profile = await User.findOne({ userId: log.userId });
-        if (!profile) {
-          profile = await Alumni.findOne({ userId: log.userId });
-        }
-      }
+      const profile = log.userId ? profileMap.get(log.userId) : null;
       logObj.userProfile = profile ? {
         name: profile.name,
         role: profile.role,
@@ -7405,7 +7878,7 @@ router.get('/security/logs', requireAuth, async (req, res) => {
         mfaEnabled: false
       };
       return logObj;
-    }));
+    });
 
     res.json({
       success: true,
@@ -8634,7 +9107,23 @@ router.get('/users/:id/friends', requireAuth, async (req, res) => {
     const target = await findUserByIdOrUid(id);
     if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
 
-    const friendIds = target.connections || [];
+    // Reconstruct and sync the connections array from the Connection collection for legacy users
+    const activeConns = await Connection.find({
+      $or: [{ user1: target.userId }, { user2: target.userId }]
+    });
+    
+    const friendIdsSet = new Set(target.connections || []);
+    for (const conn of activeConns) {
+      const otherId = conn.user1 === target.userId ? conn.user2 : conn.user1;
+      friendIdsSet.add(otherId);
+    }
+    const friendIds = Array.from(friendIdsSet);
+
+    if (friendIds.length > (target.connections || []).length) {
+      await User.findOneAndUpdate({ userId: target.userId }, { $set: { connections: friendIds } });
+      await Alumni.findOneAndUpdate({ userId: target.userId }, { $set: { connections: friendIds } });
+    }
+
     const friends = [];
     for (const fId of friendIds) {
       const u = await User.findOne({ userId: fId }).select('userId name photos department batch college isOnline') ||

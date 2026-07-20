@@ -111,9 +111,7 @@ export default function ChatPage({
     };
   }, [match]);
 
-  const [retentionMode, setRetentionMode] = useState<'VIEW_ONCE' | 'NEVER_DELETE'>(
-    (localStorage.getItem('chat_retention_mode') as 'VIEW_ONCE' | 'NEVER_DELETE') || 'NEVER_DELETE'
-  );
+  const [retentionMode, setRetentionMode] = useState<'VIEW_ONCE' | 'NEVER_DELETE'>('NEVER_DELETE');
 
   const [mediaLoading, setMediaLoading] = useState(false);
   const [mediaLoadError, setMediaLoadError] = useState<string | null>(null);
@@ -126,6 +124,7 @@ export default function ChatPage({
   const [showDeleteConfirmMsg, setShowDeleteConfirmMsg] = useState<any | null>(null);
   const [deleteType, setDeleteType] = useState<'me' | 'everyone'>('me');
   const [replyParentMsg, setReplyParentMsg] = useState<any | null>(null);
+  const [viewOnceText, setViewOnceText] = useState<{ msgId: string; text: string; senderName: string } | null>(null);
 
   const messagesEnd = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -421,6 +420,15 @@ export default function ChatPage({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeMedia, showMenu]);
 
+  // Cleanup View Once text countdown timer on unmount
+  useEffect(() => {
+    return () => {
+      if (textCountdownTimerRef.current) {
+        clearInterval(textCountdownTimerRef.current);
+      }
+    };
+  }, []);
+
   // Scroll position listener to auto-toggle Floating unread indicator pill
   const handleScroll = () => {
     const container = scrollContainerRef.current;
@@ -501,6 +509,7 @@ export default function ChatPage({
         const msgType = isImage ? 'image' : 'file';
 
         await sendMessage(matchId!, '', msgType, [uploadedFile], retentionMode);
+        setRetentionMode('NEVER_DELETE');
         toast.success('File uploaded successfully!');
       } else {
         toast.error(res.error || 'Upload failed.');
@@ -577,6 +586,7 @@ export default function ChatPage({
         await sendMessage(matchId!, text.trim(), 'text', [], retentionMode);
       }
       setText('');
+      setRetentionMode('NEVER_DELETE');
     } catch (e) {
       console.error('Error sending message:', e);
     } finally {
@@ -585,11 +595,6 @@ export default function ChatPage({
         inputRef.current?.focus();
       }, 50);
     }
-  };
-
-  const handleModeChange = (mode: 'VIEW_ONCE' | 'NEVER_DELETE') => {
-    setRetentionMode(mode);
-    localStorage.setItem('chat_retention_mode', mode);
   };
 
   const handleReact = (messageId: string, emoji: ReactionEmoji) => {
@@ -761,6 +766,39 @@ export default function ChatPage({
     };
   };
 
+  const [textCountdown, setTextCountdown] = useState(10);
+  const textCountdownTimerRef = useRef<any>(null);
+
+  const handleOpenViewOnceText = async (msg: any, senderName: string) => {
+    try {
+      const msgId = msg.id || msg._id;
+      const decryptedText = await useChatStore.getState().openMessage(matchId!, msgId);
+      if (decryptedText) {
+        setViewOnceText({
+          msgId,
+          text: decryptedText,
+          senderName
+        });
+        setTextCountdown(10);
+        if (textCountdownTimerRef.current) clearInterval(textCountdownTimerRef.current);
+        textCountdownTimerRef.current = setInterval(() => {
+          setTextCountdown(prev => {
+            if (prev <= 1) {
+              clearInterval(textCountdownTimerRef.current);
+              setViewOnceText(null);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      } else {
+        toast.error("Message already opened or invalid.");
+      }
+    } catch (err) {
+      toast.error("Could not load view once message.");
+    }
+  };
+
   const closeMediaViewer = () => {
     if (!activeMedia) return;
     const msgId = activeMedia.msgId;
@@ -791,7 +829,19 @@ export default function ChatPage({
     const groups: any[] = [];
     let currentGroup: any = null;
 
+    // Filter out duplicates by unique ID before rendering
+    const seenIds = new Set<string>();
+    const uniqueMessages: any[] = [];
     messages.forEach((msg) => {
+      const mid = msg.id || (msg as any)._id;
+      if (mid) {
+        if (seenIds.has(mid)) return;
+        seenIds.add(mid);
+      }
+      uniqueMessages.push(msg);
+    });
+
+    uniqueMessages.forEach((msg) => {
       const msgTime = new Date(msg.timestamp).getTime();
       const isSameSender = currentGroup && currentGroup.senderId === msg.senderId;
       const prevMsg = currentGroup ? currentGroup.messages[currentGroup.messages.length - 1] : null;
@@ -1063,32 +1113,42 @@ export default function ChatPage({
                                     : 'bg-[#24242E] border border-white/[0.05] text-zinc-100 rounded-bl-[4px] shadow-sm hover:-translate-y-[1px]'
                                 }`}
                               >
-                                {msg.retentionMode === 'VIEW_ONCE' ? (
+                                {msg.retentionMode === 'VIEW_ONCE' || msg.visibility === 'view_once' ? (
                                   msg.viewed ? (
-                                    <div className="flex items-center gap-1.5 py-1 text-zinc-450 font-medium">
+                                    <div className="flex items-center gap-1.5 py-1 text-zinc-450 font-medium select-none">
                                       <Flame className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
-                                      <span>{group.isOwn ? 'Opened' : 'You opened this message.'}</span>
+                                      <span>Opened</span>
                                       <span className="text-[9px] text-zinc-550 italic font-mono shrink-0 ml-1">(disappeared)</span>
                                     </div>
                                   ) : (
                                     <div
-                                      onClick={!group.isOwn ? () => preloadViewOnce(msg, group.senderName) : undefined}
+                                      onClick={!group.isOwn ? () => {
+                                        if (msg.messageType === 'text') {
+                                          handleOpenViewOnceText(msg, group.senderName);
+                                        } else {
+                                          preloadViewOnce(msg, group.senderName);
+                                        }
+                                      } : undefined}
                                       className={!group.isOwn ? "cursor-pointer" : ""}
                                     >
                                       {group.isOwn ? (
                                         <div className="flex items-center gap-2 py-1 select-none opacity-85">
                                           <Lock className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
                                           <div className="flex flex-col">
-                                            <span className="font-semibold text-amber-300">View Once Message</span>
-                                            <span className="text-[9px] text-zinc-400">Waiting for recipient to open</span>
+                                            <span className="font-semibold text-amber-300">
+                                              {msg.messageType === 'image' ? 'View Once Photo' : 'View Once Text Message'}
+                                            </span>
+                                            <span className="text-[9px] text-zinc-400">Delivered</span>
                                           </div>
                                         </div>
                                       ) : (
                                         <div className="flex items-center gap-2.5 py-1.5 select-none active:opacity-70 group/once">
                                           <Flame className="w-4 h-4 text-amber-400 animate-bounce shrink-0" />
                                           <div className="flex flex-col">
-                                            <span className="font-bold text-amber-400 group-hover/once:underline">View Once Message</span>
-                                            <span className="text-[9px] text-zinc-400">Click to open & view now</span>
+                                            <span className="font-bold text-amber-400 group-hover/once:underline">
+                                              {msg.messageType === 'image' ? 'View Once Photo' : 'View Once Text Message'}
+                                            </span>
+                                            <span className="text-[9px] text-zinc-400">Tap to Open</span>
                                           </div>
                                         </div>
                                       )}
@@ -1344,29 +1404,19 @@ export default function ChatPage({
             className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-550 outline-none caret-violet-500"
           />
 
-          {/* Retention Mode Toggle */}
-          <div className="flex items-center gap-0.5 bg-zinc-950/60 border border-white/[0.04] p-0.5 rounded-full text-[10px] select-none text-zinc-400 shrink-0">
-            <button 
-              onClick={() => handleModeChange('VIEW_ONCE')}
-              className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
-                retentionMode === 'VIEW_ONCE' ? 'bg-amber-500/20 text-amber-400 font-bold border border-amber-500/20' : 'hover:text-zinc-200'
-              }`}
-              title="View Once (Snapchat mode)"
-            >
-              <Flame className="w-2.5 h-2.5 shrink-0" />
-              <span className="hidden sm:inline">View Once</span>
-            </button>
-            <button 
-              onClick={() => handleModeChange('NEVER_DELETE')}
-              className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
-                retentionMode === 'NEVER_DELETE' ? 'bg-violet-500/20 text-violet-400 font-bold border border-violet-500/20' : 'hover:text-zinc-200'
-              }`}
-              title="Never Delete (Standard mode)"
-            >
-              <Infinity className="w-2.5 h-2.5 shrink-0" />
-              <span className="hidden sm:inline">Never Delete</span>
-            </button>
-          </div>
+          {/* View Once Toggle Button */}
+          <button 
+            onClick={() => setRetentionMode(prev => prev === 'VIEW_ONCE' ? 'NEVER_DELETE' : 'VIEW_ONCE')}
+            className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border text-[10px] select-none shrink-0 ${
+              retentionMode === 'VIEW_ONCE' 
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 font-bold shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-pulse' 
+                : 'bg-zinc-950/40 border-white/[0.04] text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Toggle View Once Mode"
+          >
+            <Flame className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">View Once</span>
+          </button>
 
           <motion.button
             whileTap={{ scale: 0.9 }}
@@ -2224,6 +2274,74 @@ export default function ChatPage({
               </button>
             </div>
           </motion.div>
+        </div>,
+        document.body
+      )}
+
+      {/* Premium View Once Text Message Viewer Overlay Modal */}
+      {viewOnceText && createPortal(
+        <div className="fixed inset-0 z-[100000] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 select-none">
+          <div className="absolute top-8 right-8 flex items-center gap-4">
+            {/* Circular Countdown Progress */}
+            <div className="relative flex items-center justify-center h-10 w-10">
+              <svg className="w-full h-full transform -rotate-90">
+                <circle
+                  cx="20"
+                  cy="20"
+                  r="16"
+                  stroke="currentColor"
+                  strokeWidth="3.5"
+                  fill="transparent"
+                  className="text-white/10"
+                />
+                <circle
+                  cx="20"
+                  cy="20"
+                  r="16"
+                  stroke="currentColor"
+                  strokeWidth="3.5"
+                  fill="transparent"
+                  strokeDasharray={2 * Math.PI * 16}
+                  strokeDashoffset={2 * Math.PI * 16 * (1 - textCountdown / 10)}
+                  className="text-amber-500 transition-all duration-1000 ease-linear"
+                />
+              </svg>
+              <span className="absolute text-[10px] font-bold font-mono text-zinc-300">{textCountdown}s</span>
+            </div>
+            
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                if (textCountdownTimerRef.current) clearInterval(textCountdownTimerRef.current);
+                setViewOnceText(null);
+              }}
+              className="p-2 hover:bg-white/5 rounded-full text-zinc-400 hover:text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="max-w-md w-full text-center space-y-6">
+            <div className="mx-auto h-16 w-16 rounded-[24px] bg-gradient-to-tr from-amber-500/20 to-orange-500/20 border border-amber-500/30 flex items-center justify-center shadow-lg shadow-amber-500/5 mb-2 text-amber-500">
+              <Lock className="h-7 w-7" />
+            </div>
+            
+            <div className="space-y-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">View Once Message</span>
+              <h4 className="text-xs text-zinc-450 font-medium">from {viewOnceText.senderName}</h4>
+            </div>
+
+            {/* Premium decrypted text card */}
+            <div className="glass-card p-8 border border-white/[0.08] bg-zinc-950/60 rounded-3xl min-h-[120px] flex items-center justify-center shadow-xl">
+              <p className="text-sm font-semibold leading-relaxed text-zinc-200 select-none">
+                {viewOnceText.text}
+              </p>
+            </div>
+
+            <p className="text-[10px] text-zinc-500 italic font-medium">
+              * This message has disappeared from the database and will close automatically in {textCountdown} seconds.
+            </p>
+          </div>
         </div>,
         document.body
       )}

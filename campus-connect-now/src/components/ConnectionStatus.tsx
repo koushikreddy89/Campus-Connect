@@ -5,7 +5,8 @@
 
 import React from 'react';
 import { useConnectionStatus } from '@/hooks/useConnectionStatus';
-import { AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface ConnectionStatusIndicatorProps {
   showDetails?: boolean;
@@ -17,37 +18,31 @@ export const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps>
   position = 'top-right',
 }) => {
   const status = useConnectionStatus();
+  const lastConnected = React.useRef(status.isConnected);
 
-  const positionClasses = {
-    'top-right': 'top-4 right-4',
-    'top-left': 'top-4 left-4',
-    'bottom-right': 'bottom-4 right-4',
-    'bottom-left': 'bottom-4 left-4',
-  };
+  React.useEffect(() => {
+    // Display connection status in the browser console in development mode only
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[Connection Status] Connected: ${status.isConnected}, Latency: ${status.latency ? Math.round(status.latency) : 0}ms`);
+    }
 
-  if (status.isConnected) {
-    return (
-      <div
-        className={`fixed ${positionClasses[position]} z-50 flex items-center gap-2 bg-green-500/20 border border-green-500 text-green-600 px-4 py-2 rounded-lg transition-all`}
-      >
-        <CheckCircle size={16} className="text-green-500" />
-        <span className="text-sm font-medium">Connected</span>
-        {showDetails && status.latency && (
-          <span className="text-xs text-green-500/70">({Math.round(status.latency)}ms)</span>
-        )}
-      </div>
-    );
-  }
+    if (lastConnected.current && !status.isConnected) {
+      toast.error('Connection lost. Reconnecting...', {
+        id: 'connection-status-toast',
+        duration: Infinity,
+      });
+    } else if (!lastConnected.current && status.isConnected) {
+      toast.success('Connection restored', {
+        id: 'connection-status-toast',
+        duration: 3000,
+      });
+    }
 
-  // Checking status (default)
-  return (
-    <div
-      className={`fixed ${positionClasses[position]} z-50 flex items-center gap-2 bg-yellow-500/20 border border-yellow-500 text-yellow-600 px-4 py-2 rounded-lg transition-all`}
-    >
-      <Loader2 size={16} className="text-yellow-500 animate-spin" />
-      <span className="text-sm font-medium">Connecting...</span>
-    </div>
-  );
+    lastConnected.current = status.isConnected;
+  }, [status.isConnected, status.latency]);
+
+  // Never render a permanent floating status badge in the UI
+  return null;
 };
 
 /**

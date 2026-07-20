@@ -4,7 +4,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useGroupChatStore } from '@/store/groupChatStore';
 import { useUserStore } from '@/store/userStore';
 import { BottomTabBar } from '@/components/BottomTabBar';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '@/components/EmptyState';
 import { 
   MessageCircle, Users, Plus, X, Search, Pin, BellOff, MoreVertical,
@@ -17,6 +17,19 @@ import GroupInfoPanel from '@/components/chat/GroupInfoPanel';
 import { Button } from '@/components/ui/button';
 
 export default function ChatListPage() {
+  const { matchId, groupId } = useParams<{ matchId?: string; groupId?: string }>();
+  const navigate = useNavigate();
+
+  // If mobile width and active conversation is present, render full-screen page
+  if (window.innerWidth < 1024) {
+    if (matchId) {
+      return <ChatPage embeddedMatchId={matchId} />;
+    }
+    if (groupId) {
+      return <GroupChatPage embeddedGroupId={groupId} />;
+    }
+  }
+
   const matches = useMatchStore(s => s.matches);
   const groups = useGroupChatStore(s => s.groups);
   const availableUsers = useMemo(() => {
@@ -30,7 +43,6 @@ export default function ChatListPage() {
     });
     return list;
   }, [matches]);
-  const navigate = useNavigate();
   
   const [tab, setTab] = useState<'direct' | 'groups'>('direct');
   const [showCreateGroup, setShowCreateGroup] = useState(false);
@@ -56,6 +68,20 @@ export default function ChatListPage() {
 
   // Split-pane selection state for tablet/desktop
   const [selectedChat, setSelectedChat] = useState<{ id: string; type: 'direct' | 'group' } | null>(null);
+  
+  // Sync router params to selectedChat on desktop
+  useEffect(() => {
+    if (matchId) {
+      setSelectedChat({ id: matchId, type: 'direct' });
+      setTab('direct');
+    } else if (groupId) {
+      setSelectedChat({ id: groupId, type: 'group' });
+      setTab('groups');
+    } else {
+      setSelectedChat(null);
+    }
+  }, [matchId, groupId]);
+
   const [memberSearch, setMemberSearch] = useState('');
 
   const sharedPhotosMap = useChatStore(s => s.sharedPhotos);
@@ -122,10 +148,7 @@ export default function ChatListPage() {
 
   const handleItemClick = (id: string, type: 'direct' | 'group') => {
     setSelectedChat({ id, type });
-    // If mobile width, trigger standard routing
-    if (window.innerWidth < 1024) {
-      navigate(type === 'direct' ? `/chat/${id}` : `/chat/group/${id}`);
-    }
+    navigate(type === 'direct' ? `/chat/${id}` : `/chat/group/${id}`);
   };
 
   // Compute selected chat info for the Right Sidebar
@@ -405,9 +428,36 @@ export default function ChatListPage() {
                     <span className="text-[9px] uppercase font-bold text-zinc-550 tracking-wider block">Shared Resources</span>
                     <div className="space-y-2">
                       {(() => {
-                        const photosList = selectedChat ? (sharedPhotosMap[selectedChat.id] || []) : [];
-                        const docsList = selectedChat ? (sharedDocsMap[selectedChat.id] || []) : [];
-                        const linksList = selectedChat ? (sharedLinksMap[selectedChat.id] || []) : [];
+                        const rawPhotosList = selectedChat ? (sharedPhotosMap[selectedChat.id] || []) : [];
+                        const rawDocsList = selectedChat ? (sharedDocsMap[selectedChat.id] || []) : [];
+                        const rawLinksList = selectedChat ? (sharedLinksMap[selectedChat.id] || []) : [];
+
+                        const photosSeen = new Set();
+                        const photosList = rawPhotosList.filter(p => {
+                          const url = p.imageUrl;
+                          if (!url) return true;
+                          if (photosSeen.has(url)) return false;
+                          photosSeen.add(url);
+                          return true;
+                        });
+
+                        const docsSeen = new Set();
+                        const docsList = rawDocsList.filter(d => {
+                          const url = d.documentUrl;
+                          if (!url) return true;
+                          if (docsSeen.has(url)) return false;
+                          docsSeen.add(url);
+                          return true;
+                        });
+
+                        const linksSeen = new Set();
+                        const linksList = rawLinksList.filter(l => {
+                          const url = l.url;
+                          if (!url) return true;
+                          if (linksSeen.has(url)) return false;
+                          linksSeen.add(url);
+                          return true;
+                        });
 
                         return (
                           <>

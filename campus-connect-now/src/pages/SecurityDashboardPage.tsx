@@ -11,6 +11,10 @@ import {
   Calendar, FileText, ChevronDown, User, Layers, Info, Trash2, X, Play
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 interface SecurityMetrics {
   totalFailedLogins: number;
@@ -67,6 +71,10 @@ export default function SecurityDashboardPage() {
   const [browserFilter, setBrowserFilter] = useState<string>('');
   const [osFilter, setOsFilter] = useState<string>('');
   const [ipFilter, setIpFilter] = useState<string>('');
+  const [locationFilter, setLocationFilter] = useState<string>('');
+  const [authMethodFilter, setAuthMethodFilter] = useState<string>('');
+  const [mfaStatusFilter, setMfaStatusFilter] = useState<string>('');
+  const [accountStatusFilter, setAccountStatusFilter] = useState<string>('');
   
   // Sort states
   const [sortField, setSortField] = useState<string>('createdAt');
@@ -163,7 +171,20 @@ export default function SecurityDashboardPage() {
       event: eventFilter || undefined,
       fromDate: fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined,
       toDate: toDate ? new Date(`${toDate}T23:59:59`).toISOString() : undefined,
-      sort: `${sortOrder === 'desc' ? '-' : ''}${sortField}`
+      sort: `${sortOrder === 'desc' ? '-' : ''}${sortField}`,
+      // Advanced Filters
+      role: roleFilter || undefined,
+      department: departmentFilter || undefined,
+      branch: branchFilter || undefined,
+      batch: batchFilter || undefined,
+      device: deviceFilter || undefined,
+      browser: browserFilter || undefined,
+      os: osFilter || undefined,
+      ipAddress: ipFilter || undefined,
+      location: locationFilter || undefined,
+      authMethod: authMethodFilter || undefined,
+      mfaStatus: mfaStatusFilter || undefined,
+      accountStatus: accountStatusFilter || undefined
     };
   };
 
@@ -173,28 +194,9 @@ export default function SecurityDashboardPage() {
       const params = buildFilterParams();
       const res = await adminApi.getEnterpriseSecurityLogs(params);
       if (res.success && res.data) {
-        // Apply frontend level advanced filters if any are set
-        let filteredData = res.data;
-        
-        if (roleFilter) {
-          filteredData = filteredData.filter((l: any) => l.userProfile?.role?.toLowerCase() === roleFilter.toLowerCase());
-        }
-        if (departmentFilter) {
-          filteredData = filteredData.filter((l: any) => l.userProfile?.department?.toLowerCase().includes(departmentFilter.toLowerCase()));
-        }
-        if (branchFilter) {
-          filteredData = filteredData.filter((l: any) => l.userProfile?.branch?.toLowerCase().includes(branchFilter.toLowerCase()));
-        }
-        if (batchFilter) {
-          filteredData = filteredData.filter((l: any) => l.userProfile?.batch?.toLowerCase() === batchFilter.toLowerCase());
-        }
-        if (ipFilter) {
-          filteredData = filteredData.filter((l: any) => l.ipAddress?.includes(ipFilter));
-        }
-
-        setLogs(filteredData);
+        setLogs(res.data);
         setTotalPages(res.pagination?.pages || 1);
-        setTotalCount(res.pagination?.total || filteredData.length);
+        setTotalCount(res.pagination?.total || res.data.length);
       } else {
         toast.error(res.error || 'Failed to load security logs');
       }
@@ -225,7 +227,14 @@ export default function SecurityDashboardPage() {
     departmentFilter,
     branchFilter,
     batchFilter,
-    ipFilter
+    ipFilter,
+    deviceFilter,
+    browserFilter,
+    osFilter,
+    locationFilter,
+    authMethodFilter,
+    mfaStatusFilter,
+    accountStatusFilter
   ]);
 
   const handleRefreshAll = () => {
@@ -236,7 +245,6 @@ export default function SecurityDashboardPage() {
 
   // Quick Action triggers
   const triggerQuickFilter = (preset: string) => {
-    const todayStr = new Date().toISOString().split('T')[0];
     setPage(1);
     
     // Reset all advanced filters
@@ -248,59 +256,308 @@ export default function SecurityDashboardPage() {
     setBatchFilter('');
     setIpFilter('');
     setSearch('');
+    setDeviceFilter('');
+    setBrowserFilter('');
+    setOsFilter('');
+    setLocationFilter('');
+    setAuthMethodFilter('');
+    setMfaStatusFilter('');
+    setAccountStatusFilter('');
 
     if (preset === 'today-logins') {
       setDatePreset('today');
-      setEventFilter('login_success');
+      setEventFilter('login');
     } else if (preset === 'today-logouts') {
       setDatePreset('today');
       setEventFilter('logout');
     } else if (preset === 'failed-logins') {
       setStatusFilter('failure');
-      setEventFilter('login_fail_password');
+      setEventFilter('login');
     } else if (preset === 'success-logins') {
       setStatusFilter('success');
-      setEventFilter('login_success');
+      setEventFilter('login');
     } else if (preset === 'mfa-events') {
-      setEventFilter('mfa_verify');
+      setEventFilter('mfa');
     } else if (preset === 'suspicious') {
-      setStatusFilter('failure');
-      setSearch('lockout');
+      setEventFilter('suspicious');
     } else if (preset === 'locked') {
-      setEventFilter('account_locked');
+      setEventFilter('lock');
     } else if (preset === 'new-registers') {
-      setEventFilter('register_success');
+      setEventFilter('register');
     }
   };
 
   // Export handlers
-  const handleExport = (type: 'csv' | 'xlsx' | 'pdf') => {
+  const handleExport = async (type: 'csv' | 'xlsx' | 'pdf') => {
     setShowExportDropdown(false);
-    
-    const params = {
-      search: debouncedSearch || undefined,
-      status: statusFilter || undefined,
-      event: eventFilter || undefined,
-      fromDate: fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined,
-      toDate: toDate ? new Date(`${toDate}T23:59:59`).toISOString() : undefined
-    };
+    toast.info(`Preparing data for ${type.toUpperCase()} export...`);
 
-    if (type === 'pdf') {
-      // Trigger a clean browser print mode formatted for security report
-      window.print();
-      return;
+    let allLogs: any[] = [];
+    try {
+      // Build same filter params but fetch all matching records (high limit, page 1)
+      const params = {
+        ...buildFilterParams(),
+        page: 1,
+        limit: 100000
+      };
+
+      const res = await adminApi.getEnterpriseSecurityLogs(params);
+      if (!res.success || !res.data) {
+        toast.error(res.error || 'Failed to fetch logs for export');
+        return;
+      }
+
+      allLogs = res.data;
+
+
+
+      if (allLogs.length === 0) {
+        toast.error('No records found matching the applied filters');
+        return;
+      }
+
+      const currentDateStr = format(new Date(), 'yyyy-MM-dd');
+
+      if (type === 'csv') {
+        const csvHeaders = [
+          'Timestamp', 'User', 'Email', 'Role', 'Event', 'IP Address', 'Device',
+          'Browser', 'Operating System', 'Status', 'Location', 'Session ID', 'Created At'
+        ];
+
+        const csvRows = allLogs.map((log: any) => {
+          const ua = log.userAgent || '';
+          let os = 'Unknown OS';
+          if (ua.includes('Windows')) os = 'Windows';
+          else if (ua.includes('Macintosh')) os = 'MacOS';
+          else if (ua.includes('Linux')) os = 'Linux';
+          else if (ua.includes('Android')) os = 'Android';
+          else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+          let browser = 'Unknown Browser';
+          if (ua.includes('Chrome')) browser = 'Chrome';
+          else if (ua.includes('Safari')) browser = 'Safari';
+          else if (ua.includes('Firefox')) browser = 'Firefox';
+          else if (ua.includes('Edge')) browser = 'Edge';
+
+          let device = 'Desktop';
+          if (ua.includes('Mobi') || ua.includes('Android') || ua.includes('iPhone')) {
+            device = 'Mobile';
+          }
+
+          const escape = (val: any) => {
+            if (val === undefined || val === null) return '';
+            const str = String(val);
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+              return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+          };
+
+          return [
+            escape(new Date(log.createdAt).toISOString()),
+            escape(log.userProfile?.name || 'Unknown User'),
+            escape(log.email || log.userProfile?.email || ''),
+            escape(log.userProfile?.role || ''),
+            escape(log.event),
+            escape(log.ipAddress || ''),
+            escape(device),
+            escape(browser),
+            escape(os),
+            escape(log.status),
+            escape(log.details?.location || 'Remote'),
+            escape(log.details?.sessionId || ''),
+            escape(log.createdAt)
+          ].join(',');
+        });
+
+        const csvContent = '\uFEFF' + [csvHeaders.join(','), ...csvRows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `Security_Audit_Logs_${currentDateStr}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success('CSV Export downloaded successfully!');
+      } 
+      else if (type === 'xlsx') {
+        const excelData = allLogs.map((log: any) => {
+          const ua = log.userAgent || '';
+          let os = 'Unknown OS';
+          if (ua.includes('Windows')) os = 'Windows';
+          else if (ua.includes('Macintosh')) os = 'MacOS';
+          else if (ua.includes('Linux')) os = 'Linux';
+          else if (ua.includes('Android')) os = 'Android';
+          else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+          let browser = 'Unknown Browser';
+          if (ua.includes('Chrome')) browser = 'Chrome';
+          else if (ua.includes('Safari')) browser = 'Safari';
+          else if (ua.includes('Firefox')) browser = 'Firefox';
+          else if (ua.includes('Edge')) browser = 'Edge';
+
+          let device = 'Desktop';
+          if (ua.includes('Mobi') || ua.includes('Android') || ua.includes('iPhone')) {
+            device = 'Mobile';
+          }
+
+          return {
+            'Timestamp': new Date(log.createdAt).toLocaleString(),
+            'User': log.userProfile?.name || 'Unknown User',
+            'Email': log.email || log.userProfile?.email || '',
+            'Role': log.userProfile?.role || '',
+            'Event': log.event,
+            'IP Address': log.ipAddress || '',
+            'Device': device,
+            'Browser': browser,
+            'Operating System': os,
+            'Status': log.status,
+            'Location': log.details?.location || 'Remote',
+            'Session ID': log.details?.sessionId || '',
+            'Created At': log.createdAt
+          };
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Security Logs');
+
+        // Freeze top header row
+        worksheet['!views'] = [
+          { state: 'frozen', ySplit: 1, activePane: 'bottomLeft', paneState: 'frozen' }
+        ];
+
+        // Autofit Column Widths
+        const maxColWidths = excelData.reduce((acc: any, row: any) => {
+          Object.keys(row).forEach((key, colIdx) => {
+            const val = row[key] ? String(row[key]) : '';
+            const len = Math.max(val.length, key.length) + 2;
+            acc[colIdx] = Math.max(acc[colIdx] || 10, len);
+          });
+          return acc;
+        }, []);
+        worksheet['!cols'] = maxColWidths.map((w: number) => ({ wch: w }));
+
+        // Enable Auto Filters
+        const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+        worksheet['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
+
+        XLSX.writeFile(workbook, `Security_Audit_Logs_${currentDateStr}.xlsx`);
+        toast.success('Excel Export downloaded successfully!');
+      }
+      else if (type === 'pdf') {
+        const doc = new jsPDF({
+          orientation: 'landscape',
+          unit: 'mm',
+          format: 'a4'
+        });
+
+        const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm');
+        const filenameDate = format(new Date(), 'yyyy-MM-dd_HH-mm');
+        const adminName = useAuthStore.getState().email || currentAdminEmail;
+        const organization = college;
+        const title = 'Security Audit & Event Logs Report';
+
+        // Title & Branding
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.setTextColor(34, 197, 94); // Green accent
+        doc.text(title, 14, 15);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(156, 163, 175);
+        doc.text(`Organization: ${organization}  |  Generated By: ${adminName}  |  Date: ${timestamp}`, 14, 21);
+
+        // Applied Filters
+        let filtersStr = 'Filters: ';
+        const activeFilters = [];
+        if (debouncedSearch) activeFilters.push(`Search: "${debouncedSearch}"`);
+        if (statusFilter) activeFilters.push(`Status: ${statusFilter}`);
+        if (eventFilter) activeFilters.push(`Event: ${eventFilter}`);
+        if (fromDate) activeFilters.push(`From: ${fromDate}`);
+        if (toDate) activeFilters.push(`To: ${toDate}`);
+        if (roleFilter) activeFilters.push(`Role: ${roleFilter}`);
+        if (departmentFilter) activeFilters.push(`Dept: ${departmentFilter}`);
+        if (ipFilter) activeFilters.push(`IP: ${ipFilter}`);
+        filtersStr += activeFilters.length > 0 ? activeFilters.join(', ') : 'None';
+
+        doc.setFontSize(8);
+        doc.setTextColor(107, 114, 128);
+        doc.text(filtersStr, 14, 26);
+
+        const tableHeaders = [['Timestamp', 'User (Email)', 'Event', 'Status', 'IP Address', 'Location', 'Browser/OS', 'Session ID']];
+        const tableRows = allLogs.map((log: any) => {
+          const ua = log.userAgent || '';
+          let os = 'Unknown OS';
+          if (ua.includes('Windows')) os = 'Windows';
+          else if (ua.includes('Macintosh')) os = 'MacOS';
+          else if (ua.includes('Linux')) os = 'Linux';
+          else if (ua.includes('Android')) os = 'Android';
+          else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+          let browser = 'Unknown Browser';
+          if (ua.includes('Chrome')) browser = 'Chrome';
+          else if (ua.includes('Safari')) browser = 'Safari';
+          else if (ua.includes('Firefox')) browser = 'Firefox';
+          else if (ua.includes('Edge')) browser = 'Edge';
+
+          const userVal = log.email || log.userProfile?.email || log.userId || 'N/A';
+          const browserOS = `${browser} / ${os}`;
+          
+          return [
+            new Date(log.createdAt).toLocaleString(),
+            userVal,
+            log.event,
+            log.status,
+            log.ipAddress || 'N/A',
+            log.details?.location || 'Remote',
+            browserOS,
+            log.details?.sessionId || 'N/A'
+          ];
+        });
+
+        autoTable(doc, {
+          startY: 30,
+          head: tableHeaders,
+          body: tableRows,
+          theme: 'striped',
+          headStyles: { fillColor: [24, 24, 27], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+          bodyStyles: { fontSize: 7, textColor: [63, 63, 70] },
+          alternateRowStyles: { fillColor: [244, 244, 245] },
+          columnStyles: {
+            0: { cellWidth: 32 },
+            1: { cellWidth: 45 },
+            2: { cellWidth: 35 },
+            3: { cellWidth: 15 },
+            4: { cellWidth: 25 },
+            5: { cellWidth: 25 },
+            6: { cellWidth: 35 },
+            7: { cellWidth: 50 }
+          },
+          didDrawPage: (data: any) => {
+            const str = `Page ${doc.internal.getNumberOfPages()}`;
+            doc.setFontSize(8);
+            doc.setTextColor(156, 163, 175);
+            doc.text(str, doc.internal.pageSize.width - 20, doc.internal.pageSize.height - 10);
+            doc.text(`${organization} Security Audit Report - Confidential`, 14, doc.internal.pageSize.height - 10);
+          }
+        });
+
+        doc.save(`Security_Audit_Logs_${filenameDate}.pdf`);
+        toast.success('PDF Report downloaded successfully!');
+      }
+    } catch (error: any) {
+      console.error('Export Error details:', {
+        message: error.message,
+        stack: error.stack,
+        format: type,
+        datasetSize: allLogs?.length || 0,
+        stage: 'Generation / Download'
+      });
+      toast.error(`Error generating ${type.toUpperCase()} file: ${error.message || 'Unknown error'}`);
     }
-
-    const exportUrl = adminApi.getEnterpriseSecurityLogsExportUrl(params);
-    
-    // Open in a new tab or trigger directly
-    toast.info(`Preparing ${type.toUpperCase()} security audit report... 📂`);
-    const link = document.createElement('a');
-    link.href = exportUrl;
-    link.download = `security_audit_report_${new Date().toISOString().split('T')[0]}.${type}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   // Session duration calculator helper
@@ -590,11 +847,10 @@ export default function SecurityDashboardPage() {
                 onChange={e => { setLimit(Number(e.target.value)); setPage(1); }}
                 className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1.5 py-0.5"
               >
+                <option value={10}>10</option>
                 <option value={25}>25</option>
                 <option value={50}>50</option>
                 <option value={100}>100</option>
-                <option value={250}>250</option>
-                <option value={500}>500</option>
               </select>
             </div>
           </div>
@@ -622,12 +878,42 @@ export default function SecurityDashboardPage() {
                     >
                       Timestamp {sortField === 'createdAt' && (sortOrder === 'asc' ? '▲' : '▼')}
                     </th>
-                    <th className="p-4">User / Subject</th>
-                    <th className="p-4">Role</th>
-                    <th className="p-4">Event</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4">IP Address</th>
-                    <th className="p-4">Client Device</th>
+                    <th 
+                      onClick={() => { setSortField('userId'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      User / Subject {sortField === 'userId' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
+                    <th 
+                      onClick={() => { setSortField('role'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Role {sortField === 'role' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
+                    <th 
+                      onClick={() => { setSortField('event'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Event {sortField === 'event' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
+                    <th 
+                      onClick={() => { setSortField('status'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Status {sortField === 'status' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
+                    <th 
+                      onClick={() => { setSortField('ipAddress'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      IP Address {sortField === 'ipAddress' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
+                    <th 
+                      onClick={() => { setSortField('userAgent'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}
+                      className="p-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Client Device {sortField === 'userAgent' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </th>
                     <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -668,7 +954,10 @@ export default function SecurityDashboardPage() {
                         <td className="p-4 text-zinc-450 whitespace-nowrap">
                           {log.userAgent ? (log.userAgent.includes('Windows') ? 'Windows' : log.userAgent.includes('Mac') ? 'macOS' : 'Mobile') : 'Chrome'}
                         </td>
-                        <td className="p-4 text-right text-violet-400 font-bold hover:text-violet-300">
+                        <td 
+                          className="p-4 text-right text-violet-400 font-bold hover:text-violet-300 cursor-pointer"
+                          onClick={(e) => { e.stopPropagation(); setSelectedSessionLog(log); }}
+                        >
                           Inspect
                         </td>
                       </tr>
@@ -825,6 +1114,100 @@ export default function SecurityDashboardPage() {
                       className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
                     />
                   </div>
+
+                  {/* Device Type */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Device Type</label>
+                    <select
+                      value={deviceFilter}
+                      onChange={e => setDeviceFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All Devices</option>
+                      <option value="desktop">Desktop</option>
+                      <option value="mobile">Mobile / Tablet</option>
+                    </select>
+                  </div>
+
+                  {/* Browser */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Browser</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Chrome, Safari"
+                      value={browserFilter}
+                      onChange={e => setBrowserFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    />
+                  </div>
+
+                  {/* Operating System */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Operating System</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Windows, macOS"
+                      value={osFilter}
+                      onChange={e => setOsFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    />
+                  </div>
+
+                  {/* Location */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Location</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Remote, India"
+                      value={locationFilter}
+                      onChange={e => setLocationFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    />
+                  </div>
+
+                  {/* Authentication Method */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Authentication Method</label>
+                    <select
+                      value={authMethodFilter}
+                      onChange={e => setAuthMethodFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All Methods</option>
+                      <option value="password">Password</option>
+                      <option value="mfa">Email MFA</option>
+                      <option value="captcha">CAPTCHA Challenge</option>
+                    </select>
+                  </div>
+
+                  {/* MFA Status */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">MFA Setup Status</label>
+                    <select
+                      value={mfaStatusFilter}
+                      onChange={e => setMfaStatusFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All States</option>
+                      <option value="enabled">MFA Enabled</option>
+                      <option value="disabled">MFA Disabled</option>
+                    </select>
+                  </div>
+
+                  {/* Account Status */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Account Lock Status</label>
+                    <select
+                      value={accountStatusFilter}
+                      onChange={e => setAccountStatusFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-3 py-2 text-xs outline-none"
+                    >
+                      <option value="">All Statuses</option>
+                      <option value="active">Active (Unlocked)</option>
+                      <option value="locked">Temporarily Locked</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -838,6 +1221,13 @@ export default function SecurityDashboardPage() {
                     setBranchFilter('');
                     setBatchFilter('');
                     setIpFilter('');
+                    setDeviceFilter('');
+                    setBrowserFilter('');
+                    setOsFilter('');
+                    setLocationFilter('');
+                    setAuthMethodFilter('');
+                    setMfaStatusFilter('');
+                    setAccountStatusFilter('');
                     toast.success('Filters cleared! 🧹');
                   }}
                   className="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 hover:bg-zinc-800 rounded-xl py-2 text-xs font-semibold"

@@ -672,6 +672,7 @@ module.exports = {
     imageUrl: { type: String },
     timestamp: { type: Date, default: Date.now, index: true },
     retentionMode: { type: String, enum: ['VIEW_ONCE', 'NEVER_DELETE'], default: 'NEVER_DELETE', index: true },
+    visibility: { type: String, default: 'normal', index: true },
     viewed: { type: Boolean, default: false, index: true },
     viewedAt: { type: Date },
     deletedAt: { type: Date, index: true },
@@ -871,10 +872,32 @@ AlumniVerificationSchema.index({ userId: 1 });
 AlumniVerificationSchema.index({ email: 1 });
 AlumniVerificationSchema.index({ status: 1 });
 
+const BugSchema = new mongoose.Schema({
+  title: { type: String },
+  description: { type: String, required: true },
+  screenshotUrl: { type: String },
+  userId: { type: String, required: true },
+  username: { type: String },
+  email: { type: String },
+  collegeId: { type: String },
+  priority: { type: String, enum: ['Low', 'Medium', 'High', 'Critical'], default: 'Medium' },
+  status: { type: String, enum: ['Pending', 'Open', 'In Progress', 'Resolved', 'Rejected', 'Closed'], default: 'Pending' },
+  browser: { type: String },
+  operatingSystem: { type: String },
+  applicationVersion: { type: String, default: '1.0.0' },
+  internalNotes: { type: String, default: '' },
+  assignedTo: { type: String, default: '' }
+}, { timestamps: true });
+BugSchema.index({ userId: 1 });
+BugSchema.index({ status: 1 });
+BugSchema.index({ priority: 1 });
+
 module.exports.CollegeDomain = mongoose.model('CollegeDomain', CollegeDomainSchema, 'college_domains');
 module.exports.Session = mongoose.model('Session', SessionSchema, 'sessions');
 module.exports.LoginAttempt = mongoose.model('LoginAttempt', LoginAttemptSchema, 'login_attempts');
 module.exports.SecurityLog = mongoose.model('SecurityLog', SecurityLogSchema, 'security_logs');
 module.exports.AlumniVerification = mongoose.model('AlumniVerification', AlumniVerificationSchema, 'alumni_verifications');
+module.exports.Bug = mongoose.model('Bug', BugSchema, 'bugs');
+
 
 

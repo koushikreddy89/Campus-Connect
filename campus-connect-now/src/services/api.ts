@@ -707,6 +707,50 @@ export const matchApi = {
       return { success: false, error: error.message };
     }
   },
+
+  async removeConnection(friendId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/connections/remove`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ friendId })
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error removing connection:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getBlockedUsers() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/privacy-settings`, {
+        headers: getHeaders(undefined)
+      });
+      const result = await res.json();
+      if (result.success && result.privacySettings) {
+        return { success: true, data: result.privacySettings.blockedUsers || [] };
+      }
+      return { success: false, data: [] };
+    } catch (error: any) {
+      console.error('Error fetching blocked users:', error);
+      return { success: false, data: [] };
+    }
+  },
+
+  async resolveConnection(friendId: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/connections/resolve`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ friendId })
+      });
+      return await res.json();
+    } catch (error: any) {
+      console.error('Error resolving connection:', error);
+      return { success: false, error: error.message };
+    }
+  },
 };
 
 // ============================================

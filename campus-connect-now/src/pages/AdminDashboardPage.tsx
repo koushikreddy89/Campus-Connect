@@ -12,7 +12,7 @@ import {
   AlertTriangle, CheckCircle, LifeBuoy, MessageSquare,
   Clock, Check, Eye, Globe, MoreVertical, Edit3, Copy,
   Pin, Pause, Play, Archive, RotateCcw, Share2, FileText,
-  AlertCircle, BookOpen, Lock, Volume2, Camera, ExternalLink
+  AlertCircle, BookOpen, Lock, Volume2, Camera, ExternalLink, Bug
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
@@ -39,7 +39,7 @@ export default function AdminDashboardPage() {
   const createAnnouncement = useAnnouncementStore(s => s.createAnnouncement);
   const deleteAnnouncement = useAnnouncementStore(s => s.deleteAnnouncement);
 
-  const [activeAdminTab, setActiveAdminTab] = useState<'announcements' | 'reports' | 'tickets' | 'alumni' | 'colleges' | 'logs'>('announcements');
+  const [activeAdminTab, setActiveAdminTab] = useState<'announcements' | 'reports' | 'tickets' | 'alumni' | 'colleges' | 'logs' | 'bugs'>('announcements');
 
   // Alumni approvals state
   const [alumniVerifications, setAlumniVerifications] = useState<any[]>([]);
@@ -66,6 +66,14 @@ export default function AdminDashboardPage() {
   const [replyTicketId, setReplyTicketId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [replyStatus, setReplyStatus] = useState<string>('In Progress');
+
+  // Bugs management state
+  const [bugs, setBugs] = useState<any[]>([]);
+  const [bugsLoading, setBugsLoading] = useState(false);
+  const [replyBugId, setReplyBugId] = useState<string | null>(null);
+  const [bugInternalNotes, setBugInternalNotes] = useState('');
+  const [bugStatus, setBugStatus] = useState<string>('Pending');
+  const [bugPriority, setBugPriority] = useState<string>('Medium');
 
   // Announcement Form State
   const [showForm, setShowForm] = useState(false);
@@ -678,6 +686,26 @@ Contact Person: ${contactPerson} (${contactNumber})
     }
   };
 
+  const loadBugs = async () => {
+    setBugsLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/bugs', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const json = await res.json();
+      if (json.success) {
+        setBugs(json.data);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load bug reports');
+    } finally {
+      setBugsLoading(false);
+    }
+  };
+
   const loadAlumniVerifications = async () => {
     setAlumniLoading(true);
     try {
@@ -728,6 +756,8 @@ Contact Person: ${contactPerson} (${contactNumber})
       loadReports();
     } else if (activeAdminTab === 'tickets') {
       loadTickets();
+    } else if (activeAdminTab === 'bugs') {
+      loadBugs();
     } else if (activeAdminTab === 'alumni') {
       loadAlumniVerifications();
     } else if (activeAdminTab === 'colleges') {
@@ -1035,6 +1065,14 @@ Contact Person: ${contactPerson} (${contactNumber})
             }`}
           >
             <LifeBuoy className="h-3.5 w-3.5" /> Help Desk
+          </button>
+          <button
+            onClick={() => setActiveAdminTab('bugs')}
+            className={`flex-1 min-w-[100px] py-2.5 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+              activeAdminTab === 'bugs' ? 'bg-primary text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Bug className="h-3.5 w-3.5" /> Bugs
           </button>
         </div>
       </div>
@@ -2981,6 +3019,253 @@ Contact Person: ${contactPerson} (${contactNumber})
 
                     <div className="text-[9px] text-muted-foreground/60 flex items-center gap-1.5">
                       <Clock className="h-3 w-3" /> Submitted {formatDistanceToNow(new Date(ticket.createdAt), { addSuffix: true })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* Bugs management tab */}
+        {activeAdminTab === 'bugs' && (
+          <motion.div
+            key="bugs"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="px-5 space-y-4"
+          >
+            <h2 className="text-[10px] font-semibold text-muted-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
+              <Bug className="h-3.5 w-3.5 text-primary" /> Submitted Bug Reports ({bugs.length})
+            </h2>
+
+            {bugsLoading ? (
+              <div className="flex justify-center py-12">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            ) : bugs.length === 0 ? (
+              <div className="glass-card p-10 text-center text-muted-foreground text-xs italic">
+                No bugs reported. Clear system! 🐛
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {bugs.map((bug) => (
+                  <div key={bug._id} className="glass-card p-5 space-y-4 border border-white/5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                            bug.status === 'Pending' ? 'bg-amber-500/10 text-amber-400' :
+                            bug.status === 'Open' ? 'bg-green-500/10 text-green-400' :
+                            bug.status === 'In Progress' ? 'bg-purple-500/10 text-purple-400' :
+                            bug.status === 'Resolved' ? 'bg-blue-500/10 text-blue-400' :
+                            'bg-gray-500/10 text-gray-400'
+                          }`}>
+                            {bug.status}
+                          </span>
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                            bug.priority === 'Critical' ? 'bg-red-500/15 text-red-400 border border-red-500/30' :
+                            bug.priority === 'High' ? 'bg-orange-500/10 text-orange-400' :
+                            bug.priority === 'Medium' ? 'bg-yellow-500/10 text-yellow-400' :
+                            'bg-slate-500/10 text-slate-400'
+                          }`}>
+                            {bug.priority} Priority
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Reporter: {bug.username || 'Unknown'} ({bug.email || 'N/A'})</span>
+                        </div>
+                        <h3 className="text-xs font-bold text-foreground mt-2">{bug.title || 'Untitled Bug'}</h3>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{bug.description}</p>
+                      </div>
+
+                      <div className="flex gap-1.5">
+                        <Button
+                          onClick={() => {
+                            setReplyBugId(replyBugId === bug._id ? null : bug._id);
+                            setBugInternalNotes(bug.internalNotes || '');
+                            setBugStatus(bug.status);
+                            setBugPriority(bug.priority);
+                          }}
+                          className="bg-primary hover:bg-primary/90 text-white rounded-lg h-8 px-3 text-[10px] font-bold shrink-0"
+                        >
+                          Manage
+                        </Button>
+                        <Button
+                          onClick={async () => {
+                            if (confirm('Are you sure you want to delete this bug report permanently?')) {
+                              try {
+                                const res = await fetch(`http://localhost:5000/api/bugs/${bug._id}`, {
+                                  method: 'DELETE',
+                                  headers: {
+                                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                                  }
+                                });
+                                const json = await res.json();
+                                if (json.success) {
+                                  toast.success('Bug report deleted');
+                                  loadBugs();
+                                } else {
+                                  toast.error(json.error || 'Failed to delete');
+                                }
+                              } catch (err) {
+                                toast.error('Error deleting bug report');
+                              }
+                            }
+                          }}
+                          variant="ghost"
+                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg h-8 w-8 p-0 shrink-0"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Screenshot Preview */}
+                    {bug.screenshotUrl && (
+                      <div className="mt-2 space-y-1">
+                        <span className="text-[9px] text-muted-foreground font-bold uppercase block">Screenshot Attachment:</span>
+                        <div className="relative group max-w-sm rounded-xl overflow-hidden border border-white/10 bg-black/40">
+                          <img src={bug.screenshotUrl} alt="Bug Screenshot" className="max-h-48 object-contain rounded-xl" />
+                          <a
+                            href={bug.screenshotUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold gap-1.5"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" /> View Fullscreen
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Device & Browser environment info */}
+                    {(bug.browser || bug.operatingSystem || bug.applicationVersion) && (
+                      <div className="grid grid-cols-3 gap-3 p-3 bg-black/25 rounded-xl border border-white/5 text-[10px] text-muted-foreground font-mono">
+                        <div>
+                          <span className="font-bold text-foreground/80 block uppercase text-[8px] tracking-wider mb-0.5">OS / Platform</span>
+                          {bug.operatingSystem || 'Unknown'}
+                        </div>
+                        <div>
+                          <span className="font-bold text-foreground/80 block uppercase text-[8px] tracking-wider mb-0.5">Browser</span>
+                          {bug.browser || 'Unknown'}
+                        </div>
+                        <div>
+                          <span className="font-bold text-foreground/80 block uppercase text-[8px] tracking-wider mb-0.5">App Version</span>
+                          v{bug.applicationVersion || '1.0.0'}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Internal Notes / Assignment display */}
+                    {(bug.internalNotes || bug.assignedTo) && (
+                      <div className="p-3 bg-primary/5 rounded-xl border border-primary/10 space-y-1 text-xs">
+                        {bug.assignedTo && <p className="text-white font-medium text-[10px]">👤 Assigned to: <span className="text-primary font-bold">{bug.assignedTo}</span></p>}
+                        {bug.internalNotes && (
+                          <>
+                            <p className="font-semibold text-foreground/90 text-[10px] uppercase tracking-wider">Internal Developer Notes:</p>
+                            <p className="text-muted-foreground leading-relaxed italic">"{bug.internalNotes}"</p>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Inline management form */}
+                    {replyBugId === bug._id && (
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          try {
+                            const res = await fetch(`http://localhost:5000/api/bugs/${bug._id}`, {
+                              method: 'PATCH',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${localStorage.getItem('token')}`
+                              },
+                              body: JSON.stringify({
+                                status: bugStatus,
+                                priority: bugPriority,
+                                internalNotes: bugInternalNotes
+                              })
+                            });
+                            const json = await res.json();
+                            if (json.success) {
+                              toast.success('Bug report updated successfully');
+                              setReplyBugId(null);
+                              loadBugs();
+                            } else {
+                              toast.error(json.error || 'Failed to update bug');
+                            }
+                          } catch (err) {
+                            toast.error('Error updating bug report');
+                          }
+                        }}
+                        className="p-4 bg-secondary/30 border border-white/5 rounded-xl space-y-3"
+                      >
+                        <h4 className="text-[10px] text-foreground font-bold uppercase">Update Bug Status & Notes</h4>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] text-muted-foreground font-bold uppercase mb-1 block">Status</label>
+                            <select
+                              value={bugStatus}
+                              onChange={(e) => setBugStatus(e.target.value)}
+                              className="w-full bg-secondary border border-white/10 rounded-lg px-2 py-1.5 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                            >
+                              <option value="Pending">Pending</option>
+                              <option value="Open">Open</option>
+                              <option value="In Progress">In Progress</option>
+                              <option value="Resolved">Resolved</option>
+                              <option value="Rejected">Rejected</option>
+                              <option value="Closed">Closed</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-muted-foreground font-bold uppercase mb-1 block">Priority</label>
+                            <select
+                              value={bugPriority}
+                              onChange={(e) => setBugPriority(e.target.value)}
+                              className="w-full bg-secondary border border-white/10 rounded-lg px-2 py-1.5 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                            >
+                              <option value="Low">Low</option>
+                              <option value="Medium">Medium</option>
+                              <option value="High">High</option>
+                              <option value="Critical">Critical</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] text-muted-foreground font-bold uppercase block">Internal Notes</label>
+                          <textarea
+                            value={bugInternalNotes}
+                            onChange={(e) => setBugInternalNotes(e.target.value)}
+                            placeholder="Add developer notes or debugging findings..."
+                            rows={3}
+                            className="w-full bg-secondary border border-white/10 rounded-xl p-3 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/50"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            onClick={() => setReplyBugId(null)}
+                            variant="ghost"
+                            className="text-xs h-9"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            className="bg-primary hover:bg-primary/95 text-white rounded-lg h-9 px-4 text-xs font-bold"
+                          >
+                            Save Changes
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+
+                    <div className="text-[9px] text-muted-foreground/60 flex items-center gap-1.5">
+                      <Clock className="h-3 w-3" /> Submitted {formatDistanceToNow(new Date(bug.createdAt), { addSuffix: true })}
                     </div>
                   </div>
                 ))}

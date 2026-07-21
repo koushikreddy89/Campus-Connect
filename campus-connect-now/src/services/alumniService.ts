@@ -17,6 +17,19 @@ import {
 import { getApiUrl } from './connectionService';
 import { useAuthStore } from '@/store/authStore';
 
+// Helper to retrieve Authorization headers for authenticated requests
+function getAuthHeaders(contentType = 'application/json') {
+  const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+  const headers: Record<string, string> = {};
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export const alumniProfileService = {
   /**
    * Get all approved alumni profiles
@@ -31,7 +44,9 @@ export const alumniProfileService = {
     if (filters?.department && filters.department.length > 0) queryParams.append('department', filters.department.join(','));
     if (filters?.batch && filters.batch.length > 0) queryParams.append('batch', filters.batch.join(','));
 
-    const res = await fetch(`${getApiUrl()}/api/alumni?${queryParams.toString()}`);
+    const res = await fetch(`${getApiUrl()}/api/alumni?${queryParams.toString()}`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     
     if (!result.success) throw new Error(result.error || 'Failed to fetch profiles');
@@ -53,7 +68,9 @@ export const alumniProfileService = {
    * Get alumni profile by ID
    */
   getProfileById: async (profileId: string, collegeId: string): Promise<AlumniProfile> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch profile');
     const profile = result.data;
@@ -69,7 +86,9 @@ export const alumniProfileService = {
   getMyProfile: async (collegeId: string): Promise<AlumniProfile | null> => {
     const userId = useAuthStore.getState().uid;
     if (!userId) return null;
-    const res = await fetch(`${getApiUrl()}/api/alumni/profile?userId=${userId}`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/profile?userId=${userId}`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success || !result.data) return null;
     const profile = result.data;
@@ -88,7 +107,7 @@ export const alumniProfileService = {
   ): Promise<AlumniProfile> => {
     const res = await fetch(`${getApiUrl()}/api/alumni`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ ...data, collegeId })
     });
     const result = await res.json();
@@ -110,7 +129,7 @@ export const alumniProfileService = {
   ): Promise<AlumniProfile> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -126,7 +145,10 @@ export const alumniProfileService = {
    * Delete alumni profile
    */
   deleteProfile: async (profileId: string, collegeId: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/alumni/${profileId}`, { method: 'DELETE' });
+    await fetch(`${getApiUrl()}/api/alumni/${profileId}`, { 
+      method: 'DELETE',
+      headers: getAuthHeaders(undefined)
+    });
   },
 
   /**
@@ -147,7 +169,9 @@ export const alumniProfileService = {
    * Get referrals by alumni ID
    */
   getReferralsByAlumniId: async (alumniId: string): Promise<any[]> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/referrals`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/referrals`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch referrals');
     return (result.data || []).map((r: any) => ({ ...r, id: r.id || r._id }));
@@ -157,7 +181,9 @@ export const alumniProfileService = {
    * Get roadmaps by alumni ID
    */
   getRoadmapsByAlumniId: async (alumniId: string): Promise<any[]> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/roadmaps`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/roadmaps`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch roadmaps');
     return (result.data || []).map((r: any) => ({ ...r, id: r.id || r._id }));
@@ -167,7 +193,9 @@ export const alumniProfileService = {
    * Get resources by alumni ID
    */
   getResourcesByAlumniId: async (alumniId: string): Promise<any[]> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/resources`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/resources`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch resources');
     return (result.data || []).map((r: any) => ({ ...r, id: r.id || r._id }));
@@ -177,7 +205,9 @@ export const alumniProfileService = {
    * Get achievements by alumni ID
    */
   getAchievementsByAlumniId: async (alumniId: string): Promise<any[]> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/achievements`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/achievements`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch achievements');
     return (result.data || []).map((r: any) => ({ ...r, id: r.id || r._id }));
@@ -193,7 +223,7 @@ export const alumniProfileService = {
     }
     const res = await fetch(`${getApiUrl()}/api/alumni/referrals`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -207,7 +237,7 @@ export const alumniProfileService = {
   updateReferral: async (id: string, data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/referrals/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -220,7 +250,8 @@ export const alumniProfileService = {
    */
   deleteReferral: async (id: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/referrals/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: getAuthHeaders(undefined)
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to delete referral');
@@ -232,7 +263,7 @@ export const alumniProfileService = {
   likeReferral: async (id: string, userId: string): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/referrals/${id}/like`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId })
     });
     const result = await res.json();
@@ -246,7 +277,7 @@ export const alumniProfileService = {
   saveReferral: async (id: string, userId: string): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/referrals/${id}/save`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId })
     });
     const result = await res.json();
@@ -260,7 +291,7 @@ export const alumniProfileService = {
   commentReferral: async (id: string, commentData: { userId: string; userName: string; userAvatar?: string; content: string }): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/referrals/${id}/comment`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(commentData)
     });
     const result = await res.json();
@@ -274,7 +305,7 @@ export const alumniProfileService = {
   deleteReferralComment: async (id: string, commentId: string, userId: string): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/referrals/${id}/comment/${commentId}`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ userId })
     });
     const result = await res.json();
@@ -289,7 +320,9 @@ export const alumniProfileService = {
     const query = new URLSearchParams();
     if (params?.saved) query.append('saved', 'true');
     if (params?.userId) query.append('userId', params.userId || '');
-    const res = await fetch(`${getApiUrl()}/api/student/referrals?${query.toString()}`);
+    const res = await fetch(`${getApiUrl()}/api/student/referrals?${query.toString()}`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch student referrals');
     return (result.data || []).map((r: any) => ({ ...r, id: r.id || r._id }));
@@ -299,28 +332,40 @@ export const alumniProfileService = {
    * Track referral views analytics
    */
   trackReferralView: async (id: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/referrals/${id}/view`, { method: 'POST' });
+    await fetch(`${getApiUrl()}/api/referrals/${id}/view`, { 
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
   },
 
   /**
    * Track referral clicks analytics
    */
   trackReferralClick: async (id: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/referrals/${id}/click`, { method: 'POST' });
+    await fetch(`${getApiUrl()}/api/referrals/${id}/click`, { 
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
   },
 
   /**
    * Track referral shares analytics
    */
   trackReferralShare: async (id: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/referrals/${id}/share`, { method: 'POST' });
+    await fetch(`${getApiUrl()}/api/referrals/${id}/share`, { 
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
   },
 
   /**
    * Track referral applications analytics
    */
   trackReferralApply: async (id: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/referrals/${id}/apply`, { method: 'POST' });
+    await fetch(`${getApiUrl()}/api/referrals/${id}/apply`, { 
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
   },
 
   /**
@@ -329,7 +374,7 @@ export const alumniProfileService = {
   createRoadmap: async (data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/roadmaps`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -343,7 +388,7 @@ export const alumniProfileService = {
   updateRoadmap: async (id: string, data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/roadmaps/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -356,7 +401,8 @@ export const alumniProfileService = {
    */
   deleteRoadmap: async (id: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/roadmaps/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: getAuthHeaders(undefined)
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to delete roadmap');
@@ -368,7 +414,7 @@ export const alumniProfileService = {
   createResource: async (data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/resources`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -382,7 +428,7 @@ export const alumniProfileService = {
   updateResource: async (id: string, data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/resources/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -395,7 +441,8 @@ export const alumniProfileService = {
    */
   deleteResource: async (id: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/resources/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: getAuthHeaders(undefined)
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to delete resource');
@@ -407,7 +454,7 @@ export const alumniProfileService = {
   createAchievement: async (data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/achievements`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -421,7 +468,7 @@ export const alumniProfileService = {
   updateAchievement: async (id: string, data: any): Promise<any> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/achievements/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -434,7 +481,8 @@ export const alumniProfileService = {
    */
   deleteAchievement: async (id: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/achievements/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: getAuthHeaders(undefined)
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to delete achievement');
@@ -450,7 +498,9 @@ export const alumniPostsService = {
     limit = 10,
     offset = 0
   ): Promise<PaginatedResponse<AlumniPost>> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch posts');
     const data = result.data || [];
@@ -464,6 +514,27 @@ export const alumniPostsService = {
   },
 
   /**
+   * Get logged-in alumni creator posts
+   */
+  getMyPosts: async (): Promise<PaginatedResponse<AlumniPost>> => {
+    console.log('🚀 [Alumni API] Fetching GET /api/alumni/posts/me with Bearer token');
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/me`, {
+      headers: getAuthHeaders(undefined)
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to fetch creator posts');
+    const data = result.data || result.posts || [];
+    console.log(`✅ [Alumni API] Successfully retrieved ${data.length} creator posts (totalPosts: ${result.totalPosts || data.length})`);
+    return {
+      data,
+      total: result.totalPosts || data.length,
+      limit: data.length,
+      offset: 0,
+      hasMore: false
+    };
+  },
+
+  /**
    * Get posts by alumni ID
    */
   getPostsByAlumniId: async (
@@ -472,7 +543,9 @@ export const alumniPostsService = {
     limit = 10,
     offset = 0
   ): Promise<PaginatedResponse<AlumniPost>> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/posts`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/${alumniId}/posts`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch posts');
     const data = result.data || [];
@@ -492,13 +565,15 @@ export const alumniPostsService = {
     data: CreateAlumniPostInput,
     collegeId: string
   ): Promise<AlumniPost> => {
+    console.log('🚀 [Alumni API] Dispatching POST /api/alumni/posts payload:', data);
     const res = await fetch(`${getApiUrl()}/api/alumni/posts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ ...data, collegeId })
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to create post');
+    console.log('✅ [Alumni API] Post created successfully:', result.data);
     return result.data;
   },
 
@@ -512,7 +587,7 @@ export const alumniPostsService = {
   ): Promise<AlumniPost> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     const result = await res.json();
@@ -524,21 +599,23 @@ export const alumniPostsService = {
    * Delete alumni post
    */
   deletePost: async (postId: string, collegeId: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, { method: 'DELETE' });
+    await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, { 
+      method: 'DELETE',
+      headers: getAuthHeaders(undefined)
+    });
   },
 
   /**
-   * Like alumni post
+   * Toggle like on alumni post
    */
-  likePost: async (postId: string, collegeId: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/like`, { method: 'POST' });
-  },
-
-  /**
-   * Unlike alumni post
-   */
-  unlikePost: async (postId: string, collegeId: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/unlike`, { method: 'POST' });
+  likePost: async (postId: string): Promise<any> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/like`, { 
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to toggle like');
+    return result.data;
   },
 
   /**
@@ -546,13 +623,12 @@ export const alumniPostsService = {
    */
   addComment: async (
     postId: string,
-    content: string,
-    collegeId: string
+    content: string
   ): Promise<any> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/comment`, {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/comments`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, collegeId })
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ content })
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to add comment');
@@ -563,12 +639,11 @@ export const alumniPostsService = {
    * Get post comments
    */
   getComments: async (
-    postId: string,
-    collegeId: string,
-    limit = 10,
-    offset = 0
+    postId: string
   ): Promise<any> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/comments`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/comments`, {
+      headers: getAuthHeaders(undefined)
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch comments');
     return {
@@ -576,6 +651,32 @@ export const alumniPostsService = {
       total: (result.data || []).length
     };
   },
+
+  /**
+   * Share post analytics tracking
+   */
+  sharePost: async (postId: string): Promise<number> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/share`, {
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to track share');
+    return result.shareCount || 0;
+  },
+
+  /**
+   * Save / Bookmark post
+   */
+  savePost: async (postId: string): Promise<boolean> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/save`, {
+      method: 'POST',
+      headers: getAuthHeaders(undefined)
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to toggle save');
+    return result.isSaved;
+  }
 };
 
 export const alumniVideosService = {
@@ -599,9 +700,7 @@ export const alumniBookmarksService = {
 export const adminAlumniService = {
   getPendingProfiles: async (collegeId: string): Promise<AlumniProfile[]> => {
     const res = await fetch(`${getApiUrl()}/api/alumni?status=pending`, {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
-      }
+      headers: getAuthHeaders(undefined)
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch pending profiles');
@@ -610,9 +709,7 @@ export const adminAlumniService = {
   approveProfile: async (profileId: string, collegeId: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}/approve`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
-      }
+      headers: getAuthHeaders()
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to approve profile');
@@ -620,9 +717,7 @@ export const adminAlumniService = {
   rejectProfile: async (profileId: string, collegeId: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/${profileId}/reject`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
-      }
+      headers: getAuthHeaders()
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to reject profile');
@@ -630,9 +725,7 @@ export const adminAlumniService = {
   approvePost: async (postId: string, collegeId: string): Promise<void> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/approve`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')}`
-      }
+      headers: getAuthHeaders()
     });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to approve post');
@@ -647,27 +740,20 @@ const AlumniService = {
   admin: adminAlumniService,
   
   toggleLike: async (postId: string): Promise<boolean> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/like`, { method: 'POST' });
-    const result = await res.json();
-    return result.success;
+    const data = await alumniPostsService.likePost(postId);
+    return data.isLiked;
   },
   
   toggleBookmark: async (postId: string): Promise<boolean> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/save`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetId: postId, type: 'post' })
-    });
-    const result = await res.json();
-    return result.success;
+    return await alumniPostsService.savePost(postId);
   },
   
   addComment: async (postId: string, content: string): Promise<any> => {
-    return await alumniPostsService.addComment(postId, content, 'MIT');
+    return await alumniPostsService.addComment(postId, content);
   },
   
   deletePost: async (postId: string): Promise<boolean> => {
-    await alumniPostsService.deletePost(postId, 'MIT');
+    await alumniPostsService.deletePost(postId, '');
     return true;
   }
 };

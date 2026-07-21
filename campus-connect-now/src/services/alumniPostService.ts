@@ -17,6 +17,11 @@ import {
 
 import { getApiUrl } from './connectionService';
 
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+};
+
 export const postsService = {
   /**
    * Create a new post
@@ -24,7 +29,10 @@ export const postsService = {
   create: async (input: CreatePostInput): Promise<AlumniPostEnhanced> => {
     const res = await fetch(`${getApiUrl()}/api/alumni/posts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
       body: JSON.stringify(input)
     });
     const result = await res.json();
@@ -41,7 +49,9 @@ export const postsService = {
     if (params.company) queryParams.append('company', params.company);
     if (params.search) queryParams.append('search', params.search);
 
-    const res = await fetch(`${getApiUrl()}/api/alumni/feed?${queryParams.toString()}`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/feed?${queryParams.toString()}`, {
+      headers: getAuthHeaders()
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch feed');
     
@@ -59,7 +69,9 @@ export const postsService = {
    * Get single post by ID
    */
   getById: async (postId: string): Promise<AlumniPostEnhanced> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`);
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, {
+      headers: getAuthHeaders()
+    });
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to get post');
     return result.data;
@@ -68,10 +80,13 @@ export const postsService = {
   /**
    * Update a post
    */
-  update: async (input: UpdatePostInput): Promise<AlumniPostEnhanced> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${input.id}`, {
+  update: async (postId: string, input: UpdatePostInput): Promise<AlumniPostEnhanced> => {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
       body: JSON.stringify(input)
     });
     const result = await res.json();
@@ -83,14 +98,29 @@ export const postsService = {
    * Delete a post
    */
   delete: async (postId: string): Promise<void> => {
-    await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, { method: 'DELETE' });
+    await fetch(`${getApiUrl()}/api/alumni/posts/${postId}`, { 
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
   },
 
   /**
    * Get user's own posts
    */
   getMyPosts: async (page: number = 1, limit: number = 10): Promise<FeedResponse> => {
-    return postsService.getFeed({ page, limit });
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/my`, {
+      headers: getAuthHeaders()
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to fetch creator posts');
+    const posts = result.data || [];
+    return {
+      posts,
+      total: posts.length,
+      page,
+      limit,
+      hasMore: false
+    };
   },
 
   /**
@@ -116,24 +146,36 @@ export const postsService = {
    * Get posts statistics
    */
   getStats: async (): Promise<UserPostStats> => {
-    return { totalPosts: 0, totalLikes: 0, totalComments: 0, totalViews: 0 };
+    const myPostsData = await postsService.getMyPosts();
+    const posts = myPostsData.posts || [];
+    const totalLikes = posts.reduce((acc, p) => acc + (Array.isArray(p.likes) ? p.likes.length : (p.likes || 0)), 0);
+    const totalComments = posts.reduce((acc, p) => acc + (Array.isArray(p.comments) ? p.comments.length : 0), 0);
+    const totalViews = posts.reduce((acc, p) => acc + (p.viewCount || 0), 0);
+
+    return { totalPosts: posts.length, totalLikes, totalComments, totalViews };
   },
 };
 
 export const engagementService = {
   like: async (postId: string): Promise<{ liked: boolean; likeCount: number }> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/like`, { method: 'POST' });
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/like`, { 
+      method: 'POST',
+      headers: getAuthHeaders()
+    });
     const result = await res.json();
-    return { liked: result.success, likeCount: 0 };
+    return { liked: result.data?.isLiked ?? result.success, likeCount: result.data?.likesCount ?? 0 };
   },
 
   createComment: async (
     postId: string,
     content: string
   ): Promise<AlumniPostComment> => {
-    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/comment`, {
+    const res = await fetch(`${getApiUrl()}/api/alumni/posts/${postId}/comments`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
       body: JSON.stringify({ content })
     });
     const result = await res.json();

@@ -73,7 +73,14 @@ export const authApi = {
       }
       return data;
     } catch (error: any) {
-      return { error: true, message: error.message || 'Login failed' };
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        return { 
+          success: false, 
+          error: 'Backend server is offline or unreachable. Please ensure server is running at http://localhost:5000.',
+          isBackendOffline: true
+        };
+      }
+      return { success: false, error: error.message || 'Login request failed. Please check connection.' };
     }
   },
 

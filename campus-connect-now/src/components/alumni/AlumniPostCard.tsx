@@ -100,131 +100,126 @@ function AlumniPostCardComponent({
     });
   }, []);
 
-  // ✅ FIX 5: Memoized like handler
+  // Comment section toggle state
+  const [showComments, setShowComments] = useState(false);
+  const [commentsList, setCommentsList] = useState<any[]>(post.comments || []);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareCount, setShareCount] = useState(post.shareCount || 0);
+
+  // Initialize state from post props
+  useEffect(() => {
+    const isUserLiking = Array.isArray(post.likes) && uid ? post.likes.includes(uid) : (post.isLiked || false);
+    setIsLiked(isUserLiking);
+    setLikeCount(Array.isArray(post.likes) ? post.likes.length : (post.likes || 0));
+    setIsBookmarked(post.isBookmarked || false);
+    setShowMenu(false);
+    setCommentText('');
+    setCommentsList(post.comments || []);
+    setShareCount(post.shareCount || 0);
+  }, [post.id, uid]);
+
+  // Memoized like handler with Optimistic UI
   const handleLike = useCallback(async () => {
+    const previousLiked = isLiked;
+    const previousCount = likeCount;
+
+    // Optimistic state toggle
+    const nextLiked = !isLiked;
+    const nextCount = nextLiked ? likeCount + 1 : Math.max(0, likeCount - 1);
+    setIsLiked(nextLiked);
+    setLikeCount(nextCount);
+
     try {
       setIsLoadingLike(true);
-      
-      const token = localStorage.getItem('token') || '';
-      const success = await AlumniService.toggleLike(post.id, token);
-
-      if (success) {
-        const newIsLiked = !isLiked;
-        const newLikeCount = newIsLiked ? likeCount + 1 : likeCount - 1;
-        
-        setIsLiked(newIsLiked);
-        setLikeCount(newLikeCount);
-        
-        // ✅ Notify parent of update via callback
-        onUpdate?.(post.id, {
-          isLiked: newIsLiked,
-          likes: newLikeCount,
-        });
-      } else {
-        toast.error('Failed to like post');
-      }
-    } catch (error) {
+      const data = await alumniPostsService.likePost(post.id);
+      setIsLiked(data.isLiked);
+      setLikeCount(data.likesCount);
+      onUpdate?.(post.id, { isLiked: data.isLiked, likes: data.likesCount });
+    } catch (error: any) {
       console.error('Like error:', error);
-      toast.error('Failed to like post');
+      setIsLiked(previousLiked);
+      setLikeCount(previousCount);
+      toast.error(error.message || 'Failed to update like status');
     } finally {
       setIsLoadingLike(false);
     }
   }, [post.id, isLiked, likeCount, onUpdate]);
 
-  // ✅ FIX 6: Memoized comment handler
-  const handleComment = useCallback(async () => {
-    if (!commentText.trim()) return;
+  // Memoized comment handler
+  const handleCommentSubmit = useCallback(async () => {
+    if (!commentText.trim()) {
+      toast.error('Please write a comment before posting.');
+      return;
+    }
 
     try {
-      const token = localStorage.getItem('token') || '';
-      const comment = await AlumniService.addComment(
-        post.id,
-        commentText,
-        token
-      );
-
-      if (comment) {
-        setCommentText('');
-        toast.success('Comment added!');
-        
-        // ✅ Update parent with new comment
-        onUpdate?.(post.id, {
-          comments: [...(post.comments || []), comment],
-        });
-      }
-    } catch (error) {
+      setIsSubmittingComment(true);
+      const newComment = await alumniPostsService.addComment(post.id, commentText.trim());
+      setCommentsList(prev => [...prev, newComment]);
+      setCommentText('');
+      toast.success('Comment posted successfully!');
+      onUpdate?.(post.id, { comments: [...commentsList, newComment] });
+    } catch (error: any) {
       console.error('Comment error:', error);
-      toast.error('Failed to post comment');
+      toast.error(error.message || 'Failed to post comment');
+    } finally {
+      setIsSubmittingComment(false);
     }
-  }, [post.id, commentText, post.comments, onUpdate]);
+  }, [post.id, commentText, commentsList, onUpdate]);
 
-  // ✅ FIX 7: Memoized share handler
+  // Memoized share handler
   const handleShare = useCallback(async () => {
-    const url = `${window.location.origin}/alumni/${post.alumniId}`;
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `${post.alumniName}'s Post`,
-          text: post.content,
-          url,
-        });
-      } catch (err) {
-        console.error('Share error:', err);
-      }
-    } else {
-      await navigator.clipboard.writeText(url);
-      toast.success('Link copied to clipboard!');
-    }
-  }, [post.alumniId, post.alumniName, post.content]);
-
-  // ✅ FIX 8: Memoized delete handler
-  const handleDelete = useCallback(async () => {
-    if (!window.confirm('Delete this post?')) return;
-
+    setShareModalOpen(true);
     try {
-      const token = localStorage.getItem('token') || '';
-      const success = await AlumniService.deletePost(post.id, token);
-
-      if (success) {
-        toast.success('Post deleted');
-        onDelete?.(post.id);
-      }
-    } catch (error) {
-      console.error('Delete error:', error);
-      toast.error('Failed to delete post');
+      const updatedCount = await alumniPostsService.sharePost(post.id);
+      setShareCount(updatedCount);
+      onUpdate?.(post.id, { shareCount: updatedCount });
+    } catch (err) {
+      console.error('Share analytics error:', err);
     }
-  }, [post.id, onDelete]);
+  }, [post.id, onUpdate]);
 
-  // ✅ FIX 9: Memoized bookmark handler
+  const postPermalink = `${window.location.origin}/alumni/feed?postId=${post.id}`;
+
+  const copyToClipboard = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(postPermalink);
+      toast.success('Link copied to clipboard successfully.');
+    } catch (err) {
+      toast.error('Failed to copy link.');
+    }
+  }, [postPermalink]);
+
+  // Memoized bookmark / save handler
   const handleBookmark = useCallback(async () => {
+    const prevSaved = isBookmarked;
+    setIsBookmarked(!isBookmarked);
     try {
-      const token = localStorage.getItem('token') || '';
-      const success = await AlumniService.toggleBookmark(post.id, token);
-
-      if (success) {
-        setIsBookmarked(!isBookmarked);
-        toast.success(isBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks');
-      }
-    } catch (error) {
+      const savedState = await alumniPostsService.savePost(post.id);
+      setIsBookmarked(savedState);
+      toast.success(savedState ? 'Post saved to your bookmarks!' : 'Post removed from saved bookmarks');
+      onUpdate?.(post.id, { isBookmarked: savedState });
+    } catch (error: any) {
       console.error('Bookmark error:', error);
-      toast.error('Failed to toggle bookmark');
+      setIsBookmarked(prevSaved);
+      toast.error('Failed to update bookmark state');
     }
-  }, [post.id, isBookmarked]);
+  }, [post.id, isBookmarked, onUpdate]);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="glass rounded-2xl overflow-hidden hover:shadow-lg transition-shadow"
+      className="glass rounded-2xl overflow-hidden hover:shadow-lg transition-shadow border border-border/50"
     >
       {/* Header */}
       <div className="p-4 border-b border-border/50">
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-start gap-3 flex-1">
-            {/* Avatar */}
             <img
-              src={post.alumniAvatar}
-              alt={post.alumniName}
+              src={post.alumniAvatar || post.author?.profileImageUrl}
+              alt={post.alumniName || post.author?.name}
               className="h-10 w-10 rounded-full object-cover flex-shrink-0"
               loading="lazy"
               onError={(e) => {
@@ -232,56 +227,25 @@ function AlumniPostCardComponent({
               }}
             />
 
-            {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-semibold text-foreground truncate">
-                  {post.alumniName}
+                  {post.alumniName || post.author?.name || 'Alumni Member'}
                 </h3>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground whitespace-nowrap">
-                  {post.batch}
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground whitespace-nowrap font-medium">
+                  {post.batch || post.author?.batch}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5 font-semibold">
-                {formatAlumniDesignation({ designation: post.role, company: post.company })}
+                {formatAlumniDesignation({ designation: post.role || post.author?.role, company: post.company || post.author?.company })}
               </p>
               <p className="text-[10px] text-muted-foreground/70 mt-1">
                 {formatDate(post.createdAt)}
               </p>
             </div>
           </div>
-
-          {/* Menu */}
-          <div className="relative flex-shrink-0">
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setShowMenu(!showMenu)}
-              className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
-              aria-label="Menu"
-            >
-              <MoreVertical className="h-4 w-4 text-muted-foreground" />
-            </motion.button>
-            {showMenu && isAuthor && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="absolute top-8 right-0 bg-popover border border-border rounded-lg shadow-lg z-10 min-w-max"
-              >
-                <button
-                  onClick={() => {
-                    handleDelete();
-                    setShowMenu(false);
-                  }}
-                  className="block w-full text-left px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors rounded-lg"
-                >
-                  Delete
-                </button>
-              </motion.div>
-            )}
-          </div>
         </div>
 
-        {/* Post Type Badge */}
         {post.type && (
           <div className="flex flex-wrap gap-1.5 items-center">
             <span
@@ -291,16 +255,6 @@ function AlumniPostCardComponent({
             >
               {POST_TYPE_BADGES[post.type] || post.type}
             </span>
-
-            {/* Tags */}
-            {post.tags?.map(tag => (
-              <span
-                key={tag}
-                className="text-[10px] px-2 py-0.5 rounded-full bg-primary/15 text-primary whitespace-nowrap"
-              >
-                #{tag}
-              </span>
-            ))}
           </div>
         )}
       </div>
@@ -310,65 +264,23 @@ function AlumniPostCardComponent({
         <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap break-words">
           {post.content}
         </p>
-
-        {/* Images */}
-        {post.images && post.images.length > 0 && (
-          <div
-            className={`grid gap-2 ${
-              post.images.length === 1
-                ? 'grid-cols-1'
-                : post.images.length === 2
-                ? 'grid-cols-2'
-                : 'grid-cols-2 lg:grid-cols-3'
-            }`}
-          >
-            {post.images.map((image, idx) => (
-              <motion.img
-                key={idx}
-                src={image}
-                alt={`Post image ${idx + 1}`}
-                className="rounded-xl object-cover w-full h-40 lg:h-48 hover:scale-105 transition-transform cursor-pointer"
-                whileHover={{ scale: 1.05 }}
-                loading="lazy"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="100%" height="100%" fill="%2327272a"/><text x="50%" y="55%" font-size="32" font-family="sans-serif" font-weight="bold" fill="%23a1a1aa" dominant-baseline="middle" text-anchor="middle">CC</text></svg>';
-                }}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Video */}
-        {post.video && (
-          <div className="rounded-xl overflow-hidden bg-secondary">
-            <video
-              src={post.video}
-              controls
-              className="w-full h-48 lg:h-80 object-cover"
-              onError={(e) => {
-                console.error('Video load error:', e);
-              }}
-            />
-          </div>
-        )}
       </div>
 
       {/* Stats & Actions */}
       <div className="px-4 py-3 space-y-3 border-t border-border/50">
-        {/* Stats */}
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1">
-              <Heart className="h-3 w-3" />
-              <span>{likeCount}</span>
+              <Heart className={`h-3.5 w-3.5 ${isLiked ? 'text-red-500 fill-current' : ''}`} />
+              <span>{likeCount} likes</span>
+            </div>
+            <div className="flex items-center gap-1 cursor-pointer" onClick={() => setShowComments(!showComments)}>
+              <MessageCircle className="h-3.5 w-3.5" />
+              <span>{commentsList.length} comments</span>
             </div>
             <div className="flex items-center gap-1">
-              <MessageCircle className="h-3 w-3" />
-              <span>{post.comments?.length || 0}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Eye className="h-3 w-3" />
-              <span>{post.viewCount || 0}</span>
+              <Share2 className="h-3.5 w-3.5" />
+              <span>{shareCount} shares</span>
             </div>
           </div>
         </div>
@@ -382,20 +294,19 @@ function AlumniPostCardComponent({
             disabled={isLoadingLike}
             className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg transition-all ${
               isLiked
-                ? 'text-red-500 bg-red-500/10'
+                ? 'text-red-500 bg-red-500/10 font-bold'
                 : 'text-muted-foreground hover:bg-secondary'
             }`}
             aria-label={isLiked ? 'Unlike' : 'Like'}
           >
-            <Heart
-              className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`}
-            />
-            <span className="text-xs font-medium">Like</span>
+            <Heart className={`h-4 w-4 ${isLiked ? 'fill-current text-red-500' : ''}`} />
+            <span className="text-xs font-medium">{isLiked ? 'Liked' : 'Like'}</span>
           </motion.button>
 
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
+            onClick={() => setShowComments(!showComments)}
             className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary transition-all"
             aria-label="Comment"
           >
@@ -420,19 +331,126 @@ function AlumniPostCardComponent({
             onClick={handleBookmark}
             className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg transition-all ${
               isBookmarked
-                ? 'text-yellow-500 bg-yellow-500/10'
+                ? 'text-yellow-500 bg-yellow-500/10 font-bold'
                 : 'text-muted-foreground hover:bg-secondary'
             }`}
             aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
           >
-            <Bookmark className={`h-4 w-4 ${isBookmarked ? 'fill-current' : ''}`} />
-            <span className="text-xs font-medium">Save</span>
+            <Bookmark className={`h-4 w-4 ${isBookmarked ? 'fill-current text-yellow-500' : ''}`} />
+            <span className="text-xs font-medium">{isBookmarked ? 'Saved' : 'Save'}</span>
           </motion.button>
         </div>
+
+        {/* Comment Section Drawer */}
+        {showComments && (
+          <div className="pt-3 border-t border-border/40 space-y-3">
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCommentSubmit()}
+                placeholder="Write a comment..."
+                className="flex-1 bg-secondary/50 border border-border/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-primary text-foreground"
+              />
+              <button
+                onClick={handleCommentSubmit}
+                disabled={isSubmittingComment}
+                className="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:opacity-90 disabled:opacity-50"
+              >
+                {isSubmittingComment ? 'Posting...' : 'Post'}
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {commentsList.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground text-center py-2">No comments yet. Be the first to start the conversation!</p>
+              ) : (
+                commentsList.map((c, idx) => (
+                  <div key={idx} className="bg-secondary/30 rounded-lg p-2 flex gap-2 items-start text-xs">
+                    <img
+                      src={c.userAvatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect width="100%" height="100%" fill="%2327272a"/><text x="50%" y="55%" font-size="10" font-family="sans-serif" font-weight="bold" fill="%23a1a1aa" dominant-baseline="middle" text-anchor="middle">U</text></svg>'}
+                      className="w-6 h-6 rounded-full object-cover mt-0.5"
+                    />
+                    <div className="flex-1">
+                      <div className="flex justify-between items-center">
+                        <span className="font-semibold text-foreground">{c.userName || 'Member'}</span>
+                        <span className="text-[9px] text-muted-foreground">{formatDate(c.createdAt)}</span>
+                      </div>
+                      <p className="text-muted-foreground mt-0.5 leading-snug">{c.content}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Share Modal Dialog */}
+      {shareModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-background border border-border rounded-xl p-5 max-w-sm w-full space-y-4">
+            <div className="flex justify-between items-center border-b border-border/50 pb-2">
+              <h3 className="font-semibold text-sm text-foreground">Share Career Insight</h3>
+              <button onClick={() => setShareModalOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Share link with students and alumni across networks:</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={postPermalink}
+                  className="flex-1 bg-secondary/50 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
+                />
+                <button
+                  onClick={copyToClipboard}
+                  className="bg-primary text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-semibold hover:opacity-90"
+                >
+                  Copy Link
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <a
+                href={`https://api.whatsapp.com/send?text=${encodeURIComponent(post.content + ' ' + postPermalink)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-center gap-1.5 py-2 bg-green-600/20 text-green-500 text-xs font-semibold rounded-lg hover:bg-green-600/30"
+              >
+                WhatsApp
+              </a>
+              <a
+                href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(postPermalink)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-center gap-1.5 py-2 bg-blue-600/20 text-blue-500 text-xs font-semibold rounded-lg hover:bg-blue-600/30"
+              >
+                LinkedIn
+              </a>
+              <a
+                href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(postPermalink)}&text=${encodeURIComponent(post.content)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-center gap-1.5 py-2 bg-slate-700/30 text-foreground text-xs font-semibold rounded-lg hover:bg-slate-700/50"
+              >
+                X (Twitter)
+              </a>
+              <a
+                href={`mailto:?subject=${encodeURIComponent('Career Insight from Campus Connect')}&body=${encodeURIComponent(post.content + '\n\n' + postPermalink)}`}
+                className="flex items-center justify-center gap-1.5 py-2 bg-purple-600/20 text-purple-400 text-xs font-semibold rounded-lg hover:bg-purple-600/30"
+              >
+                Email
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }
 
-// ✅ FIX 10: Export memoized component
 export default memo(AlumniPostCardComponent);

@@ -2123,6 +2123,54 @@ router.get('/alumni/:id', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/alumni/posts/my & GET /api/alumni/posts/me - Get posts belonging to logged-in creator
+const handleGetMyPosts = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    console.log('📊 [Dashboard API GET /posts/me] Fetching creator posts for authenticated user:', userId);
+
+    const author = await Alumni.findOne({ userId }) || (mongoose.Types.ObjectId.isValid(userId) ? await Alumni.findById(userId) : null);
+    
+    let query = {
+      $or: [
+        { alumniId: userId },
+        ...(author ? [{ alumniId: author._id.toString() }] : [])
+      ]
+    };
+
+    if (req.user.role !== 'super_admin') {
+      query.college = req.user.college;
+    }
+
+    const posts = await Post.find(query).sort({ createdAt: -1 });
+    console.log(`✅ [Dashboard API] Found ${posts.length} posts for creator ${userId}`);
+
+    const postsWithAuthors = posts.map(post => {
+      const postObj = post.toObject();
+      if (author) {
+        postObj.author = {
+          ...author.toObject(),
+          id: author._id
+        };
+      }
+      return postObj;
+    });
+
+    res.json({
+      success: true,
+      totalPosts: posts.length,
+      data: postsWithAuthors,
+      posts: postsWithAuthors
+    });
+  } catch (error) {
+    console.error('❌ [Dashboard API Error]:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/alumni/posts/my', requireAuth, handleGetMyPosts);
+router.get('/alumni/posts/me', requireAuth, handleGetMyPosts);
+
 // GET /api/alumni/:id/posts - Get posts shared by this alumni
 router.get('/alumni/:id/posts', requireAuth, async (req, res) => {
   try {
@@ -2237,26 +2285,247 @@ router.get('/alumni/:id/roadmaps', requireAuth, async (req, res) => {
 router.post('/alumni/posts', requireAuth, async (req, res) => {
   try {
     const { content, type, imageUrls, videoUrls, tags, company, jobRole, salary, experience, applyLink } = req.body;
+    console.log('📥 [Backend Controller] Creating alumni post for user:', req.user.userId, 'College:', req.user.college);
+    
+    if (!content || !content.trim()) {
+      return res.status(400).json({ success: false, error: 'Content is required for creating a post.' });
+    }
+
     const newPost = new Post({
       alumniId: req.user.userId,
       college: req.user.college,
-      content,
+      content: content.trim(),
       type: type || 'general',
-      imageUrls,
-      videoUrls,
-      tags,
-      company,
-      jobRole,
-      salary,
-      experience,
-      applyLink,
+      imageUrls: imageUrls || [],
+      videoUrls: videoUrls || [],
+      tags: tags || [],
+      company: company || '',
+      jobRole: jobRole || '',
+      salary: salary || '',
+      experience: experience || '',
+      applyLink: applyLink || '',
       likes: [],
       comments: [],
       shareCount: 0,
       viewCount: 0
     });
+
     await newPost.save();
-    res.json({ success: true, data: newPost });
+    console.log('💾 [MongoDB Insert] Post saved successfully ID:', newPost._id);
+
+    // Attach author object
+    const author = await Alumni.findOne({ userId: req.user.userId });
+    const postObj = newPost.toObject();
+    if (author) {
+      postObj.author = {
+        ...author.toObject(),
+        id: author._id
+      };
+    }
+
+    if (globalThis.io) {
+      globalThis.io.emit('post:created', postObj);
+    }
+
+    res.status(201).json({ success: true, data: postObj });
+  } catch (error) {
+    console.error('❌ [Backend Controller] Failed to save post:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/alumni/posts/:id/like - Toggle like on alumni post
+router.post('/alumni/posts/:id/like', requireAuth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+
+    const post = await Post.findById(postId) || await Post.findOne({ _id: mongoose.Types.ObjectId.isValid(postId) ? postId : null });
+    if (!post) {
+      return res.status(404).json({ success: false, error: 'Post not found' });
+    }
+
+    const likedIndex = post.likes.indexOf(userId);
+    let isLiked = false;
+
+    if (likedIndex > -1) {
+      post.likes.splice(likedIndex, 1);
+      isLiked = false;
+    } else {
+      post.likes.push(userId);
+      isLiked = true;
+
+      // Notification creation for author if liker is not author
+      if (post.alumniId !== userId) {
+        try {
+          const senderUser = await Alumni.findOne({ userId }) || await User.findOne({ userId });
+          const senderName = senderUser ? (senderUser.name || 'A user') : 'A user';
+          await Notification.create({
+            userId: post.alumniId,
+            relatedId: userId,
+            title: `${senderName} liked your post`,
+            body: `Your career insight post received a new like.`,
+            type: 'like',
+            isRead: false
+          });
+
+          if (globalThis.io) {
+            globalThis.io.to(`user_${post.alumniId}`).emit('notification:new', {
+              type: 'like',
+              title: `${senderName} liked your post`
+            });
+          }
+        } catch (notifErr) {
+          console.warn('⚠️ Notification creation warning:', notifErr.message);
+        }
+      }
+    }
+
+    await post.save();
+
+    // Broadcast real-time update
+    if (globalThis.io) {
+      globalThis.io.emit('post:liked', { postId: post._id, likes: post.likes, likesCount: post.likes.length, isLiked, userId });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        postId: post._id,
+        isLiked,
+        likesCount: post.likes.length,
+        likes: post.likes
+      }
+    });
+  } catch (error) {
+    console.error('❌ [Like API Error]:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/alumni/posts/:id/comments - Add comment to alumni post
+router.post('/alumni/posts/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const { content } = req.body;
+    const userId = req.user.userId;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ success: false, error: 'Comment content cannot be empty' });
+    }
+
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ success: false, error: 'Post not found' });
+    }
+
+    const senderUser = await Alumni.findOne({ userId }) || await User.findOne({ userId });
+    const userName = senderUser ? (senderUser.name || 'User') : 'User';
+    const userAvatar = senderUser ? (senderUser.profileImageUrl || senderUser.profileImage || '') : '';
+
+    const newComment = {
+      userId,
+      userName,
+      userAvatar,
+      content: content.trim(),
+      createdAt: new Date()
+    };
+
+    post.comments.push(newComment);
+    await post.save();
+
+    const addedComment = post.comments[post.comments.length - 1];
+
+    // Notification for author
+    if (post.alumniId !== userId) {
+      try {
+        await Notification.create({
+          userId: post.alumniId,
+          relatedId: userId,
+          title: `${userName} commented on your post`,
+          body: `"${content.trim().substring(0, 50)}..."`,
+          type: 'comment',
+          isRead: false
+        });
+
+        if (globalThis.io) {
+          globalThis.io.to(`user_${post.alumniId}`).emit('notification:new', {
+            type: 'comment',
+            title: `${userName} commented on your post`
+          });
+        }
+      } catch (notifErr) {}
+    }
+
+    // Broadcast real-time update
+    if (globalThis.io) {
+      globalThis.io.emit('post:commented', { postId: post._id, comment: addedComment, commentsCount: post.comments.length });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: addedComment,
+      commentsCount: post.comments.length
+    });
+  } catch (error) {
+    console.error('❌ [Comment API Error]:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/alumni/posts/:id/comments - Get post comments
+router.get('/alumni/posts/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ success: false, error: 'Post not found' });
+    res.json({ success: true, data: post.comments || [], commentsCount: (post.comments || []).length });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/alumni/posts/:id/share - Track post share analytics
+router.post('/alumni/posts/:id/share', requireAuth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ success: false, error: 'Post not found' });
+    post.shareCount = (post.shareCount || 0) + 1;
+    await post.save();
+
+    if (globalThis.io) {
+      globalThis.io.emit('post:shared', { postId: post._id, shareCount: post.shareCount });
+    }
+
+    res.json({ success: true, shareCount: post.shareCount });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/alumni/posts/:id/save - Bookmark / Save alumni post
+router.post('/alumni/posts/:id/save', requireAuth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+
+    const alumni = await Alumni.findOne({ userId });
+    if (!alumni) {
+      return res.status(404).json({ success: false, error: 'Alumni user profile not found' });
+    }
+
+    const savedIndex = alumni.savedPosts.indexOf(postId);
+    let isSaved = false;
+
+    if (savedIndex > -1) {
+      alumni.savedPosts.splice(savedIndex, 1);
+      isSaved = false;
+    } else {
+      alumni.savedPosts.push(postId);
+      isSaved = true;
+    }
+
+    await alumni.save();
+    res.json({ success: true, isSaved, savedPosts: alumni.savedPosts });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

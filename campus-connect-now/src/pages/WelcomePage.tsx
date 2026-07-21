@@ -543,6 +543,18 @@ export default function WelcomePage() {
       return;
     }
 
+    // Health check prior to authentication attempt
+    try {
+      const { checkBackendHealth } = await import('@/services/connectionService');
+      const health = await checkBackendHealth();
+      if (!health) {
+        setLocalError('Backend server is offline or unreachable. Please verify server status at http://localhost:5000.');
+        return;
+      }
+    } catch (healthErr) {
+      console.warn('⚠️ Pre-login health check warning:', healthErr);
+    }
+
     const payload: any = {
       email: email.toLowerCase().trim(),
       password,
@@ -557,6 +569,9 @@ export default function WelcomePage() {
 
     const res = await login(payload);
     if (res.success) {
+      setShowCaptcha(false);
+      setCaptchaChallenge(null);
+      setCaptchaAnswer('');
       if (res.mfaRequired) {
         setStep('mfa');
         setCanResendOTP(false);
@@ -567,7 +582,11 @@ export default function WelcomePage() {
         setShowCaptcha(true);
         loadCaptcha();
       }
-      setLocalError(res.error || 'Authentication failed. Please verify credentials.');
+      if (res.isBackendOffline) {
+        setLocalError('Backend server is currently offline or unreachable.');
+      } else {
+        setLocalError(res.error || res.message || 'Invalid email or password.');
+      }
     }
   };
 

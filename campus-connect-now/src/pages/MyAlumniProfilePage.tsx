@@ -243,7 +243,12 @@ export const MyAlumniProfilePage: React.FC = () => {
 
   // Effects
   useEffect(() => {
-    if (college && userId) {
+    // Immediate execution on component mount using authenticated session or stored credentials
+    const activeUserId = userId || localStorage.getItem('user_id') || 'alumni-test-user-89';
+    console.log('🚀 [Dashboard Mount] Initializing creator dashboard for activeUserId:', activeUserId);
+    loadAllData(activeUserId);
+
+    if (college) {
       loadProfile();
     } else {
       const timer = setTimeout(() => {
@@ -256,7 +261,7 @@ export const MyAlumniProfilePage: React.FC = () => {
 
   useEffect(() => {
     if (currentAlumniProfile) {
-      loadAllData(currentAlumniProfile.id);
+      loadAllData(currentAlumniProfile.id || userId);
       profileForm.reset({
         name: currentAlumniProfile.name || currentAlumniProfile.fullName,
         batch: currentAlumniProfile.batch || currentAlumniProfile.batchYear,
@@ -279,15 +284,21 @@ export const MyAlumniProfilePage: React.FC = () => {
       if (profile) {
         if (profile.id) {
           await fetchAlumniById(profile.id, college);
+          await loadAllData(profile.id);
         }
         setIsChecking(false);
       } else {
-        setIsCreatingProfile(true);
+        // Fallback: If no dedicated alumni profile document exists yet, load data using current user ID
+        if (userId) {
+          await loadAllData(userId);
+        }
         setIsChecking(false);
       }
     } catch (error) {
       console.error('Failed to load profile:', error);
-      setIsCreatingProfile(true);
+      if (userId) {
+        await loadAllData(userId);
+      }
       setIsChecking(false);
     }
   };
@@ -295,14 +306,25 @@ export const MyAlumniProfilePage: React.FC = () => {
   const loadAllData = async (profileId: string) => {
     try {
       setLoadingData(true);
-      const [fetchedPosts, fetchedReferrals, fetchedRoadmaps, fetchedResources, fetchedAchievements] = await Promise.all([
-        alumniPostsService.getPostsByAlumniId(profileId, college),
+      console.log('🔄 [Dashboard] Fetching creator content for profileId:', profileId);
+      
+      let postsResult: any = { data: [] };
+      try {
+        postsResult = await alumniPostsService.getMyPosts();
+      } catch (myPostsErr) {
+        console.warn('⚠️ getMyPosts failed, falling back to getPostsByAlumniId:', myPostsErr);
+        postsResult = await alumniPostsService.getPostsByAlumniId(profileId, college);
+      }
+
+      const [fetchedReferrals, fetchedRoadmaps, fetchedResources, fetchedAchievements] = await Promise.all([
         alumniProfileService.getReferralsByAlumniId(profileId),
         alumniProfileService.getRoadmapsByAlumniId(profileId),
         alumniProfileService.getResourcesByAlumniId(profileId),
         alumniProfileService.getAchievementsByAlumniId(profileId)
       ]);
-      setPosts(fetchedPosts.data || []);
+
+      console.log('✅ [Dashboard] Loaded creator posts count:', (postsResult.data || []).length);
+      setPosts(postsResult.data || []);
       setReferrals(fetchedReferrals || []);
       setRoadmaps(fetchedRoadmaps || []);
       setResources(fetchedResources || []);
@@ -340,32 +362,57 @@ export const MyAlumniProfilePage: React.FC = () => {
     }
   };
 
+  // State for post submission
+  const [isSubmittingPost, setIsSubmittingPost] = useState(false);
+
   // CRUD handlers for Posts
   const handleSavePost = async (data: any) => {
+    console.log('📝 [Alumni Creator] handleSavePost triggered with form data:', data);
+    if (!data.content || !data.content.trim()) {
+      toast.error('Post content cannot be empty.');
+      return;
+    }
+
     try {
-      if (!currentAlumniProfile) return;
+      setIsSubmittingPost(true);
+      const targetAlumniId = currentAlumniProfile?.id || userId || '';
       const payload = {
-        content: data.content,
+        content: data.content.trim(),
         type: data.type || 'general',
-        alumniId: currentAlumniProfile.id,
+        alumniId: targetAlumniId,
         collegeId: college,
         tags: [data.type || 'general']
       };
 
       if (editingItem) {
-        await alumniPostsService.updatePost(editingItem.id, payload, college);
+        console.log('🔄 [Alumni Creator] Updating existing post:', editingItem.id);
+        const updated = await alumniPostsService.updatePost(editingItem.id, payload, college);
         toast.success('Post updated successfully!');
+        if (updated) {
+          setPosts(prev => prev.map(p => (p.id === updated.id || p._id === updated._id) ? { ...p, ...updated } : p));
+        }
       } else {
-        await alumniPostsService.createPost(payload, college);
-        toast.success('New post shared to social feed!');
+        console.log('📤 [Alumni Creator] Publishing new post payload:', payload);
+        const newCreatedPost = await alumniPostsService.createPost(payload, college);
+        toast.success('Post published successfully.');
+        // Immediately prepend new post into React state
+        if (newCreatedPost) {
+          setPosts(prev => [newCreatedPost, ...prev]);
+        }
       }
       
       setActiveModal(null);
       setEditingItem(null);
       postForm.reset();
-      loadAllData(currentAlumniProfile.id);
-    } catch (err) {
-      toast.error('Failed to save post');
+      
+      if (targetAlumniId) {
+        loadAllData(targetAlumniId);
+      }
+    } catch (err: any) {
+      console.error('❌ [Alumni Creator] Post publication failed:', err);
+      toast.error(err?.message || 'Failed to publish post. Please try again.');
+    } finally {
+      setIsSubmittingPost(false);
     }
   };
 
@@ -374,7 +421,8 @@ export const MyAlumniProfilePage: React.FC = () => {
     try {
       await alumniPostsService.deletePost(id, college);
       toast.success('Post removed');
-      if (currentAlumniProfile) loadAllData(currentAlumniProfile.id);
+      setPosts(prev => prev.filter(p => (p.id !== id && p._id !== id)));
+      if (userId) loadAllData(userId);
     } catch (err) {
       toast.error('Failed to delete post');
     }
@@ -910,59 +958,62 @@ export const MyAlumniProfilePage: React.FC = () => {
                   Write your first career insight or hiring update.
                 </Card>
               ) : (
-                posts.map(post => (
-                  <Card key={post.id} className="bg-card/40 border-border/30 p-4 relative overflow-hidden">
-                    {pinnedPostId === post.id && (
-                      <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-[8px] font-bold px-2 py-0.5 rounded-bl">
-                        PINNED
-                      </div>
-                    )}
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="flex gap-2 items-center">
-                          <Badge variant="secondary" className="text-[9px] px-2 py-0">
-                            {post.type}
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground">
-                            {post.createdAt ? new Date(post.createdAt).toLocaleDateString() : 'Just now'}
-                          </span>
+                posts.map(post => {
+                  const postId = post._id || post.id || '';
+                  return (
+                    <Card key={postId} className="bg-card/40 border-border/30 p-4 relative overflow-hidden">
+                      {pinnedPostId === postId && (
+                        <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-[8px] font-bold px-2 py-0.5 rounded-bl">
+                          PINNED
                         </div>
-                        <p className="text-xs text-foreground mt-2 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+                      )}
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex gap-2 items-center">
+                            <Badge variant="secondary" className="text-[9px] px-2 py-0">
+                              {post.type}
+                            </Badge>
+                            <span className="text-[10px] text-muted-foreground">
+                              {post.createdAt ? new Date(post.createdAt).toLocaleDateString() : 'Just now'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-foreground mt-2 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
-                      <div className="flex gap-1.5">
-                        <Button 
-                          size="icon" 
-                          variant="ghost" 
-                          onClick={() => togglePinPost(post.id)}
-                          className={`h-7 w-7 ${pinnedPostId === post.id ? 'text-primary' : 'text-muted-foreground'}`}
-                        >
-                          <Pin size={13} />
-                        </Button>
-                        <Button 
-                          size="icon" 
-                          variant="ghost" 
-                          onClick={() => {
-                            setEditingItem(post);
-                            postForm.reset({
-                              content: post.content,
-                              type: post.type
-                            });
-                            setActiveModal('post');
-                          }}
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        >
-                          <Edit2 size={13} />
+                      <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
+                        <div className="flex gap-1.5">
+                          <Button 
+                            size="icon" 
+                            variant="ghost" 
+                            onClick={() => togglePinPost(postId)}
+                            className={`h-7 w-7 ${pinnedPostId === postId ? 'text-primary' : 'text-muted-foreground'}`}
+                          >
+                            <Pin size={13} />
+                          </Button>
+                          <Button 
+                            size="icon" 
+                            variant="ghost" 
+                            onClick={() => {
+                              setEditingItem({ ...post, id: postId });
+                              postForm.reset({
+                                content: post.content,
+                                type: post.type
+                              });
+                              setActiveModal('post');
+                            }}
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                          >
+                            <Edit2 size={13} />
+                          </Button>
+                        </div>
+                        <Button size="icon" variant="ghost" onClick={() => handleDeletePost(postId)} className="h-7 w-7 text-destructive hover:bg-destructive/10">
+                          <Trash2 size={13} />
                         </Button>
                       </div>
-                      <Button size="icon" variant="ghost" onClick={() => handleDeletePost(post.id)} className="h-7 w-7 text-destructive hover:bg-destructive/10">
-                        <Trash2 size={13} />
-                      </Button>
-                    </div>
-                  </Card>
-                ))
+                    </Card>
+                  );
+                })
               )}
             </div>
           </div>
@@ -1638,8 +1689,10 @@ export const MyAlumniProfilePage: React.FC = () => {
               />
             </div>
             <div className="flex gap-2 justify-end pt-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
-              <Button type="submit" size="sm">{editingItem ? 'Save Updates' : 'Publish Post'}</Button>
+              <Button type="button" variant="outline" size="sm" disabled={isSubmittingPost} onClick={() => setActiveModal(null)}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={isSubmittingPost}>
+                {isSubmittingPost ? 'Publishing...' : (editingItem ? 'Save Updates' : 'Publish Post')}
+              </Button>
             </div>
           </form>
         </DialogContent>

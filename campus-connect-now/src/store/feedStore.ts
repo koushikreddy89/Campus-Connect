@@ -109,10 +109,36 @@ export const useFeedStore = create<FeedState>((set, get) => ({
       set({ isLoading: true });
       const res = await feedApi.createPost(content, isAnonymous, category, image);
       if (res && res.success) {
-        toast.success('Post created successfully!');
-        // Refresh feed
-        const data = await feedApi.getPosts('all');
-        set({ posts: data, isLoading: false });
+        toast.success(res.message || 'Post published successfully!');
+        const newPost = res.data;
+        if (newPost) {
+          set((s) => {
+            const exists = s.posts.some(p => p.id === (newPost.id || newPost._id));
+            if (exists) return { isLoading: false };
+            const formattedPost: Post = {
+              id: newPost.id || newPost._id,
+              authorId: newPost.userId || 'me',
+              authorName: isAnonymous ? 'Anonymous Student' : (newPost.authorName || 'You'),
+              authorAvatar: isAnonymous ? `https://api.dicebear.com/7.x/avataaars/svg?seed=anon-${newPost.id || newPost._id}` : (newPost.authorAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${newPost.userId}`),
+              isAnonymous,
+              content: newPost.content || content,
+              category: newPost.category || category,
+              likes: 0,
+              comments: [],
+              reactions: { '❤️': [], '🔥': [], '😂': [], '👀': [], '👍': [] },
+              createdAt: newPost.createdAt || new Date().toISOString(),
+              image: newPost.image || image,
+              videoUrl: newPost.videoUrl
+            };
+            return {
+              posts: [formattedPost, ...s.posts],
+              isLoading: false
+            };
+          });
+        } else {
+          const data = await feedApi.getPosts('all');
+          set({ posts: data, isLoading: false });
+        }
       } else {
         toast.error(res?.error || 'Failed to create post');
         set({ isLoading: false });

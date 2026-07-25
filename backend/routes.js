@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
-const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug } = require('./models');
+const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug, Follow } = require('./models');
 const emailService = require('./emailService');
 const crypto = require('crypto');
 const { validatePasswordStrength, isDisposableEmail, generateCaptcha, verifyCaptcha } = require('./securityUtils');
@@ -682,6 +682,8 @@ router.post('/auth/register', checkAccountOtpLimit, async (req, res) => {
     const collegeRecord = await CollegeDomain.findOne({ domain });
     const collegeName = collegeRecord ? collegeRecord.name : 'SR University';
 
+    const accountName = (name && name.trim() !== '') ? name.trim() : (req.body.fullName && req.body.fullName.trim() !== '') ? req.body.fullName.trim() : 'User';
+
     const newAccount = new Model({
       userId,
       email: lowerEmail,
@@ -689,11 +691,11 @@ router.post('/auth/register', checkAccountOtpLimit, async (req, res) => {
       passwordHistory: [hashedPassword],
       isEmailVerified: false,
       college: collegeName,
-      name: name || 'User',
+      name: accountName,
       batch: batch || '2024',
       department: department || 'General',
       role,
-      fullName: name || 'User',
+      fullName: accountName,
       batchYear: batch || '2024',
       onboardingCompleted: false,
       onboardingStep: 1
@@ -816,7 +818,8 @@ router.post('/auth/verify-email', checkAccountLoginLimit, async (req, res) => {
       user: {
         id: account.userId,
         _id: account._id.toString(),
-        name: account.name || '',
+        name: account.fullName || account.name || '',
+        fullName: account.fullName || account.name || '',
         email: lowerEmail,
         role: account.role
       },
@@ -967,7 +970,8 @@ router.post('/auth/login', checkAccountLoginLimit, async (req, res) => {
       user: {
         id: account.userId,
         _id: account._id.toString(),
-        name: account.name || '',
+        name: account.fullName || account.name || '',
+        fullName: account.fullName || account.name || '',
         email: lowerEmail,
         role: account.role
       },
@@ -1047,7 +1051,7 @@ router.post('/auth/mfa/verify', checkAccountLoginLimit, async (req, res) => {
       const Model = finalRole === 'alumni' ? Alumni : User;
       const account = await Model.findOne({ userId });
       if (account) {
-        name = account.name || '';
+        name = account.fullName || account.name || '';
         userObjectId = account._id.toString();
       }
     }
@@ -1059,6 +1063,7 @@ router.post('/auth/mfa/verify', checkAccountLoginLimit, async (req, res) => {
         id: userId,
         _id: userObjectId,
         name,
+        fullName: name,
         email: lowerEmail,
         role: finalRole
       },
@@ -1611,7 +1616,8 @@ router.get('/auth/session', requireAuth, async (req, res) => {
       user: {
         id: userId,
         _id: userDetails._id,
-        name: userDetails.name || (role === 'admin' ? 'Campus Admin' : ''),
+        name: userDetails.fullName || userDetails.name || (role === 'admin' ? 'Campus Admin' : ''),
+        fullName: userDetails.fullName || userDetails.name || (role === 'admin' ? 'Campus Admin' : ''),
         email: userDetails.email,
         role: role
       },
@@ -1879,19 +1885,21 @@ router.put('/alumni/profile', async (req, res) => {
       }
     }
 
+    const finalName = (name && name.trim() !== '') ? name.trim() : (existingAlumni.name || existingAlumni.fullName || '');
+
     const updateFields = { 
-      name, 
-      batch, 
-      department, 
-      company: company || '', 
-      role: role || '', 
-      story: story || '', 
-      profileImageUrl: profileImageUrl || '',
-      fullName: name,
-      batchYear: batch,
-      designation: role || '',
-      careerJourney: story || '',
-      profileImage: profileImageUrl || ''
+      name: finalName, 
+      fullName: finalName,
+      batch: batch !== undefined ? batch : (existingAlumni.batch || ''), 
+      department: department !== undefined ? department : (existingAlumni.department || ''), 
+      company: company !== undefined ? company : (existingAlumni.company || ''), 
+      role: role !== undefined ? role : (existingAlumni.role || ''), 
+      story: story !== undefined ? story : (existingAlumni.story || ''), 
+      profileImageUrl: profileImageUrl !== undefined ? profileImageUrl : (existingAlumni.profileImageUrl || ''),
+      batchYear: batch !== undefined ? batch : (existingAlumni.batch || ''),
+      designation: role !== undefined ? role : (existingAlumni.role || ''),
+      careerJourney: story !== undefined ? story : (existingAlumni.story || ''),
+      profileImage: profileImageUrl !== undefined ? profileImageUrl : (existingAlumni.profileImageUrl || '')
     };
 
     if (onboardingCompleted !== undefined) {
@@ -2284,20 +2292,27 @@ router.get('/alumni/:id/roadmaps', requireAuth, async (req, res) => {
 // POST /api/alumni/posts - Create an alumni post
 router.post('/alumni/posts', requireAuth, async (req, res) => {
   try {
-    const { content, type, imageUrls, videoUrls, tags, company, jobRole, salary, experience, applyLink } = req.body;
+    const { content, text, caption, type, image, images, imageUrls, videoUrl, videos, videoUrls, tags, company, jobRole, salary, experience, applyLink } = req.body;
     console.log('📥 [Backend Controller] Creating alumni post for user:', req.user.userId, 'College:', req.user.college);
     
-    if (!content || !content.trim()) {
-      return res.status(400).json({ success: false, error: 'Content is required for creating a post.' });
+    const normalizedContent = (content || text || caption || '').trim();
+    const normalizedImages = Array.isArray(imageUrls) ? imageUrls : (Array.isArray(images) ? images : (image ? [image] : []));
+    const normalizedVideos = Array.isArray(videoUrls) ? videoUrls : (Array.isArray(videos) ? videos : (videoUrl ? [videoUrl] : []));
+
+    if (!normalizedContent && normalizedImages.length === 0 && normalizedVideos.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Please enter some text or attach an image or video to publish a post.' 
+      });
     }
 
     const newPost = new Post({
       alumniId: req.user.userId,
       college: req.user.college,
-      content: content.trim(),
+      content: normalizedContent,
       type: type || 'general',
-      imageUrls: imageUrls || [],
-      videoUrls: videoUrls || [],
+      imageUrls: normalizedImages,
+      videoUrls: normalizedVideos,
       tags: tags || [],
       company: company || '',
       jobRole: jobRole || '',
@@ -2314,7 +2329,7 @@ router.post('/alumni/posts', requireAuth, async (req, res) => {
     console.log('💾 [MongoDB Insert] Post saved successfully ID:', newPost._id);
 
     // Attach author object
-    const author = await Alumni.findOne({ userId: req.user.userId });
+    const author = await Alumni.findOne({ userId: req.user.userId }) || await User.findOne({ userId: req.user.userId });
     const postObj = newPost.toObject();
     if (author) {
       postObj.author = {
@@ -2327,7 +2342,7 @@ router.post('/alumni/posts', requireAuth, async (req, res) => {
       globalThis.io.emit('post:created', postObj);
     }
 
-    res.status(201).json({ success: true, data: postObj });
+    res.status(201).json({ success: true, data: postObj, message: 'Post published successfully' });
   } catch (error) {
     console.error('❌ [Backend Controller] Failed to save post:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -3748,30 +3763,139 @@ router.get('/feed', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/posts - Create student post
-router.post('/posts', requireAuth, async (req, res) => {
+// POST /api/posts & /api/feed/posts - Create student post
+const handleCreateStudentPost = async (req, res) => {
   try {
-    const { content, isAnonymous, category, image } = req.body;
-    const userId = req.user.userId;
-    if (!content) {
-      return res.status(400).json({ success: false, error: 'content is required' });
+    const { content, text, caption, isAnonymous, category, image, images, videoUrl, videos, imageUrls, videoUrls } = req.body;
+    const userId = req.user ? req.user.userId : (req.body.userId || null);
+
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required.' });
     }
 
-    const author = await User.findOne({ userId });
+    const normalizedContent = (content || text || caption || '').trim();
+    const normalizedImages = Array.isArray(images) ? images : (Array.isArray(imageUrls) ? imageUrls : (image ? [image] : []));
+    const normalizedVideos = Array.isArray(videos) ? videos : (Array.isArray(videoUrls) ? videoUrls : (videoUrl ? [videoUrl] : []));
+
+    if (!normalizedContent && normalizedImages.length === 0 && normalizedVideos.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Please enter some text or attach an image or video to publish a post.' 
+      });
+    }
+
+    const author = await User.findOne({ userId }) || await Alumni.findOne({ userId });
+    const primaryImage = normalizedImages[0] || '';
+    const primaryVideo = normalizedVideos[0] || '';
+
     const newPost = new StudentPost({
       userId,
-      college: req.user.college,
-      authorName: author ? author.name : 'Unknown',
+      college: req.user ? req.user.college : (author ? author.college : ''),
+      authorName: author ? (author.fullName || author.name) : 'Student',
       authorAvatar: author ? (author.profileImageUrl || (author.photos && author.photos[0]) || '') : '',
       isAnonymous: !!isAnonymous,
-      content,
-      image: image || '',
+      content: normalizedContent,
+      image: primaryImage,
+      videoUrl: primaryVideo,
+      images: normalizedImages,
+      videos: normalizedVideos,
       category: category || 'general',
       type: 'student_post'
     });
 
     await newPost.save();
-    res.status(201).json({ success: true, data: newPost });
+
+    const postObj = newPost.toObject();
+    postObj.id = newPost._id.toString();
+    postObj.likes = 0;
+    postObj.isLiked = false;
+    postObj.comments = [];
+    postObj.reactions = { '❤️': [], '🔥': [], '😂': [], '👀': [], '👍': [] };
+
+    if (globalThis.io) {
+      globalThis.io.emit('post:created', postObj);
+    }
+
+    res.status(201).json({ success: true, data: postObj, message: 'Post published successfully' });
+  } catch (error) {
+    console.error('❌ [Create Post Error]:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.post('/posts', requireAuth, handleCreateStudentPost);
+router.post('/feed/posts', requireAuth, handleCreateStudentPost);
+
+// GET /api/posts/:postId - Get complete details of a single post (student or alumni)
+router.get('/posts/:postId', requireAuth, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const currentUserId = req.user.userId;
+
+    let isAlumniPost = false;
+    let post = await StudentPost.findById(postId);
+    if (!post && mongoose.Types.ObjectId.isValid(postId)) {
+      post = await Post.findById(postId);
+      if (post) isAlumniPost = true;
+    }
+
+    if (!post) {
+      return res.status(404).json({ success: false, error: 'Post not found.' });
+    }
+
+    const postObj = post.toObject();
+    postObj.id = post._id.toString();
+
+    if (isAlumniPost) {
+      const author = await Alumni.findOne({ userId: post.alumniId }) || await User.findOne({ userId: post.alumniId });
+      if (author) {
+        postObj.authorName = author.fullName || author.name || 'Alumni';
+        postObj.authorAvatar = author.profileImageUrl || (author.photos && author.photos[0]) || '';
+        postObj.author = author.toObject();
+      }
+      postObj.likes = post.likes?.length || 0;
+      postObj.isLiked = post.likes?.includes(currentUserId) || false;
+
+      const commentsList = post.comments || [];
+      postObj.comments = commentsList.map(c => ({
+        id: c._id ? c._id.toString() : c.id,
+        authorId: c.userId,
+        authorName: c.userName || 'User',
+        authorAvatar: c.userAvatar || '',
+        content: c.content,
+        createdAt: c.createdAt
+      }));
+      postObj.reactions = { '❤️': postObj.isLiked ? [currentUserId] : [], '🔥': [], '😂': [], '👀': [], '👍': [] };
+    } else {
+      const author = await User.findOne({ userId: post.userId }) || await Alumni.findOne({ userId: post.userId });
+      if (author && !post.isAnonymous) {
+        postObj.authorName = author.name || 'Student';
+        postObj.authorAvatar = author.profileImageUrl || (author.photos && author.photos[0]) || '';
+        postObj.author = author.toObject();
+      } else if (post.isAnonymous) {
+        postObj.authorName = 'Anonymous Student';
+        postObj.authorAvatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=anon-${post._id}`;
+      }
+
+      const likesCount = await Like.countDocuments({ postId });
+      const isLiked = await Like.exists({ postId, userId: currentUserId });
+
+      const commentsList = await Comment.find({ postId }).sort({ createdAt: 1 });
+
+      postObj.likes = likesCount;
+      postObj.isLiked = !!isLiked;
+      postObj.comments = commentsList.map(c => ({
+        id: c._id.toString(),
+        authorId: c.userId,
+        authorName: c.userName || 'Anonymous',
+        authorAvatar: c.userAvatar || '',
+        content: c.content,
+        createdAt: c.createdAt
+      }));
+      postObj.reactions = { '❤️': isLiked ? [currentUserId] : [], '🔥': [], '😂': [], '👀': [], '👍': [] };
+    }
+
+    res.json({ success: true, data: postObj });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4176,23 +4300,26 @@ router.post('/notifications/:id/read', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/student/profile - Get student profile
-router.get('/student/profile', requireAuth, async (req, res) => {
+// GET /api/student/profile & /api/student/profile/:userId - Get student profile
+const handleGetStudentProfile = async (req, res) => {
   try {
-    const { userId } = req.query;
-    const targetUserId = userId || req.user.userId;
+    const rawId = req.params.userId || req.params.id || req.query.userId || (req.user && req.user.userId);
 
-    const profile = await User.findOne({ userId: targetUserId });
+    let profile = await User.findOne({ userId: rawId }) || await Alumni.findOne({ userId: rawId });
+    if (!profile && mongoose.Types.ObjectId.isValid(rawId)) {
+      profile = await User.findById(rawId) || await Alumni.findById(rawId);
+    }
+
     if (!profile) {
       return res.status(404).json({ success: false, error: 'Profile not found' });
     }
 
     // College isolation check
-    if (req.user.role !== 'super_admin' && profile.college !== req.user.college) {
+    if (req.user.role !== 'super_admin' && profile.college && req.user.college && profile.college !== req.user.college) {
       return res.status(403).json({ success: false, error: 'Access denied: Profile belongs to a different college.' });
     }
 
-    if (!(await isProfileVisible(req.user.userId, profile.userId, profile))) {
+    if (profile.userId && !(await isProfileVisible(req.user.userId, profile.userId, profile))) {
       return res.status(403).json({ success: false, error: 'Access denied: Profile is private or restricted.' });
     }
 
@@ -4202,7 +4329,10 @@ router.get('/student/profile', requireAuth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
+
+router.get('/student/profile', requireAuth, handleGetStudentProfile);
+router.get('/student/profile/:userId', requireAuth, handleGetStudentProfile);
 
 // POST /api/student/profile - Create or update student profile
 router.post('/student/profile', async (req, res) => {
@@ -4249,29 +4379,36 @@ router.post('/student/profile', async (req, res) => {
       }
     }
 
+    const existingUser = await User.findOne({ userId });
+    const finalName = (name && name.trim() !== '') ? name.trim() : (existingUser?.name || existingUser?.fullName || '');
+
     const updatePayload = {
       email,
-      name: name || '',
       role: 'student',
-      department: department || '',
-      batch: batch || '',
-      skills: skills || [],
-      bio: bio || '',
-      interests: interests || [],
-      clubs: clubs || [],
-      achievements: achievements || [],
-      profileImageUrl: profileImageUrl || '',
-      college: college || '',
-      photos: photos || [],
-      personalEmail: personalEmail || '',
-      linkedinUrl: linkedinUrl || '',
-      githubUrl: githubUrl || '',
-      projects: projects || [],
-      careerGoals: careerGoals || '',
-      cgpa: typeof cgpa === 'number' ? cgpa : (cgpa ? parseFloat(cgpa) : 0.0),
-      backlogs: typeof backlogs === 'number' ? backlogs : (backlogs ? parseInt(backlogs) : 0),
-      academicYear: academicYear || ''
+      department: department !== undefined ? department : (existingUser?.department || ''),
+      batch: batch !== undefined ? batch : (existingUser?.batch || ''),
+      skills: skills || existingUser?.skills || [],
+      bio: bio !== undefined ? bio : (existingUser?.bio || ''),
+      interests: interests || existingUser?.interests || [],
+      clubs: clubs || existingUser?.clubs || [],
+      achievements: achievements || existingUser?.achievements || [],
+      profileImageUrl: profileImageUrl || existingUser?.profileImageUrl || '',
+      college: college || existingUser?.college || '',
+      photos: photos || existingUser?.photos || [],
+      personalEmail: personalEmail !== undefined ? personalEmail : (existingUser?.personalEmail || ''),
+      linkedinUrl: linkedinUrl !== undefined ? linkedinUrl : (existingUser?.linkedinUrl || ''),
+      githubUrl: githubUrl !== undefined ? githubUrl : (existingUser?.githubUrl || ''),
+      projects: projects || existingUser?.projects || [],
+      careerGoals: careerGoals !== undefined ? careerGoals : (existingUser?.careerGoals || ''),
+      cgpa: typeof cgpa === 'number' ? cgpa : (cgpa ? parseFloat(cgpa) : (existingUser?.cgpa || 0.0)),
+      backlogs: typeof backlogs === 'number' ? backlogs : (backlogs ? parseInt(backlogs) : (existingUser?.backlogs || 0)),
+      academicYear: academicYear !== undefined ? academicYear : (existingUser?.academicYear || '')
     };
+
+    if (finalName) {
+      updatePayload.name = finalName;
+      updatePayload.fullName = finalName;
+    }
 
     if (onboardingCompleted !== undefined) {
       updatePayload.onboardingCompleted = onboardingCompleted;
@@ -4645,6 +4782,9 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
 
     const isViewOnce = retentionMode === 'VIEW_ONCE';
 
+    const recipientUser = await User.findOne({ userId: otherUserId }) || await Alumni.findOne({ userId: otherUserId });
+    const isRecipientOnline = recipientUser ? recipientUser.isOnline : false;
+
     const newMsg = new Message({
       matchId,
       conversationId: matchId,
@@ -4665,7 +4805,8 @@ router.post('/chats/:matchId/messages', requireAuth, async (req, res) => {
       thumbnail: lThumb,
       timestamp: new Date(),
       read: false,
-      status: 'sent',
+      status: isRecipientOnline ? 'delivered' : 'sent',
+      deliveredAt: isRecipientOnline ? new Date() : null,
       resonanceState: 'bridged',
       reactions: [],
       retentionMode: retentionMode || 'NEVER_DELETE',
@@ -9624,6 +9765,623 @@ router.post('/circles/:circleId/invite/:userId', requireAuth, async (req, res) =
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// ============================================
+// REAL-TIME PROFILE STATISTICS & DATA APIS
+// ============================================
+
+// Helper to compute mutual connections count between two users
+async function computeMutualCount(user1Id, user2Id) {
+  if (!user1Id || !user2Id || user1Id === user2Id) return 0;
+  try {
+    const [conns1, conns2] = await Promise.all([
+      Connection.find({ participants: user1Id }, { participants: 1 }),
+      Connection.find({ participants: user2Id }, { participants: 1 })
+    ]);
+    const friends1 = new Set(conns1.flatMap(c => c.participants.filter(p => p !== user1Id)));
+    const friends2 = new Set(conns2.flatMap(c => c.participants.filter(p => p !== user2Id)));
+    let count = 0;
+    for (const f of friends1) {
+      if (friends2.has(f)) count++;
+    }
+    return count;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// Helper to resolve User or Alumni document by string userId or ObjectId
+const findUserByAnyId = async (rawId) => {
+  if (!rawId) return null;
+  let user = await User.findOne({ userId: rawId }) || await Alumni.findOne({ userId: rawId });
+  if (!user && mongoose.Types.ObjectId.isValid(rawId)) {
+    user = await User.findById(rawId) || await Alumni.findById(rawId);
+  }
+  return user;
+};
+
+// GET /api/profile/:userId/stats (and /api/profile/:id/stats, /api/users/:userId/stats, /api/users/:id/stats)
+const handleGetProfileStats = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId || (req.user ? req.user.userId : null);
+    const userDoc = await findUserByAnyId(rawId);
+    if (!userDoc) {
+      return res.status(404).json({ success: false, error: 'User profile not found' });
+    }
+
+    const userId = userDoc.userId;
+    const currentUserId = req.user ? req.user.userId : null;
+
+    const [postsCount, friendsCount, followersCount, followingCount, circlesCount, mutualCount] = await Promise.all([
+      StudentPost.countDocuments({ userId }),
+      Connection.countDocuments({ participants: userId }),
+      Follow.countDocuments({ followingId: userId }),
+      Follow.countDocuments({ followerId: userId }),
+      GroupChat.countDocuments({ members: userId }),
+      currentUserId ? computeMutualCount(currentUserId, userId) : 0
+    ]);
+
+    const achievementsCount = Array.isArray(userDoc.achievements) ? userDoc.achievements.length : 0;
+    const projectsCount = Array.isArray(userDoc.projects) ? userDoc.projects.length : 0;
+
+    const stats = {
+      posts: postsCount,
+      friends: friendsCount,
+      followers: followersCount,
+      following: followingCount,
+      circles: circlesCount,
+      achievements: achievementsCount,
+      projects: projectsCount,
+      mutual: mutualCount
+    };
+
+    res.json({ success: true, data: { stats, profile: userDoc } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/stats', requireAuth, handleGetProfileStats);
+router.get('/profile/:id/stats', requireAuth, handleGetProfileStats);
+router.get('/profile/:userId', requireAuth, handleGetProfileStats);
+router.get('/profile/:id', requireAuth, handleGetProfileStats);
+router.get('/users/:userId/profile', requireAuth, handleGetProfileStats);
+router.get('/users/:id/profile', requireAuth, handleGetProfileStats);
+router.get('/users/:userId/stats', requireAuth, handleGetProfileStats);
+router.get('/users/:id/stats', requireAuth, handleGetProfileStats);
+
+// GET /api/profile/:userId/posts (and /api/profile/:id/posts)
+const handleGetProfilePosts = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    const userId = userDoc ? userDoc.userId : rawId;
+
+    const posts = await StudentPost.find({ userId }).sort({ createdAt: -1 });
+    
+    // Attach like & comment counts for each post
+    const postsWithCounts = await Promise.all(posts.map(async (p) => {
+      const pObj = p.toObject();
+      const [likesCount, commentsCount] = await Promise.all([
+        Like.countDocuments({ postId: p._id.toString() }),
+        Comment.countDocuments({ postId: p._id.toString() })
+      ]);
+      pObj.likesCount = likesCount;
+      pObj.commentsCount = commentsCount;
+      return pObj;
+    }));
+
+    res.json({ success: true, data: postsWithCounts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/posts', requireAuth, handleGetProfilePosts);
+router.get('/profile/:id/posts', requireAuth, handleGetProfilePosts);
+router.get('/users/:userId/posts', requireAuth, handleGetProfilePosts);
+router.get('/users/:id/posts', requireAuth, handleGetProfilePosts);
+
+// GET /api/profile/:userId/photos (and /api/profile/:id/photos)
+const handleGetProfilePhotos = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    const userId = userDoc ? userDoc.userId : rawId;
+    const authorName = userDoc ? (userDoc.fullName || userDoc.name || 'User') : 'User';
+    const authorAvatar = userDoc ? (userDoc.profileImageUrl || (userDoc.photos && userDoc.photos[0]) || '') : '';
+    
+    const postObjects = [];
+    const seenPostIds = new Set();
+
+    // 1. Fetch actual StudentPosts that contain images or videos
+    const studentPosts = await StudentPost.find({
+      userId,
+      $or: [
+        { image: { $ne: '' } },
+        { images: { $exists: true, $not: { $size: 0 } } },
+        { videoUrl: { $ne: '' } },
+        { videos: { $exists: true, $not: { $size: 0 } } }
+      ]
+    }).sort({ createdAt: -1 });
+
+    for (const p of studentPosts) {
+      if (!seenPostIds.has(p._id.toString())) {
+        seenPostIds.add(p._id.toString());
+        
+        const likesCount = await Like.countDocuments({ postId: p._id });
+        const commentsList = await Comment.find({ postId: p._id }).sort({ createdAt: 1 });
+
+        const postObj = p.toObject();
+        postObj.id = p._id.toString();
+        postObj.authorName = authorName;
+        postObj.authorAvatar = authorAvatar;
+        postObj.likes = likesCount;
+        postObj.comments = commentsList.map(c => ({
+          id: c._id.toString(),
+          authorId: c.userId,
+          authorName: c.userName || 'Anonymous',
+          authorAvatar: c.userAvatar || '',
+          content: c.content,
+          createdAt: c.createdAt
+        }));
+
+        postObjects.push(postObj);
+      }
+    }
+
+    // 2. Fetch actual Alumni Posts (Post) that contain images or videos
+    const alumniPosts = await Post.find({
+      alumniId: userId,
+      $or: [
+        { imageUrls: { $exists: true, $not: { $size: 0 } } },
+        { videoUrls: { $exists: true, $not: { $size: 0 } } }
+      ]
+    }).sort({ createdAt: -1 });
+
+    for (const p of alumniPosts) {
+      if (!seenPostIds.has(p._id.toString())) {
+        seenPostIds.add(p._id.toString());
+
+        const postObj = p.toObject();
+        postObj.id = p._id.toString();
+        postObj.authorName = authorName;
+        postObj.authorAvatar = authorAvatar;
+        postObj.likes = p.likes?.length || 0;
+        postObj.comments = (p.comments || []).map(c => ({
+          id: c._id ? c._id.toString() : c.id,
+          authorId: c.userId,
+          authorName: c.userName || 'User',
+          authorAvatar: c.userAvatar || '',
+          content: c.content,
+          createdAt: c.createdAt
+        }));
+
+        // Normalize field names
+        postObj.images = p.imageUrls || [];
+        postObj.videos = p.videoUrls || [];
+
+        postObjects.push(postObj);
+      }
+    }
+
+    // 3. Fallback/Virtual post for standalone Avatar and gallery photos if no posts exist
+    if (postObjects.length === 0) {
+      if (userDoc?.profileImageUrl) {
+        postObjects.push({
+          id: `avatar-post-${userDoc._id}`,
+          userId,
+          authorName,
+          authorAvatar,
+          content: `${authorName}'s Profile Avatar`,
+          images: [userDoc.profileImageUrl],
+          videos: [],
+          likes: 0,
+          comments: [],
+          createdAt: userDoc.updatedAt || userDoc.createdAt || new Date().toISOString(),
+          type: 'student_post'
+        });
+      }
+
+      if (Array.isArray(userDoc?.photos)) {
+        userDoc.photos.forEach((photoUrl, idx) => {
+          if (photoUrl && photoUrl !== userDoc.profileImageUrl) {
+            postObjects.push({
+              id: `gallery-post-${idx}-${userDoc._id}`,
+              userId,
+              authorName,
+              authorAvatar,
+              content: `Photo from gallery`,
+              images: [photoUrl],
+              videos: [],
+              likes: 0,
+              comments: [],
+              createdAt: userDoc.updatedAt || userDoc.createdAt || new Date().toISOString(),
+              type: 'student_post'
+            });
+          }
+        });
+      }
+    }
+
+    res.json({ success: true, data: postObjects });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/photos', requireAuth, handleGetProfilePhotos);
+router.get('/profile/:id/photos', requireAuth, handleGetProfilePhotos);
+router.get('/users/:userId/media', requireAuth, handleGetProfilePhotos);
+router.get('/users/:id/media', requireAuth, handleGetProfilePhotos);
+
+// GET /api/profile/:userId/videos
+const handleGetProfileVideos = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    const userId = userDoc ? userDoc.userId : rawId;
+
+    const postsWithVideos = await StudentPost.find({ 
+      userId, 
+      $or: [
+        { videoUrl: { $exists: true, $ne: '' } },
+        { image: { $regex: /\.(mp4|webm|mov)$/i } }
+      ] 
+    }).sort({ createdAt: -1 });
+
+    const videoList = postsWithVideos.map(p => ({
+      id: p._id.toString(),
+      url: p.videoUrl || p.image,
+      thumbnail: p.image,
+      createdAt: p.createdAt
+    }));
+
+    res.json({ success: true, data: videoList });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/videos', requireAuth, handleGetProfileVideos);
+router.get('/profile/:id/videos', requireAuth, handleGetProfileVideos);
+
+// GET /api/profile/:userId/projects
+const handleGetProfileProjects = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    if (!userDoc) return res.status(404).json({ success: false, error: 'User not found' });
+    
+    const rawProjects = userDoc.projects || [];
+    const projects = rawProjects.map((p, idx) => {
+      if (typeof p === 'string') {
+        return { id: `proj-${idx}`, title: p, description: p };
+      }
+      return p;
+    });
+
+    res.json({ success: true, data: projects });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/projects', requireAuth, handleGetProfileProjects);
+router.get('/profile/:id/projects', requireAuth, handleGetProfileProjects);
+
+// GET /api/profile/:userId/achievements
+const handleGetProfileAchievements = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    if (!userDoc) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const rawAchievements = userDoc.achievements || [];
+    const achievements = rawAchievements.map((a, idx) => {
+      if (typeof a === 'string') {
+        return { id: `ach-${idx}`, title: a, description: a };
+      }
+      return a;
+    });
+
+    res.json({ success: true, data: achievements });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/achievements', requireAuth, handleGetProfileAchievements);
+router.get('/profile/:id/achievements', requireAuth, handleGetProfileAchievements);
+
+// GET /api/profile/:userId/friends (and /api/profile/:id/friends)
+const handleGetProfileFriends = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    const userId = userDoc ? userDoc.userId : rawId;
+
+    const connections = await Connection.find({ participants: userId });
+    const friendIds = connections.flatMap(c => c.participants.filter(p => p !== userId));
+    
+    const friendDocs = await Promise.all(friendIds.map(async (fId) => {
+      const fUser = await findUserByAnyId(fId);
+      if (!fUser) return null;
+      const mutualCount = await computeMutualCount(req.user.userId, fId);
+      return {
+        id: fUser.userId,
+        _id: fUser._id.toString(),
+        name: fUser.fullName || fUser.name,
+        username: (fUser.fullName || fUser.name || 'user').toLowerCase().replace(/[^a-z0-9]/g, ''),
+        department: fUser.department || fUser.course || '',
+        batch: fUser.batch || fUser.year || '',
+        profileImageUrl: fUser.profileImageUrl || (fUser.photos && fUser.photos[0]) || '',
+        photos: fUser.photos || [],
+        skills: fUser.skills || [],
+        isOnline: fUser.isOnline || false,
+        mutualCount
+      };
+    }));
+
+    const validFriends = friendDocs.filter(Boolean);
+    res.json({ success: true, data: validFriends });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/friends', requireAuth, handleGetProfileFriends);
+router.get('/profile/:id/friends', requireAuth, handleGetProfileFriends);
+router.get('/users/:userId/friends', requireAuth, handleGetProfileFriends);
+router.get('/users/:id/friends', requireAuth, handleGetProfileFriends);
+
+// GET /api/profile/:userId/followers (and /api/profile/:id/followers)
+const handleGetProfileFollowers = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    const userId = userDoc ? userDoc.userId : rawId;
+
+    const follows = await Follow.find({ followingId: userId });
+    const followerIds = follows.map(f => f.followerId);
+
+    const followerDocs = await Promise.all(followerIds.map(async (fId) => {
+      const fUser = await findUserByAnyId(fId);
+      if (!fUser) return null;
+      return {
+        id: fUser.userId,
+        _id: fUser._id.toString(),
+        name: fUser.fullName || fUser.name,
+        department: fUser.department || '',
+        profileImageUrl: fUser.profileImageUrl || (fUser.photos && fUser.photos[0]) || '',
+        isOnline: fUser.isOnline || false
+      };
+    }));
+
+    res.json({ success: true, data: followerDocs.filter(Boolean) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/followers', requireAuth, handleGetProfileFollowers);
+router.get('/profile/:id/followers', requireAuth, handleGetProfileFollowers);
+router.get('/users/:userId/followers', requireAuth, handleGetProfileFollowers);
+router.get('/users/:id/followers', requireAuth, handleGetProfileFollowers);
+
+// GET /api/profile/:userId/following
+const handleGetProfileFollowing = async (req, res) => {
+  try {
+    const rawId = req.params.userId || req.params.id || req.query.userId;
+    const userDoc = await findUserByAnyId(rawId);
+    const userId = userDoc ? userDoc.userId : rawId;
+
+    const follows = await Follow.find({ followerId: userId });
+    const followingIds = follows.map(f => f.followingId);
+
+    const followingDocs = await Promise.all(followingIds.map(async (fId) => {
+      const fUser = await findUserByAnyId(fId);
+      if (!fUser) return null;
+      return {
+        id: fUser.userId,
+        _id: fUser._id.toString(),
+        name: fUser.fullName || fUser.name,
+        department: fUser.department || '',
+        profileImageUrl: fUser.profileImageUrl || (fUser.photos && fUser.photos[0]) || '',
+        isOnline: fUser.isOnline || false
+      };
+    }));
+
+    res.json({ success: true, data: followingDocs.filter(Boolean) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.get('/profile/:userId/following', requireAuth, handleGetProfileFollowing);
+router.get('/profile/:id/following', requireAuth, handleGetProfileFollowing);
+
+// POST /api/profile/follow - Follow user
+router.post('/profile/follow', requireAuth, async (req, res) => {
+  try {
+    const { targetUserId } = req.body;
+    const currentUserId = req.user.userId;
+
+    if (!targetUserId || targetUserId === currentUserId) {
+      return res.status(400).json({ success: false, error: 'Invalid target user ID' });
+    }
+
+    let existing = await Follow.findOne({ followerId: currentUserId, followingId: targetUserId });
+    if (!existing) {
+      existing = new Follow({ followerId: currentUserId, followingId: targetUserId });
+      await existing.save();
+
+      // Emit socket notification
+      if (global.io) {
+        global.io.emit('follow:update', { followerId: currentUserId, followingId: targetUserId });
+      }
+    }
+
+    res.json({ success: true, isFollowing: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/profile/unfollow - Unfollow user
+router.post('/profile/unfollow', requireAuth, async (req, res) => {
+  try {
+    const { targetUserId } = req.body;
+    const currentUserId = req.user.userId;
+
+    await Follow.deleteOne({ followerId: currentUserId, followingId: targetUserId });
+
+    if (global.io) {
+      global.io.emit('follow:update', { followerId: currentUserId, followingId: targetUserId });
+    }
+
+    res.json({ success: true, isFollowing: false });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// PRODUCTION FILE & IMAGE UPLOAD SYSTEM
+// ============================================
+
+const uploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    cb(null, `${file.fieldname || 'upload'}-${uniqueSuffix}${ext}`);
+  }
+});
+
+const uploadFileFilter = (req, file, cb) => {
+  const allowedExts = /\.(jpeg|jpg|png|webp|gif|mp4|mov|webm|pdf|doc|docx)$/i;
+  if (allowedExts.test(file.originalname)) {
+    return cb(null, true);
+  }
+  cb(new Error('Unsupported file format. Allowed formats: JPG, JPEG, PNG, WEBP, GIF, MP4, MOV, WEBM, PDF, DOC'));
+};
+
+const multerUpload = multer({
+  storage: uploadStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max limit
+  fileFilter: uploadFileFilter
+});
+
+const multerUploadAny = multerUpload.any();
+
+// Safe wrapper so Multer errors return JSON instead of Express HTML error pages
+const safeMulterMiddleware = (req, res, next) => {
+  multerUploadAny(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({
+        success: false,
+        error: err.message || 'File upload processing failed'
+      });
+    }
+    next();
+  });
+};
+
+// Process single or multiple uploaded files or base64 data
+const resolveUploadResponse = (req) => {
+  const protocol = req.protocol;
+  const host = req.get('host');
+  const baseUrl = `${protocol}://${host}`;
+
+  const uploadedUrls = [];
+
+  // 1. Files uploaded via Multer
+  if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+    req.files.forEach(f => {
+      uploadedUrls.push(`${baseUrl}/uploads/${f.filename}`);
+    });
+  } else if (req.file) {
+    uploadedUrls.push(`${baseUrl}/uploads/${req.file.filename}`);
+  }
+
+  // 2. Base64 strings sent in body
+  const base64Candidate = req.body.image || req.body.file || req.body.dataUrl || req.body.avatar;
+  if (base64Candidate && typeof base64Candidate === 'string' && base64Candidate.startsWith('data:')) {
+    try {
+      const matches = base64Candidate.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const mimeType = matches[1];
+        const base64Data = matches[2];
+        let ext = '.jpg';
+        if (mimeType.includes('png')) ext = '.png';
+        else if (mimeType.includes('webp')) ext = '.webp';
+        else if (mimeType.includes('gif')) ext = '.gif';
+        else if (mimeType.includes('mp4')) ext = '.mp4';
+        else if (mimeType.includes('webm')) ext = '.webm';
+
+        const filename = `b64-${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+        const filePath = path.join(__dirname, 'uploads', filename);
+        fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+        uploadedUrls.push(`${baseUrl}/uploads/${filename}`);
+      }
+    } catch (e) {
+      console.error('Error saving base64 upload:', e);
+    }
+  }
+
+  // Fallback if URL string passed directly
+  if (uploadedUrls.length === 0 && base64Candidate && typeof base64Candidate === 'string') {
+    uploadedUrls.push(base64Candidate);
+  }
+
+  const primaryUrl = uploadedUrls[0] || '';
+  return {
+    success: true,
+    url: primaryUrl,
+    imageUrl: primaryUrl,
+    fileUrl: primaryUrl,
+    urls: uploadedUrls,
+    data: {
+      url: primaryUrl,
+      urls: uploadedUrls
+    },
+    message: 'Upload successful'
+  };
+};
+
+const handleUploadEndpoint = async (req, res) => {
+  try {
+    const result = resolveUploadResponse(req);
+    if (!result.url) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid file or image data provided'
+      });
+    }
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// Generic Upload Routes
+router.post('/upload', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/upload/file', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/upload/avatar', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/profile/avatar', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/story/upload', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/stories/upload', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/posts/upload', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/media/upload', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/chats/:chatId/upload', safeMulterMiddleware, handleUploadEndpoint);
+router.post('/chat/:chatId/upload', safeMulterMiddleware, handleUploadEndpoint);
 
 module.exports.createNotification = createNotification;
 

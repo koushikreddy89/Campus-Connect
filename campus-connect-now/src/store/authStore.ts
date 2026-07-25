@@ -11,6 +11,9 @@ interface AuthState {
   email: string | null;
   uid: string | null;
   _id: string | null;
+  name: string | null;
+  fullName: string | null;
+  user: any | null;
   isNewUser: boolean;
   isAuthenticated: boolean;
   isProfileComplete: boolean;
@@ -53,6 +56,9 @@ export const useAuthStore = create<AuthState>()(
       email: null,
       uid: null,
       _id: null,
+      name: null,
+      fullName: null,
+      user: null,
       isNewUser: false,
       isAuthenticated: false,
       isProfileComplete: false,
@@ -96,7 +102,13 @@ export const useAuthStore = create<AuthState>()(
           const res = await authApi.register(payload);
           set({ isLoading: false });
           if (res.success) {
-            set({ email: payload.email.toLowerCase(), debugOtp: res.debugOtp || null });
+            const registeredName = payload.name || payload.fullName || null;
+            set({ 
+              email: payload.email.toLowerCase(), 
+              name: registeredName,
+              fullName: registeredName,
+              debugOtp: res.debugOtp || null 
+            });
             if (res.debugOtp) {
               console.log(`🔑 [OTP Debug] OTP code received from server: ${res.debugOtp}`);
             }
@@ -139,6 +151,7 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem('auth_token', res.token);
             localStorage.setItem('jwt_token', res.token);
 
+            const resolvedName = res.user?.fullName || res.user?.name || state.name || null;
             set({
               token: res.token,
               isAuthenticated: true,
@@ -149,6 +162,9 @@ export const useAuthStore = create<AuthState>()(
               email: res.email || res.user?.email || state.email,
               uid: res.user?.id || res.userId || null,
               _id: res.user?._id || res.userOid || null,
+              name: resolvedName,
+              fullName: resolvedName,
+              user: res.user || state.user || null,
               college: res.college || detectedCollege,
               error: null
             });
@@ -164,6 +180,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       login: async (payload: any) => {
+        const state = get();
         set({ isLoading: true, error: null, debugOtp: null });
         try {
           const res = await authApi.login(payload);
@@ -201,6 +218,7 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem('userId', res.user?.id || res.userId || '');
           }
 
+          const loginName = res.user?.fullName || res.user?.name || state.name || null;
           set({
             token: res.token,
             isAuthenticated: true,
@@ -210,6 +228,9 @@ export const useAuthStore = create<AuthState>()(
             email: res.user?.email || res.email,
             uid: res.user?.id || res.userId,
             _id: res.user?._id || res.userOid || null,
+            name: loginName,
+            fullName: loginName,
+            user: res.user || state.user || null,
             college: res.college || detectedCollege,
             error: null
           });
@@ -251,6 +272,7 @@ export const useAuthStore = create<AuthState>()(
               localStorage.setItem('userId', res.user?.id || res.userId || '');
             }
 
+            const mfaName = res.user?.fullName || res.user?.name || state.name || null;
             set({
               token: res.token,
               isAuthenticated: true,
@@ -260,6 +282,9 @@ export const useAuthStore = create<AuthState>()(
               email: emailVal,
               uid: res.user?.id || res.userId,
               _id: res.user?._id || res.userOid || null,
+              name: mfaName,
+              fullName: mfaName,
+              user: res.user || state.user || null,
               college: res.college || detectedCollege,
               error: null
             });

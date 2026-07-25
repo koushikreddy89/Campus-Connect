@@ -22,6 +22,7 @@ import { useState, useCallback, useEffect, memo } from 'react';
 import { toast } from 'sonner';
 import AlumniService from '@/services/alumniService';
 import { useAuthStore } from '@/store/authStore';
+import { usePostDetailStore } from '@/store/postDetailStore';
 import { formatAlumniDesignation } from '@/utils/alumniUtils';
 
 const POST_TYPE_BADGES = {
@@ -261,7 +262,10 @@ function AlumniPostCardComponent({
 
       {/* Content */}
       <div className="p-4 space-y-3">
-        <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap break-words">
+        <p 
+          onClick={() => usePostDetailStore.getState().openPost(post.id)}
+          className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap break-words cursor-pointer hover:text-foreground transition-colors"
+        >
           {post.content}
         </p>
       </div>
@@ -274,7 +278,10 @@ function AlumniPostCardComponent({
               <Heart className={`h-3.5 w-3.5 ${isLiked ? 'text-red-500 fill-current' : ''}`} />
               <span>{likeCount} likes</span>
             </div>
-            <div className="flex items-center gap-1 cursor-pointer" onClick={() => setShowComments(!showComments)}>
+            <div 
+              className="flex items-center gap-1 cursor-pointer" 
+              onClick={() => usePostDetailStore.getState().openPost(post.id)}
+            >
               <MessageCircle className="h-3.5 w-3.5" />
               <span>{commentsList.length} comments</span>
             </div>
@@ -306,7 +313,7 @@ function AlumniPostCardComponent({
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={() => setShowComments(!showComments)}
+            onClick={() => usePostDetailStore.getState().openPost(post.id)}
             className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary transition-all"
             aria-label="Comment"
           >

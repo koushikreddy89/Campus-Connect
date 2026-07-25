@@ -134,11 +134,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (exists) return;
 
       const isCurrentChatFocused = get().focusedMatchId === msg.matchId;
-
       if (isCurrentChatFocused) {
         msg.read = true;
         msg.status = 'seen';
+        msg.seenAt = new Date().toISOString();
         chatApi.markAsRead(msg.matchId, msg.id || (msg as any)._id);
+        const myId = currentUserId || currentUserUid;
+        if (socket?.connected && myId) {
+          socket.emit('message:seen', {
+            conversationId: msg.matchId,
+            seenBy: myId,
+            seenAt: msg.seenAt
+          });
+        }
       } else {
         useMatchStore.getState().incrementUnreadCount(msg.matchId, msg.text || 'New message');
       }
@@ -418,7 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachments,
         timestamp: new Date().toISOString(),
         read: false,
-        status: 'sent',
+        status: 'sending',
         resonanceState: 'dormant',
         reactions: [],
         retentionMode: retentionMode || 'NEVER_DELETE'
@@ -694,6 +702,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             },
             body: JSON.stringify({ conversationId: matchId })
           }).catch(() => {});
+        }
+
+        const socket = socketService.getSocket();
+        const myId = useAuthStore.getState().uid || useAuthStore.getState()._id;
+        if (socket?.connected && myId) {
+          socket.emit('message:seen', {
+            conversationId: matchId,
+            seenBy: myId,
+            seenAt: new Date().toISOString()
+          });
         }
       } else {
         socketService.leaveRoom(`match_${matchId}`);

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useFeedStore } from '@/store/feedStore';
 import { PostCard } from '@/components/PostCard';
+import { PostDetailModal } from '@/components/common/PostDetailModal';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { StoryBar, StoryViewer } from '@/components/StoryBar';
 import { EmptyState } from '@/components/EmptyState';
@@ -11,6 +12,7 @@ import { PostCategory } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { matchApi } from '@/services/api';
 import { toast } from 'sonner';
+import { uploadMediaFile } from '@/services/uploadService';
 
 const FEED_TABS = [
   { key: 'all' as const, label: 'All Community', icon: Sparkles },
@@ -64,16 +66,31 @@ export default function FeedPage() {
     loadSuggestions();
   }, []);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setImagePreview(reader.result as string);
-    reader.readAsDataURL(file);
+    try {
+      toast.loading('Uploading post image...', { id: 'feed-img' });
+      const res = await uploadMediaFile(file, '/api/posts/upload');
+      if (res.success && res.url) {
+        setImagePreview(res.url);
+        toast.success('Image ready!', { id: 'feed-img' });
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => setImagePreview(reader.result as string);
+        reader.readAsDataURL(file);
+        toast.success('Image selected!', { id: 'feed-img' });
+      }
+    } catch (err) {
+      toast.error('Failed to upload post image', { id: 'feed-img' });
+    }
   };
 
   const handlePost = async () => {
-    if (!postText.trim() && !imagePreview) return;
+    if (!postText.trim() && !imagePreview) {
+      toast.error('Please enter some text or select an image/video to share.');
+      return;
+    }
     await createPost(postText.trim(), isAnonymous, imagePreview ?? undefined, postCategory);
     setPostText('');
     setImagePreview(null);
@@ -315,6 +332,7 @@ export default function FeedPage() {
         </div>
       )}
 
+      <PostDetailModal />
       <BottomTabBar />
     </div>
   );

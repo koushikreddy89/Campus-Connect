@@ -5,6 +5,8 @@ import { userApi } from '@/services/api';
 import { useAuthStore } from './authStore';
 import { alumniProfileService } from '@/services/alumniService';
 
+import { getValidName } from '@/utils/validation';
+
 interface ProfileState {
   uid: string | null;
   profile: ProfileSetupData;
@@ -110,13 +112,14 @@ export const useProfileStore = create<ProfileState>()(
           }
 
           const role = useAuthStore.getState().role || 'student';
+          const profileName = state.profile.name || useAuthStore.getState().name || useAuthStore.getState().fullName || useAuthStore.getState().user?.name || '';
           let res;
 
           if (role === 'alumni') {
             res = await alumniProfileService.updateProfile(
               currentUid!,
               {
-                name: state.profile.name,
+                name: profileName,
                 batch: state.profile.batch || state.profile.passoutYear || state.profile.year || '',
                 department: state.profile.course || '',
                 company: state.profile.company || '',
@@ -137,7 +140,7 @@ export const useProfileStore = create<ProfileState>()(
             );
           } else {
             res = await userApi.updateProfile({
-              name: state.profile.name,
+              name: profileName,
               bio: state.profile.bio,
               interests: state.profile.interests,
               photos: state.profile.photos,
@@ -218,10 +221,19 @@ export const useProfileStore = create<ProfileState>()(
           }
 
           if (dbProf) {
+            const authState = useAuthStore.getState();
+            const resolvedName = getValidName(
+              dbProf.fullName,
+              dbProf.name,
+              authState.fullName,
+              authState.name,
+              authState.user?.fullName,
+              authState.user?.name
+            );
             set({
               uid,
               profile: {
-                name: dbProf.name || '',
+                name: resolvedName,
                 age: dbProf.age || 21,
                 gender: dbProf.gender || 'other',
                 bio: dbProf.bio || dbProf.story || '',

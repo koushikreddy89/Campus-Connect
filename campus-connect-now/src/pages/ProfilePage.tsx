@@ -1,12 +1,18 @@
-import { useState, useMemo, useEffect, memo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect, useCallback, memo, useRef } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useProfileStore } from '@/store/profileStore';
+import { getValidName } from '@/utils/validation';
 import { useMatchStore } from '@/store/matchStore';
 import { alumniProfileService } from '@/services/alumniService';
 import { useProfileViewerStore } from '@/store/profileViewerStore';
 import { matchApi } from '@/services/api';
 import { BottomTabBar } from '@/components/BottomTabBar';
+import { ImageViewer } from '@/components/common/ImageViewer';
+import { PostDetailModal } from '@/components/common/PostDetailModal';
+import { usePostDetailStore } from '@/store/postDetailStore';
+import { socketService } from '@/services/socketService';
+import { uploadMediaFile } from '@/services/uploadService';
 import { Button } from '@/components/ui/button';
 import { INTERESTS, COURSES, YEARS } from '@/data/constants';
 import { getApiUrl } from '@/services/connectionService';
@@ -428,13 +434,22 @@ const FriendCard = memo(({
 
 FriendCard.displayName = 'FriendCard';
 
-export default function ProfilePage() {
+export default function ProfilePage({ targetUserId: propTargetUserId }: { targetUserId?: string } = {}) {
   const navigate = useNavigate();
+  const params = useParams<{ userId?: string }>();
   const profile = useProfileStore(s => s.profile);
   const updateProfile = useProfileStore(s => s.updateProfile);
   const saveProfile = useProfileStore(s => s.saveProfile);
   const isLoading = useProfileStore(s => s.isLoading);
-  const uid = useAuthStore(s => s.uid);
+  const currentUserId = useAuthStore(s => s._id) || useAuthStore(s => s.uid);
+  const targetUserId = propTargetUserId || params.userId;
+  const uid = targetUserId || currentUserId;
+  const isOwnProfile: boolean = Boolean(
+    !targetUserId || 
+    targetUserId === currentUserId || 
+    (profile?.userId && profile.userId === currentUserId) ||
+    (profile?._id && profile._id === currentUserId)
+  );
   const email = useAuthStore(s => s.email);
   const logout = useAuthStore(s => s.logout);
   const viewers = useProfileViewerStore(s => s.viewers);
@@ -445,11 +460,12 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [editTab, setEditTab] = useState<'basic' | 'social' | 'skills' | 'career'>('basic');
   const [profileStats, setProfileStats] = useState<any>(null);
-  const [profilePosts, setProfilePosts] = useState<any[]>([]);
   const [profileMedia, setProfileMedia] = useState<any[]>([]);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [profileFriends, setProfileFriends] = useState<any[]>([]);
   const [profileFollowers, setProfileFollowers] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'feed' | 'photos' | 'videos' | 'projects' | 'achievements' | 'documents' | 'about' | 'friends'>('about');
+  const [activeTab, setActiveTab] = useState<'about' | 'photos' | 'videos' | 'projects' | 'achievements' | 'friends'>('about');
 
   // Friends Page Redesign states
   const [friendsSubTab, setFriendsSubTab] = useState<'all' | 'requests' | 'suggestions' | 'mutual' | 'recent' | 'online' | 'blocked'>('all');
@@ -602,40 +618,36 @@ export default function ProfilePage() {
     }
   };
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
+    if (!uid) return;
     try {
       const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
       const headers = { 'Authorization': `Bearer ${token}` };
       
-      const res = await fetch(`${getApiUrl()}/api/users/${uid}/profile`, { headers });
-      const json = await res.json();
-      if (json.success && json.data) {
-        setProfileStats(json.data.stats);
-      }
-
-      // Fetch posts
-      const postsRes = await fetch(`${getApiUrl()}/api/users/${uid}/posts`, { headers });
-      if (postsRes.ok) {
-        const postsJson = await postsRes.json();
-        if (postsJson.success) setProfilePosts(postsJson.data || []);
+      const statsRes = await fetch(`${getApiUrl()}/api/profile/${uid}/stats`, { headers });
+      if (statsRes.ok) {
+        const statsJson = await statsRes.json();
+        if (statsJson.success && statsJson.data?.stats) {
+          setProfileStats(statsJson.data.stats);
+        }
       }
 
       // Fetch media
-      const mediaRes = await fetch(`${getApiUrl()}/api/users/${uid}/media`, { headers });
+      const mediaRes = await fetch(`${getApiUrl()}/api/profile/${uid}/photos`, { headers });
       if (mediaRes.ok) {
         const mediaJson = await mediaRes.json();
         if (mediaJson.success) setProfileMedia(mediaJson.data || []);
       }
 
       // Fetch friends
-      const friendsRes = await fetch(`${getApiUrl()}/api/users/${uid}/friends`, { headers });
+      const friendsRes = await fetch(`${getApiUrl()}/api/profile/${uid}/friends`, { headers });
       if (friendsRes.ok) {
         const friendsJson = await friendsRes.json();
         if (friendsJson.success) setProfileFriends(friendsJson.data || []);
       }
 
       // Fetch followers
-      const followersRes = await fetch(`${getApiUrl()}/api/users/${uid}/followers`, { headers });
+      const followersRes = await fetch(`${getApiUrl()}/api/profile/${uid}/followers`, { headers });
       if (followersRes.ok) {
         const followersJson = await followersRes.json();
         if (followersJson.success) setProfileFollowers(followersJson.data || []);
@@ -643,7 +655,7 @@ export default function ProfilePage() {
     } catch (e) {
       console.error("Failed to load user profile stats/data:", e);
     }
-  };
+  }, [uid]);
   
 
 
@@ -686,16 +698,54 @@ export default function ProfilePage() {
     }
   };
 
-  // Sync profile from backend on mount
+  // Sync profile from backend on mount & listen to real-time events
   useEffect(() => {
-    if (uid) {
-      loadProfile(uid);
-      loadSavedReferrals();
+    if (!uid) return;
+    loadProfile(uid);
+    loadSavedReferrals();
+    fetchStats();
+    fetchSuggestions();
+    fetchConnectionRequests();
+
+    const handleRealtimeRefresh = () => {
       fetchStats();
-      fetchSuggestions();
+      loadProfile(uid);
       fetchConnectionRequests();
+    };
+
+    window.addEventListener('profile:stats:update', handleRealtimeRefresh);
+    window.addEventListener('post:created', handleRealtimeRefresh);
+    window.addEventListener('post:deleted', handleRealtimeRefresh);
+    window.addEventListener('connection:update', handleRealtimeRefresh);
+    window.addEventListener('follow:update', handleRealtimeRefresh);
+    window.addEventListener('profile:updated', handleRealtimeRefresh);
+
+    const socket = socketService.getSocket();
+    if (socket) {
+      socket.on('follow:update', handleRealtimeRefresh);
+      socket.on('presence:status', handleRealtimeRefresh);
+      socket.on('connection:update', handleRealtimeRefresh);
+      socket.on('post:created', handleRealtimeRefresh);
+      socket.on('post:deleted', handleRealtimeRefresh);
     }
-  }, [uid, loadProfile]);
+
+    return () => {
+      window.removeEventListener('profile:stats:update', handleRealtimeRefresh);
+      window.removeEventListener('post:created', handleRealtimeRefresh);
+      window.removeEventListener('post:deleted', handleRealtimeRefresh);
+      window.removeEventListener('connection:update', handleRealtimeRefresh);
+      window.removeEventListener('follow:update', handleRealtimeRefresh);
+      window.removeEventListener('profile:updated', handleRealtimeRefresh);
+
+      if (socket) {
+        socket.off('follow:update', handleRealtimeRefresh);
+        socket.off('presence:status', handleRealtimeRefresh);
+        socket.off('connection:update', handleRealtimeRefresh);
+        socket.off('post:created', handleRealtimeRefresh);
+        socket.off('post:deleted', handleRealtimeRefresh);
+      }
+    };
+  }, [uid, loadProfile, fetchStats]);
 
   // Fetch profile viewers on mount
   useEffect(() => {
@@ -745,6 +795,8 @@ export default function ProfilePage() {
     await saveProfile();
     setEditing(false);
     toast.success('Profile saved successfully!');
+    fetchStats();
+    window.dispatchEvent(new CustomEvent('profile:stats:update'));
   };
 
   // User Search effect
@@ -883,12 +935,21 @@ export default function ProfilePage() {
   };
 
   const isVerified = !!email;
+  const authState = useAuthStore();
+  const displayName = getValidName(
+    profile.fullName,
+    profile.name,
+    authState.fullName,
+    authState.name,
+    authState.user?.fullName,
+    authState.user?.name
+  );
 
   // Real-Time Profile Strength Items Configuration
   const checkItems = useMemo(() => {
     return [
       { id: 'photos', name: 'Profile Picture', checked: !!(profile.photos && profile.photos.length > 0 && profile.photos[0]), actionText: 'Add Profile Picture', tab: 'basic' as const },
-      { id: 'name', name: 'Full Name', checked: !!(profile.name && profile.name.trim() !== ''), actionText: 'Add Full Name', tab: 'basic' as const },
+      { id: 'name', name: 'Full Name', checked: !!(displayName && displayName.trim() !== ''), actionText: 'Add Full Name', tab: 'basic' as const },
       { id: 'bio', name: 'Bio/About', checked: !!(profile.bio && profile.bio.trim() !== ''), actionText: 'Add Bio/About', tab: 'basic' as const },
       { id: 'course', name: 'Department', checked: !!(profile.course && profile.course.trim() !== ''), actionText: 'Add Department / Course', tab: 'basic' as const },
       { id: 'year', name: 'Batch', checked: !!(profile.year && profile.year.trim() !== ''), actionText: 'Add Batch / Year', tab: 'basic' as const },
@@ -902,7 +963,7 @@ export default function ProfilePage() {
       { id: 'achievements', name: 'Achievements', checked: !!(profile.achievements && profile.achievements.length > 0), actionText: 'Add Achievements', tab: 'career' as const },
       { id: 'careerGoals', name: 'Career Goals', checked: !!(profile.careerGoals && profile.careerGoals.trim() !== ''), actionText: 'Add Career Goals', tab: 'career' as const },
     ];
-  }, [profile]);
+  }, [profile, displayName]);
 
   const completedCount = useMemo(() => checkItems.filter(item => item.checked).length, [checkItems]);
   const totalCount = checkItems.length;
@@ -981,34 +1042,46 @@ export default function ProfilePage() {
                       type="file" 
                       accept="image/*" 
                       className="hidden" 
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          const result = reader.result as string;
-                          const photos = profile.photos.length > 0 ? [result, ...profile.photos.slice(1)] : [result];
-                          updateProfile({ photos });
-                          toast.success('Avatar updated! Save changes to persist.');
-                        };
-                        reader.readAsDataURL(file);
+                        try {
+                          toast.loading('Uploading avatar...', { id: 'avatar-upload' });
+                          const res = await uploadMediaFile(file, '/api/profile/avatar');
+                          if (res.success && res.url) {
+                            const photos = profile.photos.length > 0 ? [res.url, ...profile.photos.slice(1)] : [res.url];
+                            updateProfile({ photos, profileImageUrl: res.url });
+                            toast.success('Avatar uploaded successfully!', { id: 'avatar-upload' });
+                          } else {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const result = reader.result as string;
+                              const photos = profile.photos.length > 0 ? [result, ...profile.photos.slice(1)] : [result];
+                              updateProfile({ photos });
+                              toast.success('Avatar updated!', { id: 'avatar-upload' });
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        } catch (err) {
+                          toast.error('Failed to upload avatar', { id: 'avatar-upload' });
+                        }
                       }}
                     />
                   </div>
                   
                   {/* User Details & Action Tray */}
-                  <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-2 sm:mt-0">
+                  <div className="flex-1 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mt-2 sm:mt-0">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h2 className="font-display text-xl sm:text-2xl font-black text-white tracking-tight truncate">
-                          {profile.name || 'Set Name'}
+                          {displayName || 'Set Name'}
                         </h2>
                         {isVerified && <BadgeCheck className="h-5.5 w-5.5 text-primary flex-shrink-0 animate-pulse" />}
                         <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" title="Online" />
                       </div>
                       
                       <p className="text-xs text-zinc-400 font-semibold mt-0.5">
-                        @${profile.name ? profile.name.toLowerCase().replace(/[^a-z0-9]/g, '') : 'user'}
+                        @{displayName ? displayName.toLowerCase().replace(/[^a-z0-9]/g, '') : 'user'}
                       </p>
                       
                       {/* Department / Batch */}
@@ -1085,16 +1158,16 @@ export default function ProfilePage() {
               </div>
             </div>
             {/* Redesigned Premium Glassmorphism Statistics Cards Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3.5">
+            <div className={`grid grid-cols-2 sm:grid-cols-4 ${isOwnProfile ? 'lg:grid-cols-7' : 'lg:grid-cols-8'} gap-3.5`}>
               {[
                 { label: 'Posts', value: profileStats?.posts || 0, color: 'from-violet-500/20 to-purple-500/5', border: 'border-violet-500/20 hover:border-violet-500/40', textColor: 'text-violet-400', glow: 'shadow-violet-500/5', icon: Newspaper },
                 { label: 'Friends', value: profileStats?.friends || 0, color: 'from-blue-500/20 to-cyan-500/5', border: 'border-blue-500/20 hover:border-blue-500/40', textColor: 'text-blue-400', glow: 'shadow-blue-500/5', icon: Users },
                 { label: 'Followers', value: profileStats?.followers || 0, color: 'from-fuchsia-500/20 to-pink-500/5', border: 'border-fuchsia-500/20 hover:border-fuchsia-500/40', textColor: 'text-fuchsia-400', glow: 'shadow-fuchsia-500/5', icon: UserCheck },
                 { label: 'Following', value: profileStats?.following || 0, color: 'from-indigo-500/20 to-blue-500/5', border: 'border-indigo-500/20 hover:border-indigo-500/40', textColor: 'text-indigo-400', glow: 'shadow-indigo-500/5', icon: UserPlus },
                 { label: 'Circles', value: profileStats?.circles || 0, color: 'from-teal-500/20 to-emerald-500/5', border: 'border-teal-500/20 hover:border-teal-500/40', textColor: 'text-teal-400', glow: 'shadow-teal-500/5', icon: Network },
-                { label: 'Achievements', value: profileStats?.achievements || 0, color: 'from-amber-500/20 to-yellow-500/5', border: 'border-amber-500/20 hover:border-amber-500/40', textColor: 'text-amber-400', glow: 'shadow-amber-500/5', icon: Trophy },
-                { label: 'Projects', value: profile?.projects?.length || 0, color: 'from-rose-500/20 to-red-500/5', border: 'border-rose-500/20 hover:border-rose-500/40', textColor: 'text-rose-400', glow: 'shadow-rose-500/5', icon: Briefcase },
-                { label: 'Mutual', value: 0, color: 'from-emerald-500/20 to-teal-500/5', border: 'border-emerald-500/20 hover:border-emerald-500/40', textColor: 'text-emerald-400', glow: 'shadow-emerald-500/5', icon: Sparkles },
+                { label: 'Achievements', value: profileStats?.achievements ?? (profile?.achievements?.length || 0), color: 'from-amber-500/20 to-yellow-500/5', border: 'border-amber-500/20 hover:border-amber-500/40', textColor: 'text-amber-400', glow: 'shadow-amber-500/5', icon: Trophy },
+                { label: 'Projects', value: profileStats?.projects ?? (profile?.projects?.length || 0), color: 'from-rose-500/20 to-red-500/5', border: 'border-rose-500/20 hover:border-rose-500/40', textColor: 'text-rose-400', glow: 'shadow-rose-500/5', icon: Briefcase },
+                ...(!isOwnProfile ? [{ label: 'Mutual', value: profileStats?.mutual || 0, color: 'from-emerald-500/20 to-teal-500/5', border: 'border-emerald-500/20 hover:border-emerald-500/40', textColor: 'text-emerald-400', glow: 'shadow-emerald-500/5', icon: Sparkles }] : [])
               ].map((stat, i) => {
                 const IconComponent = stat.icon;
                 return (
@@ -1155,7 +1228,7 @@ export default function ProfilePage() {
                         <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Full Name</label>
                         <input 
                           id="field-name"
-                          value={profile.name || ''} 
+                          value={displayName} 
                           onChange={e => updateProfile({ name: e.target.value })} 
                           placeholder="e.g. Alice Cooper"
                           className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all shadow-inner" 
@@ -1393,7 +1466,6 @@ export default function ProfilePage() {
                   <div className="relative flex bg-zinc-950/60 border border-white/5 p-1 rounded-2xl mb-6 overflow-x-auto hide-scrollbar scroll-smooth gap-1">
                     {[
                       { id: 'about', label: 'About' },
-                      { id: 'feed', label: 'Feed' },
                       { id: 'photos', label: 'Photos' },
                       { id: 'videos', label: 'Videos' },
                       { id: 'projects', label: 'Projects' },
@@ -1578,44 +1650,7 @@ export default function ProfilePage() {
                       </div>
                     )}
 
-                    {/* 2. FEED TAB */}
-                    {activeTab === 'feed' && (
-                      <div className="space-y-4">
-                        {profilePosts.length === 0 ? (
-                          <div className="p-8 rounded-[24px] border border-white/5 bg-zinc-950/20 text-center text-zinc-400 text-xs italic">
-                            No posts shared on feed yet.
-                          </div>
-                        ) : (
-                          profilePosts.map(post => (
-                            <div key={post.id || post._id} className="p-5 rounded-[24px] border border-white/[0.06] bg-zinc-950/20 shadow-md space-y-3">
-                              <div className="flex items-center gap-3">
-                                <img
-                                  src={profile.photos[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=me'}
-                                  alt=""
-                                  className="h-9 w-9 rounded-full object-cover border border-primary/30"
-                                />
-                                <div>
-                                  <h4 className="text-xs font-bold text-white">{profile.name}</h4>
-                                  <span className="text-[9px] text-zinc-500 font-medium">{new Date(post.createdAt).toLocaleDateString()}</span>
-                                </div>
-                              </div>
-                              <p className="text-xs sm:text-sm text-zinc-350 leading-relaxed">{post.content}</p>
-                              {post.image && (
-                                <div className="rounded-2xl overflow-hidden border border-white/5 bg-black/40 max-h-96">
-                                  <img src={post.image} alt="" className="w-full h-full object-cover" />
-                                </div>
-                              )}
-                              <div className="flex gap-4 pt-2 text-[10px] text-zinc-500 font-extrabold uppercase">
-                                <span>👍 {post.likes} Likes</span>
-                                <span>💬 {post.commentsCount} Comments</span>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-
-                    {/* 3. PHOTOS TAB */}
+                    {/* 2. PHOTOS TAB */}
                     {activeTab === 'photos' && (
                       <div>
                         {profileMedia.length === 0 ? (
@@ -1624,18 +1659,58 @@ export default function ProfilePage() {
                           </div>
                         ) : (
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                            {profileMedia.map(m => (
-                              <div key={m.id} className="aspect-square rounded-2xl overflow-hidden border border-white/5 bg-zinc-950/20 relative group cursor-pointer shadow-md">
-                                <img
-                                  src={m.url}
-                                  alt=""
-                                  className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-500"
-                                />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                  <span className="text-[10px] text-white font-extrabold uppercase tracking-widest">View Image</span>
+                            {profileMedia.map((m, idx) => {
+                              const imageCount = m.images?.length || (m.image ? 1 : 0);
+                              const hasVideo = (m.videos?.length > 0) || !!m.videoUrl;
+                              const thumbnailSrc = m.images?.[0] || m.image || m.url || m.imageUrl;
+                              
+                              return (
+                                <div 
+                                  key={m.id || m._id || idx} 
+                                  onClick={() => {
+                                    if (m.id) {
+                                      usePostDetailStore.getState().openPost(m.id);
+                                    }
+                                  }}
+                                  className="aspect-square rounded-2xl overflow-hidden border border-white/5 bg-zinc-950/20 relative group cursor-pointer shadow-md transition-transform hover:scale-[1.02] duration-300"
+                                >
+                                  <img
+                                    src={thumbnailSrc}
+                                    alt={m.content || m.caption || "Post photo"}
+                                    className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-500"
+                                    loading="lazy"
+                                  />
+                                  
+                                  {/* Top-right Indicator Overlay */}
+                                  <div className="absolute top-2.5 right-2.5 z-10 flex gap-1 items-center pointer-events-none bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg border border-white/10 text-[9px] font-bold text-white">
+                                    {hasVideo ? (
+                                      <span>▶ Video</span>
+                                    ) : imageCount > 1 ? (
+                                      <span>📷 {imageCount}</span>
+                                    ) : (
+                                      <span>📷</span>
+                                    )}
+                                  </div>
+
+                                  {/* Hover overlay stats */}
+                                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                    <div className="flex items-center gap-4 text-white font-extrabold text-sm">
+                                      <span className="flex items-center gap-1.5 hover:text-red-400 transition-colors">
+                                        <Heart className="w-4 h-4 fill-white hover:fill-red-400" />
+                                        {m.likes || 0}
+                                      </span>
+                                      <span className="flex items-center gap-1.5 hover:text-violet-400 transition-colors">
+                                        <MessageCircle className="w-4 h-4 fill-white hover:fill-violet-400" />
+                                        {m.comments?.length || 0}
+                                      </span>
+                                    </div>
+                                    <span className="text-[8px] text-zinc-300 uppercase tracking-widest font-bold">
+                                      View Post Details
+                                    </span>
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -2589,6 +2664,15 @@ export default function ProfilePage() {
         )}
       </AnimatePresence>
 
+      <ImageViewer
+        isOpen={imageViewerOpen}
+        onClose={() => setImageViewerOpen(false)}
+        images={profileMedia}
+        currentIndex={selectedImageIndex}
+        onIndexChange={setSelectedImageIndex}
+      />
+
+      <PostDetailModal />
       <BottomTabBar />
     </div>
   );

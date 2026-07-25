@@ -1138,84 +1138,35 @@ export default function WelcomePage() {
           {/* STEP 3: OTP VERIFICATION (EMAIL SIGNUP VERIFY) */}
           {step === 'otp' && (
             <motion.div key="otp" {...anim} className="w-full max-w-[450px]">
-              <div className="rounded-3xl p-8 bg-zinc-950/40 border border-zinc-900 backdrop-blur-xl shadow-2xl flex flex-col items-center">
-                
-                <div className="h-12 w-12 rounded-xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center mb-6 animate-pulse">
-                  <Mail className="h-6 w-6 text-violet-400" />
-                </div>
-
-                <h2 className="text-2xl font-bold mb-2 text-center text-white">Security Verification</h2>
-                <p className="text-zinc-400 text-sm text-center mb-8">
-                  Enter the 6-digit verification code sent to <span className="text-white font-semibold">{getActiveEmail()}</span> to activate your account.
-                </p>
-
-                <OTPForm
-                  email={getActiveEmail()}
-                  onVerify={handleVerifyEmailOtp}
-                  onResend={handleResendOtp}
-                  isLoading={isLoading}
-                  error={localError}
-                  canResend={canResendOTP}
-                  resendCountdown={resendCountdown}
-                />
-
-                {debugOtp && (
-                  <div className="mt-6 p-4 bg-violet-600/10 border border-violet-500/20 rounded-2xl text-center w-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <span className="text-zinc-400 text-[10px] uppercase tracking-widest block mb-1.5 font-bold">🔑 Dev Mode OTP Code</span>
-                    <span className="text-white font-mono font-extrabold text-2xl tracking-wider select-all">{debugOtp}</span>
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setStep('auth')}
-                  className="mt-6 text-zinc-500 hover:text-zinc-300 font-semibold text-sm transition-colors flex items-center gap-2"
-                >
-                  <ArrowLeft className="h-4 w-4" /> Back to Edit
-                </button>
-
-              </div>
+              <OTPForm
+                email={getActiveEmail()}
+                onVerify={handleVerifyEmailOtp}
+                onResend={handleResendOtp}
+                isLoading={isLoading}
+                error={localError}
+                canResend={canResendOTP}
+                resendCountdown={resendCountdown}
+                debugOtp={debugOtp}
+                onBack={() => setStep('auth')}
+              />
             </motion.div>
           )}
 
           {/* STEP 4: MFA OTP VERIFICATION (LOGIN MFA CHALLENGE) */}
           {step === 'mfa' && (
             <motion.div key="mfa" {...anim} className="w-full max-w-[450px]">
-              <div className="rounded-3xl p-8 bg-zinc-950/40 border border-zinc-900 backdrop-blur-xl shadow-2xl flex flex-col items-center">
-                
-                <div className="h-12 w-12 rounded-xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center mb-6 animate-pulse">
-                  <Lock className="h-6 w-6 text-violet-400" />
-                </div>
-
-                <h2 className="text-2xl font-bold mb-2 text-center text-white">Multi-Factor Authentication</h2>
-                <p className="text-zinc-400 text-sm text-center mb-8">
-                  MFA is enabled on your account. Enter the 6-digit login code sent to <span className="text-white font-semibold">{getActiveEmail()}</span>.
-                </p>
-
-                <OTPForm
-                  email={getActiveEmail()}
-                  onVerify={handleVerifyMfaOtp}
-                  onResend={handleResendOtp}
-                  isLoading={isLoading}
-                  error={localError}
-                  canResend={canResendOTP}
-                  resendCountdown={resendCountdown}
-                />
-
-                {debugOtp && (
-                  <div className="mt-6 p-4 bg-violet-600/10 border border-violet-500/20 rounded-2xl text-center w-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <span className="text-zinc-400 text-[10px] uppercase tracking-widest block mb-1.5 font-bold">🔑 Dev Mode OTP Code</span>
-                    <span className="text-white font-mono font-extrabold text-2xl tracking-wider select-all">{debugOtp}</span>
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setStep('auth')}
-                  className="mt-6 text-zinc-500 hover:text-zinc-300 font-semibold text-sm transition-colors flex items-center gap-2"
-                >
-                  <ArrowLeft className="h-4 w-4" /> Back to Login
-                </button>
-
-              </div>
+              <OTPForm
+                email={getActiveEmail()}
+                onVerify={handleVerifyMfaOtp}
+                onResend={handleResendOtp}
+                isLoading={isLoading}
+                error={localError}
+                canResend={canResendOTP}
+                resendCountdown={resendCountdown}
+                debugOtp={debugOtp}
+                isMfa={true}
+                onBack={() => setStep('auth')}
+              />
             </motion.div>
           )}
 

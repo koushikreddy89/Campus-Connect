@@ -822,6 +822,11 @@ export const chatApi = {
 
       xhr.onload = () => {
         try {
+          const contentType = xhr.getResponseHeader('content-type');
+          if (contentType && !contentType.includes('application/json')) {
+            reject(new Error('Server returned a non-JSON response during file upload.'));
+            return;
+          }
           const res = JSON.parse(xhr.responseText);
           resolve(res);
         } catch (err) {
@@ -1165,6 +1170,10 @@ export const storyApi = {
         headers: getHeaders(),
         body: JSON.stringify({ userId, image, caption, type: 'image' })
       });
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        return { success: false, error: 'Server returned a non-JSON response.' };
+      }
       return await res.json();
     } catch (error: any) {
       console.error('Error creating story:', error);

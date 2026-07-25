@@ -3,6 +3,7 @@ import { Post, ReactionEmoji } from '@/types';
 import { Heart, MessageCircle, Bookmark, Share2, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useFeedStore } from '@/store/feedStore';
+import { usePostDetailStore } from '@/store/postDetailStore';
 import { PostReactions } from '@/components/MessageReactions';
 import { toast } from 'sonner';
 
@@ -83,14 +84,22 @@ export const PostCard = memo(({ post }: { post: Post }) => {
         </div>
       </div>
 
-      <p className="text-sm text-foreground/90 leading-relaxed mb-3">{post.content}</p>
-
+      <p 
+        onClick={() => usePostDetailStore.getState().openPost(post.id)}
+        className="text-sm text-foreground/90 leading-relaxed mb-3 cursor-pointer hover:text-foreground transition-colors"
+      >
+        {post.content}
+      </p>
+ 
       {post.image && (
-        <div className="rounded-xl overflow-hidden mb-3">
+        <div 
+          onClick={() => usePostDetailStore.getState().openPost(post.id)}
+          className="rounded-xl overflow-hidden mb-3 cursor-pointer transition-transform hover:scale-[1.005]"
+        >
           <img src={post.image} alt="Post" className="w-full max-h-72 object-cover" loading="lazy" />
         </div>
       )}
-
+ 
       <div className="flex items-center gap-1 pt-2 border-t border-border/50">
         <motion.button
           whileTap={{ scale: 0.85 }}
@@ -102,7 +111,7 @@ export const PostCard = memo(({ post }: { post: Post }) => {
         </motion.button>
         <motion.button
           whileTap={{ scale: 0.9 }}
-          onClick={() => setShowComments(!showComments)}
+          onClick={() => usePostDetailStore.getState().openPost(post.id)}
           className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-xl hover:bg-secondary/50 transition-colors text-muted-foreground"
         >
           <MessageCircle className="h-4 w-4" />

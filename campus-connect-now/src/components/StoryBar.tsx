@@ -2,6 +2,8 @@ import { useStoryStore } from '@/store/storyStore';
 import { Plus, Type, Eye } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { uploadMediaFile } from '@/services/uploadService';
+import { toast } from 'sonner';
 
 const TEXT_BG_COLORS = [
   'linear-gradient(135deg, hsl(249 76% 60%), hsl(270 90% 72%))',
@@ -26,12 +28,26 @@ export const StoryBar = () => {
   const [textContent, setTextContent] = useState('');
   const [selectedBg, setSelectedBg] = useState(0);
 
-  const handleAddStory = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddStory = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => addStory(reader.result as string);
-    reader.readAsDataURL(file);
+    try {
+      toast.loading('Uploading story...', { id: 'story-upload' });
+      const uploadRes = await uploadMediaFile(file, '/api/story/upload');
+      if (uploadRes.success && uploadRes.url) {
+        await addStory(uploadRes.url);
+        toast.success('Story uploaded successfully!', { id: 'story-upload' });
+      } else {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          await addStory(reader.result as string);
+          toast.success('Story added!', { id: 'story-upload' });
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      toast.error('Failed to upload story.', { id: 'story-upload' });
+    }
     e.target.value = '';
   };
 

@@ -9,6 +9,7 @@ import { getApiUrl } from '@/services/connectionService';
 import { useAuthStore } from '@/store/authStore';
 import { socketService } from '@/services/socketService';
 import { toast } from 'sonner';
+import { ImageViewer } from '@/components/common/ImageViewer';
 
 interface UserProfilePanelProps {
   userId: string;
@@ -588,26 +589,13 @@ export default function UserProfilePanel({ userId, onClose }: UserProfilePanelPr
         </div>
       </div>
       
-      {/* Lightbox media viewer */}
-      {activeLightboxMedia && (
-        <div 
-          className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4"
-          onClick={() => setActiveLightboxMedia(null)}
-        >
-          <button 
-            className="absolute top-4 right-4 p-2 bg-black/60 rounded-full border border-white/25 text-white"
-            onClick={() => setActiveLightboxMedia(null)}
-          >
-            <X className="w-5 h-5" />
-          </button>
-          <img 
-            src={activeLightboxMedia.url} 
-            alt="" 
-            className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl" 
-            onClick={e => e.stopPropagation()}
-          />
-        </div>
-      )}
+      {/* Full-screen ImageViewer */}
+      <ImageViewer
+        isOpen={!!activeLightboxMedia}
+        onClose={() => setActiveLightboxMedia(null)}
+        images={media}
+        currentIndex={media.findIndex(m => m.url === activeLightboxMedia?.url || m.id === activeLightboxMedia?.id) >= 0 ? media.findIndex(m => m.url === activeLightboxMedia?.url || m.id === activeLightboxMedia?.id) : 0}
+      />
 
     </div>
   );

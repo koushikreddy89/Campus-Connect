@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useChatStore } from '@/store/chatStore';
 import { useMatchStore } from '@/store/matchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useGroupChatStore } from '@/store/groupChatStore';
-import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown, Flame, Infinity, Lock, Heart, Pin, Bookmark, Share2 } from 'lucide-react';
+import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown, Flame, Infinity, Lock, Heart, Pin, Bookmark, Share2, Sparkles } from 'lucide-react';
 import { chatApi } from '@/services/api';
 import { getApiUrl } from '@/services/connectionService';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -187,6 +187,13 @@ export default function ChatPage({
   const messagesMap = useChatStore(s => s.messages);
   const messages = messagesMap[matchId!] ?? EMPTY_MESSAGES;
 
+  const lastOutgoingMsgId = useMemo(() => {
+    const outgoing = messages.filter(m => String(m.senderId) === String(currentUserId));
+    if (outgoing.length === 0) return null;
+    const last = outgoing[outgoing.length - 1];
+    return last.id || (last as any)._id;
+  }, [messages, currentUserId]);
+
   const conversationImages = useMemo(() => {
     const list: any[] = [];
     messages.forEach((msg: any) => {
@@ -208,7 +215,64 @@ export default function ChatPage({
     return list;
   }, [messages, currentUserId, match]);
 
+  const isOnline = match?.user?.isOnline ?? false;
+  const matchName = match ? (match.isRevealed ? match.user?.name : match.user?.anonymousName || 'Anonymous') : 'Anonymous';
+
+  // Group messages consecutively by sender within 3 minutes and same calendar day
+  const groupedMessages = useMemo(() => {
+    const groups: any[] = [];
+    let currentGroup: any = null;
+
+    // Filter out duplicates by unique ID before rendering
+    const seenIds = new Set<string>();
+    const uniqueMessages: any[] = [];
+    messages.forEach((msg) => {
+      const mid = msg.id || (msg as any)._id;
+      if (mid) {
+        if (seenIds.has(mid)) return;
+        seenIds.add(mid);
+      }
+      uniqueMessages.push(msg);
+    });
+
+    uniqueMessages.forEach((msg) => {
+      const msgTime = new Date(msg.timestamp).getTime();
+      const isSameSender = currentGroup && currentGroup.senderId === msg.senderId;
+      const prevMsg = currentGroup ? currentGroup.messages[currentGroup.messages.length - 1] : null;
+      const isSameDay = prevMsg && new Date(msg.timestamp).toDateString() === new Date(prevMsg.timestamp).toDateString();
+      const isWithinTime = currentGroup && isSameDay && (msgTime - new Date(prevMsg.timestamp).getTime() < 180000);
+
+      if (isSameSender && isWithinTime) {
+        currentGroup.messages.push(msg);
+      } else {
+        if (currentGroup) {
+          groups.push(currentGroup);
+        }
+        const isOwn = String(msg.senderId) === String(currentUserId) || String(msg.senderId) === String(useAuthStore.getState().uid);
+        currentGroup = {
+          senderId: msg.senderId,
+          senderName: isOwn ? 'You' : matchName,
+          avatar: isOwn ? '' : match?.user?.photos?.[0],
+          isOwn,
+          messages: [msg]
+        };
+      }
+    });
+
+    if (currentGroup) {
+      groups.push(currentGroup);
+    }
+    return groups;
+  }, [messages, currentUserId, matchName, match]);
+
   const typingMatchId = useChatStore(s => s.typingMatchId);
+
+  // Derived presence status string
+  const activeStatusStr = useMemo(() => {
+    if (typingMatchId === matchId) return 'Typing...';
+    return formatLastSeen(recipientPresence.status, recipientPresence.lastSeen || match?.user?.updatedAt);
+  }, [recipientPresence, typingMatchId, matchId, match]);
+
   const sendMessage = useChatStore(s => s.sendMessage);
   const reactToMessage = useChatStore(s => s.reactToMessage);
   const revealIdentity = useMatchStore(s => s.revealIdentity);
@@ -221,6 +285,7 @@ export default function ChatPage({
   const [showEmojiPickerForMsg, setShowEmojiPickerForMsg] = useState<string | null>(null);
 
   const typingTimeoutRef = useRef<any>(null);
+  const textCountdownTimerRef = useRef<any>(null);
 
   const handleTextChange = (val: string) => {
     setText(val);
@@ -767,7 +832,6 @@ export default function ChatPage({
   };
 
   const [textCountdown, setTextCountdown] = useState(10);
-  const textCountdownTimerRef = useRef<any>(null);
 
   const handleOpenViewOnceText = async (msg: any, senderName: string) => {
     try {
@@ -820,62 +884,6 @@ export default function ChatPage({
     navigator.clipboard.writeText(txt);
     toast.success('Text copied to clipboard! 📋');
   };
-
-  const isOnline = match.user?.isOnline ?? false;
-  const matchName = match.isRevealed ? match.user?.name : match.user?.anonymousName || 'Anonymous';
-
-  // Group messages consecutively by sender within 3 minutes and same calendar day
-  const groupedMessages = useMemo(() => {
-    const groups: any[] = [];
-    let currentGroup: any = null;
-
-    // Filter out duplicates by unique ID before rendering
-    const seenIds = new Set<string>();
-    const uniqueMessages: any[] = [];
-    messages.forEach((msg) => {
-      const mid = msg.id || (msg as any)._id;
-      if (mid) {
-        if (seenIds.has(mid)) return;
-        seenIds.add(mid);
-      }
-      uniqueMessages.push(msg);
-    });
-
-    uniqueMessages.forEach((msg) => {
-      const msgTime = new Date(msg.timestamp).getTime();
-      const isSameSender = currentGroup && currentGroup.senderId === msg.senderId;
-      const prevMsg = currentGroup ? currentGroup.messages[currentGroup.messages.length - 1] : null;
-      const isSameDay = prevMsg && new Date(msg.timestamp).toDateString() === new Date(prevMsg.timestamp).toDateString();
-      const isWithinTime = currentGroup && isSameDay && (msgTime - new Date(prevMsg.timestamp).getTime() < 180000);
-
-      if (isSameSender && isWithinTime) {
-        currentGroup.messages.push(msg);
-      } else {
-        if (currentGroup) {
-          groups.push(currentGroup);
-        }
-        const isOwn = String(msg.senderId) === String(currentUserId) || String(msg.senderId) === String(useAuthStore.getState().uid);
-        currentGroup = {
-          senderId: msg.senderId,
-          senderName: isOwn ? 'You' : matchName,
-          avatar: isOwn ? '' : match.user?.photos?.[0],
-          isOwn,
-          messages: [msg]
-        };
-      }
-    });
-
-    if (currentGroup) {
-      groups.push(currentGroup);
-    }
-    return groups;
-  }, [messages, currentUserId, matchName, match]);
-
-  // Derived presence status string
-  const activeStatusStr = useMemo(() => {
-    if (typingMatchId === matchId) return 'Typing...';
-    return formatLastSeen(recipientPresence.status, recipientPresence.lastSeen || match?.user?.updatedAt);
-  }, [recipientPresence, typingMatchId, matchId, match]);
 
   return (
     <div className={`flex-1 flex flex-col h-full bg-[#09090B] text-zinc-300 relative select-none overflow-hidden ${!embeddedMatchId ? 'pb-[64px]' : ''}`}>
@@ -1003,9 +1011,28 @@ export default function ChatPage({
 
         <div className="max-w-[900px] mx-auto w-full px-6 py-6 space-y-4">
           {groupedMessages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6 select-none opacity-60 min-h-[300px]">
-              <span className="text-3xl mb-2 animate-bounce">👋</span>
-              <p className="text-xs text-zinc-400 font-medium">No messages yet. Send a wave to start the chat!</p>
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 select-none max-w-sm mx-auto my-12 bg-zinc-900/40 border border-white/[0.04] backdrop-blur-xl rounded-[28px] space-y-4 shadow-xl">
+              <div className="p-4 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400">
+                <Sparkles className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white mb-1">Start the Conversation</h3>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">Send a greeting or try one of these Suggested Icebreakers to get things started:</p>
+              </div>
+              <div className="w-full space-y-2.5 pt-2">
+                <button 
+                  onClick={() => setText("Hey! What department and batch are you in?")} 
+                  className="w-full text-left px-4 py-2.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.06] hover:border-violet-500/20 text-[10px] text-zinc-300 transition-all active:scale-[0.98]"
+                >
+                  💬 "Hey! What department and batch are you in?"
+                </button>
+                <button 
+                  onClick={() => setText("Hey! What are some of your favorite clubs on campus?")} 
+                  className="w-full text-left px-4 py-2.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.06] hover:border-violet-500/20 text-[10px] text-zinc-300 transition-all active:scale-[0.98]"
+                >
+                  🎓 "Hey! What are some of your favorite clubs on campus?"
+                </button>
+              </div>
             </div>
           ) : (
             groupedMessages.map((group, gIdx) => {
@@ -1017,11 +1044,11 @@ export default function ChatPage({
                 <div key={gIdx} className="flex flex-col">
                   {showDateDivider && (
                     <div className="flex items-center justify-center my-6 select-none">
-                      <div className="h-px bg-white/[0.05] flex-1 max-w-[150px]" />
-                      <span className="text-[9px] uppercase tracking-widest font-mono text-zinc-550 px-4 font-bold">
+                      <div className="h-px bg-white/[0.03] flex-1 max-w-[100px]" />
+                      <span className="text-[10px] tracking-wider bg-zinc-900/60 border border-white/[0.06] backdrop-blur-md px-3.5 py-1.5 rounded-full font-extrabold text-zinc-400 shadow-sm mx-4">
                         {formatDividerDate(group.messages[0].timestamp)}
                       </span>
-                      <div className="h-px bg-white/[0.05] flex-1 max-w-[150px]" />
+                      <div className="h-px bg-white/[0.03] flex-1 max-w-[100px]" />
                     </div>
                   )}
 
@@ -1106,12 +1133,33 @@ export default function ChatPage({
                               onTouchEnd={handleTouchEnd}
                               onTouchMove={handleTouchEnd}
                             >
-                              <div
-                                className={`px-4 py-3 rounded-[24px] text-xs leading-relaxed shadow-md transition-all ${
+                              <motion.div
+                                className={`px-[18px] py-[14px] rounded-[22px] text-xs leading-relaxed transition-all duration-200 ${
+                                  new Date().getTime() - new Date(msg.timestamp).getTime() > 86400000 ? 'opacity-85' : 'opacity-100'
+                                } ${
                                   group.isOwn
-                                    ? 'bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-br-[4px] shadow-[0_4px_16px_rgba(124,58,237,0.2)] hover:-translate-y-[1px]'
-                                    : 'bg-[#24242E] border border-white/[0.05] text-zinc-100 rounded-bl-[4px] shadow-sm hover:-translate-y-[1px]'
+                                    ? msg.status === 'sending'
+                                      ? 'bg-gradient-to-br from-[#8B5CF6]/50 to-[#6D4AFF]/50 text-white/[0.8] border border-white/[0.05] rounded-br-[6px]'
+                                      : msg.status === 'seen' || msg.read || getResonanceState(msg) === 'absorbed'
+                                        ? 'bg-[#8B5CF6]/[0.18] border border-white/[0.08] backdrop-blur-[12px] text-zinc-200 rounded-br-[6px] shadow-none'
+                                        : 'bg-gradient-to-br from-[#9F67FF] to-[#6D4AFF] border border-white/[0.08] text-white rounded-br-[6px] shadow-[0_8px_24px_rgba(109,74,255,0.25)]'
+                                    : 'bg-white/[0.03] border border-white/[0.06] backdrop-blur-md text-zinc-100 rounded-bl-[6px] shadow-[0_4px_24px_rgba(0,0,0,0.15)]'
                                 }`}
+                                animate={
+                                  group.isOwn
+                                    ? msg.status === 'sending'
+                                      ? { scale: [1, 1.02, 1] }
+                                      : msg.status === 'seen' || msg.read || getResonanceState(msg) === 'absorbed'
+                                        ? { scale: 0.98 }
+                                        : { scale: 1 }
+                                    : { scale: 1 }
+                                }
+                                transition={
+                                  group.isOwn && msg.status === 'sending'
+                                    ? { repeat: Infinity, duration: 0.9, ease: 'easeInOut' }
+                                    : { duration: 0.26, ease: 'easeInOut' }
+                                }
+                                whileHover={{ scale: 1.015 }}
                               >
                                 {msg.retentionMode === 'VIEW_ONCE' || msg.visibility === 'view_once' ? (
                                   msg.viewed ? (
@@ -1215,23 +1263,32 @@ export default function ChatPage({
                                 )}
                                 
                                 {/* Time & Read Receipts */}
-                                <div className="flex items-center justify-end gap-1 mt-1 text-[9px] select-none font-mono text-zinc-500">
+                                <div className="flex items-center justify-end gap-1.5 mt-2 select-none text-[11px] font-medium text-slate-300/80">
                                   <span>
                                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                   {group.isOwn && (
-                                    <span className="ml-1 select-none text-[10px] leading-none shrink-0">
-                                      {msg.status === 'seen' || msg.read || getResonanceState(msg) === 'absorbed' ? (
-                                        <span className="text-blue-400 font-bold">✓✓</span>
+                                    <span className="ml-1.5 select-none text-[14px] leading-none shrink-0 transition-all duration-200">
+                                      {msg.status === 'sending' ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                                      ) : msg.status === 'seen' || msg.read || getResonanceState(msg) === 'absorbed' ? (
+                                        <span className="text-[#4FC3FF] font-extrabold" title={`Seen at ${msg.seenAt ? new Date(msg.seenAt).toLocaleTimeString() : 'unknown'}`}>✓✓</span>
                                       ) : msg.status === 'delivered' || getResonanceState(msg) === 'harmonized' ? (
-                                        <span className="text-zinc-450 font-bold">✓✓</span>
+                                        <span className="text-zinc-400 font-extrabold">✓✓</span>
                                       ) : (
-                                        <span className="text-zinc-550 font-medium">✓</span>
+                                        <span className="text-zinc-400 font-semibold">✓</span>
                                       )}
                                     </span>
                                   )}
                                 </div>
-                              </div>
+                              </motion.div>
+
+                              {/* Seen status text label below bubble (latest message only) */}
+                              {group.isOwn && (msg.id === lastOutgoingMsgId || (msg as any)._id === lastOutgoingMsgId) && msg.status === 'seen' && (
+                                <div className="text-[10px] text-zinc-500 font-bold text-right mt-1 mr-1 select-none animate-fade-in">
+                                  Seen {msg.seenAt ? new Date(msg.seenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                </div>
+                              )}
 
                               {/* Reaction Emojis list overlay */}
                               {msg.reactions && msg.reactions.length > 0 && (
@@ -1304,11 +1361,12 @@ export default function ChatPage({
           
           {/* Animated typing dots indicator */}
           {typingMatchId === matchId && (
-            <div className="flex items-center gap-1.5 select-none text-[10px] text-zinc-500 font-mono pl-12 py-1">
-              <span className="h-1.5 w-1.5 bg-violet-500 rounded-full animate-bounce [animation-delay:0.1s]" />
-              <span className="h-1.5 w-1.5 bg-violet-500 rounded-full animate-bounce [animation-delay:0.3s]" />
-              <span className="h-1.5 w-1.5 bg-violet-500 rounded-full animate-bounce [animation-delay:0.5s]" />
-              <span className="text-[9px] text-zinc-500 font-semibold ml-1">typing...</span>
+            <div className="flex items-center pl-12 py-1 select-none">
+              <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.06] backdrop-blur-md px-4 py-2.5 rounded-[22px] rounded-bl-[6px] shadow-[0_4px_24px_rgba(0,0,0,0.15)]">
+                <span className="h-1.5 w-1.5 bg-zinc-300 rounded-full animate-bounce [animation-delay:0.1s]" />
+                <span className="h-1.5 w-1.5 bg-zinc-300 rounded-full animate-bounce [animation-delay:0.3s]" />
+                <span className="h-1.5 w-1.5 bg-zinc-300 rounded-full animate-bounce [animation-delay:0.5s]" />
+              </div>
             </div>
           )}
           <div ref={messagesEnd} />
@@ -1422,11 +1480,11 @@ export default function ChatPage({
             whileTap={{ scale: 0.9 }}
             onClick={handleSend}
             disabled={!text.trim() || isSending || uploadProgress !== null}
-            className={`h-8 w-8 rounded-full flex items-center justify-center text-white shrink-0 transition-all shadow-md ${
-              text.trim() ? 'bg-violet-600 hover:bg-violet-700 shadow-[0_0_12px_rgba(139,92,246,0.4)]' : 'bg-zinc-800 opacity-40 cursor-default'
+            className={`h-9 w-9 rounded-full flex items-center justify-center text-white shrink-0 transition-all shadow-lg ${
+              text.trim() ? 'bg-gradient-to-br from-[#8B5CF6] to-[#6D4AFF] hover:scale-105 active:scale-95 shadow-[0_4px_16px_rgba(109,74,255,0.4)]' : 'bg-zinc-800/80 opacity-45 cursor-default'
             }`}
           >
-            <Send className="h-3.5 w-3.5" />
+            <Send className="h-4 w-4" />
           </motion.button>
         </div>
       </div>

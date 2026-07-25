@@ -28,7 +28,8 @@ app.use(cors({
       ],
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Routes
 const path = require('path');
@@ -141,7 +142,7 @@ mongoose.connect(MONGODB_URI)
 
     const jwt = require('jsonwebtoken');
     const JWT_SECRET = process.env.JWT_SECRET || 'campus-connect-super-secret';
-    const { User, Alumni, Connection } = require('./models');
+    const { User, Alumni, Connection, Message } = require('./models');
 
     io.use(async (socket, next) => {
       const token = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -201,6 +202,54 @@ mongoose.connect(MONGODB_URI)
 
       socket.on('presence', ({ roomId, userId, status, lastSeen }) => {
         socket.to(roomId).emit('presence', { roomId, userId, status, lastSeen });
+      });
+
+      // Mark messages as seen
+      socket.on('message:seen', async ({ conversationId, seenBy, seenAt }) => {
+        try {
+          await Message.updateMany(
+            { conversationId, senderId: { $ne: seenBy }, status: { $ne: 'seen' } },
+            { $set: { status: 'seen', seenAt: new Date(seenAt || Date.now()), read: true } }
+          );
+          io.to(`match_${conversationId}`).emit('message:seen', { conversationId, seenBy, seenAt: seenAt || new Date().toISOString() });
+        } catch (err) {
+          console.error('Error handling message:seen socket event:', err);
+        }
+      });
+
+      // Message Reaction
+      socket.on('message:reaction', async ({ roomId, messageId, emoji, userId }) => {
+        try {
+          const msg = await Message.findById(messageId);
+          if (msg) {
+            const existingIdx = msg.reactions.findIndex(r => r.userId === userId && r.emoji === emoji);
+            if (existingIdx >= 0) {
+              msg.reactions.splice(existingIdx, 1);
+            } else {
+              msg.reactions.push({ emoji, userId, timestamp: new Date() });
+            }
+            await msg.save();
+            io.to(roomId).emit('message:reaction', { roomId, messageId, reactions: msg.reactions });
+          }
+        } catch (err) {
+          console.error('Error handling message:reaction socket event:', err);
+        }
+      });
+
+      // Message delete for everyone
+      socket.on('message:delete', async ({ roomId, messageId, userId }) => {
+        try {
+          const msg = await Message.findById(messageId);
+          if (msg && msg.senderId === userId) {
+            msg.deletedForEveryone = true;
+            msg.deletedAt = new Date();
+            msg.text = 'This message was deleted';
+            await msg.save();
+            io.to(roomId).emit('message:deleted', { roomId, messageId, deletedAt: msg.deletedAt });
+          }
+        } catch (err) {
+          console.error('Error handling message:delete socket event:', err);
+        }
       });
 
       socket.on('disconnect', async () => {

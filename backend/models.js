@@ -114,6 +114,18 @@ const AlumniSchema = new mongoose.Schema({
   onboardingStep: { type: Number, default: 1 }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
+// Pre-save hook to keep name and fullName 100% in sync
+AlumniSchema.pre('save', function (next) {
+  if (this.name && !this.fullName) {
+    this.fullName = this.name;
+  } else if (this.fullName && !this.name) {
+    this.name = this.fullName;
+  } else if (this.name && this.fullName && this.name !== this.fullName) {
+    this.fullName = this.name;
+  }
+  next();
+});
+
 // Post Schema
 const PostCommentSchema = new mongoose.Schema({
   userId: String,
@@ -126,11 +138,22 @@ const PostCommentSchema = new mongoose.Schema({
 const PostSchema = new mongoose.Schema({
   alumniId: { type: String, required: true }, // Refers to Alumni ID
   college: { type: String, default: 'SR University', index: true },
-  content: { type: String, required: true },
+  content: { type: String, default: '' },
+  caption: { type: String, default: '' },
+  description: { type: String, default: '' },
   type: { type: String, default: 'general' }, // job, referral, internship, tip, achievement, resource, roadmap, general
   imageUrls: [String],
   videoUrls: [String],
   tags: [String],
+  hashtags: { type: [String], default: [] },
+  mentions: { type: [String], default: [] },
+  location: { type: String, default: '' },
+  visibility: { type: String, enum: ['public', 'college', 'friends'], default: 'public' },
+  projectName: { type: String, default: '' },
+  companyName: { type: String, default: '' },
+  clubName: { type: String, default: '' },
+  eventName: { type: String, default: '' },
+  certificateName: { type: String, default: '' },
   company: String,
   jobRole: String,
   salary: String,
@@ -577,8 +600,18 @@ module.exports = {
     lastActivity: { type: Date, default: Date.now },
     socketId: { type: String, default: null },
     onboardingCompleted: { type: Boolean, default: false },
-    onboardingStep: { type: Number, default: 1 }
-  }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }), 'users'),
+    onboardingStep: { type: Number, default: 1 },
+    fullName: { type: String, default: '' }
+  }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }).pre('save', function(next) {
+    if (this.name && !this.fullName) {
+      this.fullName = this.name;
+    } else if (this.fullName && !this.name) {
+      this.name = this.fullName;
+    } else if (this.name && this.fullName && this.name !== this.fullName) {
+      this.fullName = this.name;
+    }
+    next();
+  }), 'users'),
 
   StudentPost: mongoose.model('StudentPost', new mongoose.Schema({
     userId: { type: String, required: true },
@@ -586,8 +619,22 @@ module.exports = {
     authorName: { type: String, default: '' },
     authorAvatar: { type: String, default: '' },
     isAnonymous: { type: Boolean, default: false },
-    content: { type: String, required: true },
+    content: { type: String, default: '' },
+    caption: { type: String, default: '' },
+    description: { type: String, default: '' },
     image: { type: String, default: '' },
+    videoUrl: { type: String, default: '' },
+    images: { type: [String], default: [] },
+    videos: { type: [String], default: [] },
+    hashtags: { type: [String], default: [] },
+    mentions: { type: [String], default: [] },
+    location: { type: String, default: '' },
+    visibility: { type: String, enum: ['public', 'college', 'friends'], default: 'public' },
+    projectName: { type: String, default: '' },
+    companyName: { type: String, default: '' },
+    clubName: { type: String, default: '' },
+    eventName: { type: String, default: '' },
+    certificateName: { type: String, default: '' },
     category: { type: String, default: 'general' },
     type: { type: String, default: 'student_post' },
     viewCount: { type: Number, default: 0 }
@@ -763,7 +810,12 @@ module.exports = {
     targetId: { type: String },
     targetName: { type: String },
     timestamp: { type: Date, default: Date.now }
-  }, { timestamps: true }), 'group_activity')
+  }, { timestamps: true }), 'group_activity'),
+
+  Follow: mongoose.model('Follow', new mongoose.Schema({
+    followerId: { type: String, required: true, index: true },
+    followingId: { type: String, required: true, index: true },
+  }, { timestamps: true }), 'follows')
 };
 
 // New models schemas

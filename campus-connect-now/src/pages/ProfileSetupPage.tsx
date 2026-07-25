@@ -8,6 +8,7 @@ import { Camera, Check, Upload, ChevronRight, Sparkles } from 'lucide-react';
 import StudentOnboardingStep from '@/components/onboarding/StudentOnboardingStep';
 import AlumniOnboardingStep from '@/components/onboarding/AlumniOnboardingStep';
 import { toast } from 'sonner';
+import { uploadMediaFile } from '@/services/uploadService';
 
 const STUDENT_STEPS = ['Photo', 'Interests', 'Academic Info'];
 const ALUMNI_STEPS = ['Photo', 'Interests', 'Professional Info'];
@@ -83,16 +84,29 @@ export default function ProfileSetupPage() {
     updateProfile({ interests });
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const photos = profile.photos.length > 0 ? [result, ...profile.photos.slice(1)] : [result];
-      updateProfile({ photos });
-    };
-    reader.readAsDataURL(file);
+    try {
+      toast.loading('Uploading profile picture...', { id: 'setup-photo' });
+      const res = await uploadMediaFile(file, '/api/profile/avatar');
+      if (res.success && res.url) {
+        const photos = profile.photos.length > 0 ? [res.url, ...profile.photos.slice(1)] : [res.url];
+        updateProfile({ photos, profileImageUrl: res.url });
+        toast.success('Photo uploaded successfully!', { id: 'setup-photo' });
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const photos = profile.photos.length > 0 ? [result, ...profile.photos.slice(1)] : [result];
+          updateProfile({ photos });
+          toast.success('Photo selected!', { id: 'setup-photo' });
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      toast.error('Failed to upload photo.', { id: 'setup-photo' });
+    }
   };
 
   // Validation logic based on role

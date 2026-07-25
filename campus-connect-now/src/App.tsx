@@ -316,13 +316,17 @@ const App = () => {
               onboardingCompleted
             });
 
+            const resolvedDbName = dbUser.fullName || dbUser.name || state.name || state.fullName || '';
             useAuthStore.setState({
               isNewUser: false,
               isProfileComplete: onboardingCompleted,
               role: dbRole,
               email: dbUser.email,
-              uid: dbUser.id,
-              _id: dbUser._id || dbUser.id
+              uid: dbUser.id || dbUser.userId,
+              _id: dbUser._id || dbUser.id,
+              name: resolvedDbName,
+              fullName: resolvedDbName,
+              user: dbUser
             });
 
             if (dbRole !== 'admin') {

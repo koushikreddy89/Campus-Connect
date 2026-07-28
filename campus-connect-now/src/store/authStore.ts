@@ -594,7 +594,19 @@ export const useAuthStore = create<AuthState>()(
       setCollege: (c) => set({ college: c }),
       setRole: (role: UserRole) => set({ role }),
     }),
-    { name: 'campus-connect-auth' }
+    {
+      name: 'campus-connect-auth',
+      partialize: (state: any) => ({
+        token: state.token,
+        email: state.email,
+        uid: state.uid,
+        _id: state._id,
+        role: state.role,
+        college: state.college,
+        isAuthenticated: state.isAuthenticated,
+        isProfileComplete: state.isProfileComplete,
+      })
+    }
   )
 );
 

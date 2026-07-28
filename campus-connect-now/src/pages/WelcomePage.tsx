@@ -7,6 +7,12 @@ import { isValidAcademicEmail } from '@/utils/validation';
 import { useNavigate } from 'react-router-dom';
 import { OTPForm } from '@/components/OTPInput';
 import { Logo } from '@/components/Logo';
+import { SplashReveal } from '@/components/SplashReveal';
+import { BackgroundScene } from '@/components/startup/BackgroundScene';
+import { ParticleEngine } from '@/components/startup/ParticleEngine';
+import { SharedLogo } from '@/components/startup/SharedLogo';
+import { LandingTransition, LandingItem } from '@/components/startup/LandingTransition';
+import { HeroSection } from '@/components/startup/HeroSection';
 
 type Step = 'roleSelect' | 'auth' | 'otp' | 'mfa' | 'forgotPassword';
 type AuthMode = 'login' | 'signup';
@@ -290,7 +296,7 @@ function CardWrapper({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 40, scale: 0.95 }}
+      initial={{ opacity: 0, y: 24, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ 
         type: "spring",
@@ -376,7 +382,300 @@ const anim = {
   transition: { duration: 0.3 }
 };
 
+export type StartupPhaseType = 'boot' | 'preload' | 'splash' | 'transition' | 'landing';
+
+export const StartupPhase = {
+  BOOT: 'boot',
+  PRELOAD: 'preload',
+  SPLASH: 'splash',
+  TRANSITION: 'transition',
+  LANDING: 'landing'
+} as const;
+
+export function useStartupController(initialPhase: StartupPhaseType = StartupPhase.BOOT) {
+  const [phase, setPhase] = useState<StartupPhaseType>(initialPhase);
+  return { phase, setPhase };
+}
+
 export default function WelcomePage() {
+  const { phase, setPhase } = useStartupController(
+    typeof window !== 'undefined' && sessionStorage.getItem('cc_splash_played')
+      ? StartupPhase.LANDING
+      : StartupPhase.BOOT
+  );
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const timersRef = useRef<NodeJS.Timeout[]>([]);
+
+  useEffect(() => {
+    if (phase === StartupPhase.LANDING) return;
+
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mediaQuery.matches) {
+      setPhase(StartupPhase.LANDING);
+      sessionStorage.setItem('cc_splash_played', 'true');
+      return;
+    }
+
+    // Preload critical assets with an absolute max timeout of 400ms (from 300ms to 700ms)
+    const preloadPromise = new Promise<void>((resolve) => {
+      const img = new Image();
+      img.src = '/logo.svg';
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+    });
+
+    const timeoutPromise = new Promise<void>((resolve) => 
+      setTimeout(resolve, 400)
+    );
+
+    // Emergency Failsafe: Hard-enforced 5-second destroyer that cannot be cancelled
+    // Emergency Failsafe: Hard-enforced 6-second destroyer that cannot be cancelled
+    // Emergency Failsafe: Hard-enforced 7-second destroyer that cannot be cancelled
+    const failsafeId = setTimeout(() => {
+      setPhase(StartupPhase.LANDING);
+      sessionStorage.setItem('cc_splash_played', 'true');
+      console.warn("⚠️ Splash screen emergency failsafe activated!");
+    }, 7000);
+
+    const addTimer = (fn: () => void, delay: number) => {
+      timersRef.current.push(setTimeout(fn, delay));
+    };
+
+    // Phase 1: 0.0s - 0.8s: BOOT (Tiny center logo)
+    // Phase 2: 0.8s: Transition to PRELOAD (Logo grows to giant hero size)
+    addTimer(() => {
+      setPhase(StartupPhase.PRELOAD);
+      Promise.race([preloadPromise, timeoutPromise]).then(() => {
+        console.log("✅ Static preloading completed or timed out.");
+      });
+    }, 800);
+
+    // Phase 3 & 4: 2.0s: Transition to SPLASH (Hero showcase pauses, floats, page reveals behind)
+    addTimer(() => {
+      setPhase(StartupPhase.SPLASH);
+    }, 2000);
+
+    // Phase 5: 3.8s: Transition to TRANSITION (Logo collapses along Bezier path to navbar size)
+    addTimer(() => {
+      setPhase(StartupPhase.TRANSITION);
+    }, 3800);
+
+    // Phase 6: 4.8s: Transition to LANDING (Landing page active, cards and headers stagger in)
+    addTimer(() => {
+      setPhase(StartupPhase.LANDING);
+      sessionStorage.setItem('cc_splash_played', 'true');
+      clearTimeout(failsafeId);
+
+      // Trigger background health check only AFTER landing page is visible
+      import('@/services/connectionService').then(({ checkBackendHealth }) => {
+        checkBackendHealth();
+      });
+    }, 4800);
+
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase === StartupPhase.BOOT || phase === StartupPhase.PRELOAD) {
+      setLoadingProgress(0);
+    } else if (phase === StartupPhase.SPLASH) {
+      const start = Date.now();
+      const duration = 1800; // from 700ms to 2500ms
+      const interval = setInterval(() => {
+        const elapsed = Date.now() - start;
+        const pct = Math.min(100, (elapsed / duration) * 100);
+        setLoadingProgress(pct);
+        if (elapsed >= duration) clearInterval(interval);
+      }, 16);
+      return () => clearInterval(interval);
+    } else {
+      setLoadingProgress(100);
+    }
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase === StartupPhase.LANDING) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animId: number;
+
+    const resize = () => {
+      canvas.width = window.innerWidth * window.devicePixelRatio;
+      canvas.height = window.innerHeight * window.devicePixelRatio;
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    // Distant background stars
+    const stars = Array.from({ length: 50 }, () => ({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      size: Math.random() * 1.1 + 0.3,
+      vx: (Math.random() - 0.5) * 0.08,
+      vy: -Math.random() * 0.15 - 0.03,
+      alpha: Math.random() * 0.35 + 0.1,
+    }));
+
+    // Microscopic glowing flow field particles
+    const flowParticles = Array.from({ length: 120 }, () => ({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      vx: 0,
+      vy: 0,
+      size: Math.random() * 1.3 + 0.6,
+      alpha: Math.random() * 0.5 + 0.2,
+    }));
+
+    // 3D Orbital ring particles
+    const ringParticles = Array.from({ length: 45 }, (_, i) => ({
+      angle: (i / 45) * Math.PI * 2,
+      radius: 115,
+      size: Math.random() * 1.0 + 1.0,
+      ringIndex: i % 3, // 0: flat, 1: tilted, 2: vertical
+    }));
+
+    const render = () => {
+      // Clear with high alpha decay to create soft fluid trails
+      ctx.fillStyle = 'rgba(5, 5, 5, 0.14)';
+      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+
+      // 1. Draw space background stars
+      ctx.fillStyle = '#FFFFFF';
+      stars.forEach((s) => {
+        s.y += s.vy;
+        s.x += s.vx;
+        if (s.y < 0) {
+          s.y = window.innerHeight;
+          s.x = Math.random() * window.innerWidth;
+        }
+        ctx.globalAlpha = s.alpha;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // 2. Draw procedural flow field particles (Spiral inward)
+      if (phase === StartupPhase.PRELOAD || phase === StartupPhase.SPLASH) {
+        flowParticles.forEach((p) => {
+          const dx = centerX - p.x;
+          const dy = centerY - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist > 15) {
+            const pullForce = 0.04 * (1 - dist / Math.max(window.innerWidth, window.innerHeight));
+            const tangentX = -dy / dist;
+            const tangentY = dx / dist;
+            const speedMultiplier = dist < 200 ? 0.22 : 0.12;
+
+            p.vx += (dx / dist) * pullForce + tangentX * speedMultiplier;
+            p.vy += (dy / dist) * pullForce + tangentY * speedMultiplier;
+          } else {
+            p.x = Math.random() > 0.5 ? 0 : window.innerWidth;
+            p.y = Math.random() * window.innerHeight;
+            p.vx = 0;
+            p.vy = 0;
+          }
+
+          p.vx *= 0.95;
+          p.vy *= 0.95;
+          p.x += p.vx;
+          p.y += p.vy;
+
+          // Proximity color transition: Purple -> Blue -> Cyan -> White
+          let color = '#7C5CFF';
+          if (dist < 80) color = '#FFFFFF';
+          else if (dist < 160) color = '#00E5FF';
+          else if (dist < 320) color = '#3B82F6';
+
+          ctx.fillStyle = color;
+          ctx.globalAlpha = p.alpha;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // 3. Draw 3D projected orbital rings
+      if (phase === StartupPhase.SPLASH) {
+        ringParticles.forEach((p) => {
+          const speed = p.ringIndex === 0 ? 0.005 : p.ringIndex === 1 ? -0.008 : 0.012;
+          p.angle += speed;
+
+          if (Math.random() < 0.002) {
+            p.ringIndex = (p.ringIndex + 1) % 3;
+          }
+
+          let rx = Math.cos(p.angle) * p.radius;
+          let ry = Math.sin(p.angle) * p.radius;
+          let px = 0;
+          let py = 0;
+          let isFront = true;
+
+          if (p.ringIndex === 0) {
+            const tiltY = ry * 0.25;
+            const rotX = rx * Math.cos(Math.PI / 18) - tiltY * Math.sin(Math.PI / 18);
+            const rotY = rx * Math.sin(Math.PI / 18) + tiltY * Math.cos(Math.PI / 18);
+            px = centerX + rotX;
+            py = centerY + rotY;
+            isFront = Math.sin(p.angle) > 0;
+          } else if (p.ringIndex === 1) {
+            const tiltY = ry * 0.38;
+            const rotX = rx * Math.cos(-Math.PI / 6) - tiltY * Math.sin(-Math.PI / 6);
+            const rotY = rx * Math.sin(-Math.PI / 6) + tiltY * Math.cos(-Math.PI / 6);
+            px = centerX + rotX;
+            py = centerY + rotY;
+            isFront = Math.cos(p.angle) > 0;
+          } else {
+            const tiltY = ry * 0.16;
+            const rotX = rx * Math.cos(Math.PI / 4) - tiltY * Math.sin(Math.PI / 4);
+            const rotY = rx * Math.sin(Math.PI / 4) + tiltY * Math.cos(Math.PI / 4);
+            px = centerX + rotX;
+            py = centerY + rotY;
+            isFront = Math.sin(p.angle) < 0;
+          }
+
+          ctx.globalAlpha = isFront ? 0.8 : 0.2;
+          const dotColor = p.ringIndex === 0 ? '#7C5CFF' : p.ringIndex === 1 ? '#3B82F6' : '#00E5FF';
+          ctx.fillStyle = dotColor;
+          ctx.beginPath();
+          ctx.arc(px, py, p.size * (isFront ? 1.3 : 0.8), 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // 4. Subtle Film Noise Grain (AAA Film Quality)
+      ctx.globalAlpha = 0.025;
+      ctx.fillStyle = '#FFFFFF';
+      for (let i = 0; i < 400; i++) {
+        const gx = Math.random() * window.innerWidth;
+        const gy = Math.random() * window.innerHeight;
+        ctx.fillRect(gx, gy, 1.2, 1.2);
+      }
+
+      ctx.globalAlpha = 1.0;
+      animId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animId);
+    };
+  }, [phase]);
+
   const [step, setStep] = useState<Step>('roleSelect');
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   
@@ -438,16 +737,15 @@ export default function WelcomePage() {
   // Redirect after successful authentication
   useEffect(() => {
     if (isAuthenticated) {
-      const currentRole = useAuthStore.getState().role;
-      if (currentRole === 'admin') {
+      if (role === 'admin') {
         navigate('/admin');
-      } else if (currentRole === 'alumni') {
+      } else if (role === 'alumni') {
         navigate('/alumni/dashboard');
       } else {
         navigate('/student/dashboard');
       }
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, role, navigate]);
 
   // Handle resend countdown
   useEffect(() => {
@@ -709,114 +1007,57 @@ export default function WelcomePage() {
   const passwordStrengthScore = getPasswordStrengthScore(password);
   const passwordRequirements = checkPasswordRequirements(password);
 
-  return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#09090B] text-white relative overflow-hidden px-4 font-sans select-none animate-fade-in">
-      
-      {/* Premium ambient animated background */}
-      <AmbientBackground />
+  const isCenteredPhase = phase === StartupPhase.BOOT || phase === StartupPhase.PRELOAD || phase === StartupPhase.SPLASH;
 
-      <div className="relative z-10 w-full max-w-5xl flex flex-col items-center justify-center">
+  return (
+    <div className="min-h-[100dvh] w-full flex flex-col items-center justify-center text-white relative overflow-hidden px-4 md:px-8 font-sans select-none bg-[#09090B]">
+      
+      {/* Background radial gradients, fog, noise */}
+      <BackgroundScene />
+
+      {/* Capped GPU Particles */}
+      <ParticleEngine phase={phase} />
+
+      {/* Main Content Container (Max width 1440px, centered) */}
+      <div className="relative z-10 w-full max-w-[1440px] min-h-[100dvh] flex flex-col items-center justify-center py-6 md:py-12">
         
-        {/* Navigation Logo Header */}
-        <motion.div 
-          variants={{
-            hidden: { opacity: 0, scale: 0.85 },
-            visible: { 
-              opacity: 1, 
-              scale: 1,
-              transition: {
-                type: "spring",
-                damping: 15,
-                stiffness: 100
-              }
-            }
-          }}
-          initial="hidden"
-          animate="visible"
-          className="flex flex-col items-center justify-center mb-8"
-        >
-          <motion.div 
-            animate={{ y: [-3, 3] }}
-            transition={{
-              repeat: Infinity,
-              repeatType: "reverse",
-              duration: 5,
-              ease: "easeInOut"
-            }}
-            className="h-16 w-16 rounded-2xl bg-white/[0.02] border border-white/10 flex items-center justify-center shadow-lg backdrop-blur-md mb-4"
-          >
-            <Logo variant="icon" className="h-9 w-9 text-violet-400" />
-          </motion.div>
-          <span className="text-xs uppercase tracking-[0.25em] text-zinc-500 font-semibold flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-violet-400" /> Campus Connect Platform
-          </span>
-        </motion.div>
+        {/* If splash phases, render centered logo overlay */}
+        {isCenteredPhase && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+            <SharedLogo phase={phase} />
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
-          {/* STEP 1: ROLE SELECT (LANDING) */}
-          {step === 'roleSelect' && (
-            <motion.div key="roleSelect" {...anim} className="w-full flex flex-col items-center">
+          {(phase === StartupPhase.TRANSITION || phase === StartupPhase.LANDING) && (
+            <div className="w-full flex flex-col items-center justify-center">
               
-              <div className="text-center max-w-2xl mb-12">
-                <WordStaggerHeading text="Welcome to Campus Connect" />
-                <motion.p 
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5, duration: 0.5, ease: "easeOut" }}
-                  className="text-zinc-400 text-lg md:text-xl font-medium"
-                >
-                  Connect. Learn. Grow. Secure Enterprise Network.
-                </motion.p>
-              </div>
+              {/* STEP 1: ROLE SELECT (LANDING) */}
+              {step === 'roleSelect' && phase === StartupPhase.LANDING && (
+                <HeroSection onSelectRole={handleRoleSelection}>
+                  <SharedLogo phase={phase} />
+                </HeroSection>
+              )}
 
-              {/* Cards Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl px-4">
-                
-                {/* Student Card */}
-                <CardWrapper role="student" delay={0.1} onClick={() => handleRoleSelection('student')}>
-                  <div>
-                    <AnimatedIcon role="student">
-                      <GraduationCap className="h-6 w-6 text-violet-400" />
-                    </AnimatedIcon>
-                    <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-violet-300 transition-colors">Student</h3>
-                    <p className="text-sm text-zinc-400 leading-relaxed">
-                      Discover peers, share projects, participate in hackathons, and build your campus identity.
-                    </p>
-                  </div>
-                  <AnimatedCTA text="Enterprise Portal" role="student" />
-                </CardWrapper>
-
-                {/* Alumni Card */}
-                <CardWrapper role="alumni" delay={0.22} onClick={() => handleRoleSelection('alumni')}>
-                  <div>
-                    <AnimatedIcon role="alumni">
-                      <Trophy className="h-6 w-6 text-amber-400" />
-                    </AnimatedIcon>
-                    <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-amber-300 transition-colors">Alumni</h3>
-                    <p className="text-sm text-zinc-400 leading-relaxed">
-                      Verify your graduation records to mentor, share job openings, and refer fellow students.
-                    </p>
-                  </div>
-                  <AnimatedCTA text="Verify Alumni Record" role="alumni" />
-                </CardWrapper>
-
-                {/* Admin Card */}
-                <CardWrapper role="admin" delay={0.34} onClick={() => handleRoleSelection('admin')}>
-                  <div>
-                    <AnimatedIcon role="admin">
-                      <Shield className="h-6 w-6 text-sky-400" />
-                    </AnimatedIcon>
-                    <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-sky-300 transition-colors">Admin Portal</h3>
-                    <p className="text-sm text-zinc-400 leading-relaxed">
-                      Publish official communications, events, announcements, and placement opportunities.
-                    </p>
-                  </div>
-                  <AnimatedCTA text="Authorized Sign-In" role="admin" />
-                </CardWrapper>
-
-              </div>
-            </motion.div>
-          )}
+              {/* AUTH STEPS (Not in HeroSection layout, but they use the standard card styling) */}
+              {step !== 'roleSelect' && (
+                <LandingTransition delay={0}>
+                  
+                  {/* Header section (Visible during Transition and Landing) */}
+                  <LandingItem className="flex flex-col items-center justify-center mb-8">
+                    <SharedLogo phase={phase} />
+                    
+                    {phase === StartupPhase.LANDING && (
+                      <motion.span 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.15 }}
+                        className="text-xs uppercase tracking-[0.25em] text-zinc-500 font-semibold flex items-center gap-1.5 mt-4"
+                      >
+                        <Sparkles className="h-3 w-3 text-violet-400" /> Campus Connect Platform
+                      </motion.span>
+                    )}
+                  </LandingItem>
 
           {/* STEP 2: AUTH (LOGIN & SIGNUP) */}
           {step === 'auth' && (
@@ -1254,6 +1495,10 @@ export default function WelcomePage() {
 
               </div>
             </motion.div>
+          )}
+            </LandingTransition>
+          )}
+            </div>
           )}
         </AnimatePresence>
 

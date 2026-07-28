@@ -1264,3 +1264,131 @@ export const notificationApi = {
     }
   }
 };
+
+export interface UserPreferencesData {
+  userId?: string;
+  theme: 'dark' | 'light' | 'system';
+  language: 'English' | 'Hindi' | 'Telugu' | 'Tamil' | 'Kannada' | 'Malayalam';
+  timezone: string;
+  dateFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
+  timeFormat: '12h' | '24h';
+  notificationSound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent';
+  notificationVolume: number;
+  dataSaver: boolean;
+  autoPlayVideos: boolean;
+  imageQuality: 'Auto' | 'HD' | 'Low Quality';
+  mediaCompression: boolean;
+  videoHd: boolean;
+  wifiOnlyDownloads: boolean;
+}
+
+export const preferencesApi = {
+  async getPreferences() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to fetch preferences' };
+    }
+  },
+
+  async updatePreferences(data: Partial<UserPreferencesData>) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify(data)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update preferences' };
+    }
+  },
+
+  async updateTheme(theme: 'dark' | 'light' | 'system') {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences/theme`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ theme })
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update theme' };
+    }
+  },
+
+  async updateLanguage(language: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences/language`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ language })
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update language' };
+    }
+  },
+
+  async updateTimezone(timezone: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences/timezone`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ timezone })
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update timezone' };
+    }
+  },
+
+  async updateDateFormat(dateFormat?: string, timeFormat?: string) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences/date-format`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ dateFormat, timeFormat })
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update date format' };
+    }
+  },
+
+  async updateNotification(sound?: string, volume?: number) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences/notification`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ notificationSound: sound, notificationVolume: volume })
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update notifications settings' };
+    }
+  },
+
+  async updateDataSaver(data: {
+    dataSaver?: boolean;
+    autoPlayVideos?: boolean;
+    imageQuality?: 'Auto' | 'HD' | 'Low Quality';
+    mediaCompression?: boolean;
+    videoHd?: boolean;
+    wifiOnlyDownloads?: boolean;
+  }) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/preferences/data-saver`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify(data)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update data saver settings' };
+    }
+  }
+};

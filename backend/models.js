@@ -286,6 +286,9 @@ const AdminPostSchema = new mongoose.Schema({
   views: { type: Number, default: 0 },
   clicks: { type: Number, default: 0 },
   applications: { type: Number, default: 0 },
+  uniqueViewers: { type: Number, default: 0 },
+  lastViewed: { type: Date },
+  lastClicked: { type: Date },
   deletedAt: { type: Date },
 
   // Announcements
@@ -443,6 +446,9 @@ const PlacementSchema = new mongoose.Schema({
   views: { type: Number, default: 0 },
   clicks: { type: Number, default: 0 },
   applications: { type: Number, default: 0 },
+  uniqueViewers: { type: Number, default: 0 },
+  lastViewed: { type: Date },
+  lastClicked: { type: Date },
   savedCount: { type: Number, default: 0 },
   deletedAt: { type: Date },
 
@@ -462,7 +468,7 @@ const PlacementSchema = new mongoose.Schema({
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // Pre-save hook to synchronize new and old fields
-PlacementSchema.pre('save', function (next) {
+PlacementSchema.pre('validate', function (next) {
   // Sync title / role
   if (this.role) this.jobRole = this.role;
   else if (this.jobRole) this.role = this.jobRole;
@@ -529,10 +535,35 @@ PlacementSchema.pre('save', function (next) {
     }
   }
 
+  // Normalize workMode to match enum
+  if (this.workMode) {
+    if (this.workMode === 'On-Site' || this.workMode === 'Onsite') {
+      this.workMode = 'Onsite';
+    }
+  }
+
   next();
 });
 
+const AnnouncementViewSchema = new mongoose.Schema({
+  announcementId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  viewedAt: { type: Date, default: Date.now }
+}, { timestamps: true });
+
+AnnouncementViewSchema.index({ announcementId: 1, userId: 1 }, { unique: true });
+
+const AnnouncementClickSchema = new mongoose.Schema({
+  announcementId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  clickedAt: { type: Date, default: Date.now }
+}, { timestamps: true });
+
+AnnouncementClickSchema.index({ announcementId: 1, userId: 1, clickedAt: -1 });
+
 module.exports = {
+  AnnouncementView: mongoose.model('AnnouncementView', AnnouncementViewSchema, 'announcement_views'),
+  AnnouncementClick: mongoose.model('AnnouncementClick', AnnouncementClickSchema, 'announcement_clicks'),
   Placement: mongoose.model('Placement', PlacementSchema, 'placements'),
   AdminPost: mongoose.model('AdminPost', AdminPostSchema, 'admin_posts'),
   Alumni: mongoose.model('Alumni', AlumniSchema, 'alumni_profiles'),
@@ -601,8 +632,12 @@ module.exports = {
     socketId: { type: String, default: null },
     onboardingCompleted: { type: Boolean, default: false },
     onboardingStep: { type: Number, default: 1 },
-    fullName: { type: String, default: '' }
-  }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }).pre('save', function(next) {
+    fullName: { type: String, default: '' },
+    collegeEmailVerified: { type: Boolean, default: false },
+    personalEmailVerified: { type: Boolean, default: false },
+    alumniVerified: { type: Boolean, default: false },
+    graduationYear: { type: Number }
+  }, { timestamps: true, toJSON: { virtuals: true, getters: true }, toObject: { virtuals: true, getters: true } }).pre('save', function(next) {
     if (this.name && !this.fullName) {
       this.fullName = this.name;
     } else if (this.fullName && !this.name) {
@@ -950,6 +985,25 @@ module.exports.LoginAttempt = mongoose.model('LoginAttempt', LoginAttemptSchema,
 module.exports.SecurityLog = mongoose.model('SecurityLog', SecurityLogSchema, 'security_logs');
 module.exports.AlumniVerification = mongoose.model('AlumniVerification', AlumniVerificationSchema, 'alumni_verifications');
 module.exports.Bug = mongoose.model('Bug', BugSchema, 'bugs');
+
+const UserPreferencesSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true, index: true },
+  theme: { type: String, enum: ['dark', 'light', 'system'], default: 'system' },
+  language: { type: String, enum: ['English', 'Hindi', 'Telugu', 'Tamil', 'Kannada', 'Malayalam'], default: 'English' },
+  timezone: { type: String, default: 'Asia/Kolkata' },
+  dateFormat: { type: String, enum: ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'], default: 'DD/MM/YYYY' },
+  timeFormat: { type: String, enum: ['12h', '24h'], default: '12h' },
+  notificationSound: { type: String, enum: ['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent'], default: 'Default' },
+  notificationVolume: { type: Number, min: 0, max: 100, default: 80 },
+  dataSaver: { type: Boolean, default: false },
+  autoPlayVideos: { type: Boolean, default: true },
+  imageQuality: { type: String, enum: ['Auto', 'HD', 'Low Quality'], default: 'Auto' },
+  mediaCompression: { type: Boolean, default: true },
+  videoHd: { type: Boolean, default: false },
+  wifiOnlyDownloads: { type: Boolean, default: false }
+}, { timestamps: true });
+
+module.exports.UserPreferences = mongoose.model('UserPreferences', UserPreferencesSchema, 'user_preferences');
 
 
 

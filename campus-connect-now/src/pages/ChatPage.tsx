@@ -5,7 +5,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useMatchStore } from '@/store/matchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useGroupChatStore } from '@/store/groupChatStore';
-import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown, Flame, Infinity, Lock, Heart, Pin, Bookmark, Share2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Mic, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown, Flame, Infinity, Lock, Heart, Pin, Bookmark, Share2, Sparkles } from 'lucide-react';
 import { chatApi } from '@/services/api';
 import { getApiUrl } from '@/services/connectionService';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { ResonanceThread } from '@/components/chat/ResonanceThread';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { socketService } from '@/services/socketService';
+import { SPRING_CONFIG } from '@/constants/animation';
 
 const EMPTY_MESSAGES: any[] = [];
 const REACTION_OPTIONS: ReactionEmoji[] = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -545,6 +546,9 @@ export default function ChatPage({
     setUnreadCountSinceScroll(0);
   }, [matchId]);
 
+  const holdTimer = useRef<any>(null);
+  const [textCountdown, setTextCountdown] = useState(10);
+
   if (!match) {
     return (
       <div className="min-h-screen bg-[#09090B] flex items-center justify-center">
@@ -734,8 +738,6 @@ export default function ChatPage({
     setShowDeleteConfirmMsg(null);
   };
 
-  const holdTimer = useRef<any>(null);
-
   const handleMouseDown = (e: React.MouseEvent, msg: any, isOwn: boolean) => {
     if (e.button !== 0) return;
     holdTimer.current = setTimeout(() => {
@@ -830,8 +832,6 @@ export default function ChatPage({
       setMediaLoadError("This media could not be loaded.");
     };
   };
-
-  const [textCountdown, setTextCountdown] = useState(10);
 
   const handleOpenViewOnceText = async (msg: any, senderName: string) => {
     try {
@@ -1043,12 +1043,10 @@ export default function ChatPage({
               return (
                 <div key={gIdx} className="flex flex-col">
                   {showDateDivider && (
-                    <div className="flex items-center justify-center my-6 select-none">
-                      <div className="h-px bg-white/[0.03] flex-1 max-w-[100px]" />
-                      <span className="text-[10px] tracking-wider bg-zinc-900/60 border border-white/[0.06] backdrop-blur-md px-3.5 py-1.5 rounded-full font-extrabold text-zinc-400 shadow-sm mx-4">
+                    <div className="flex items-center justify-center my-6 select-none animate-fade-in">
+                      <span className="text-[10px] tracking-wider bg-zinc-950/40 border border-white/[0.04] backdrop-blur-md px-3.5 py-1.5 rounded-full font-bold text-zinc-500 shadow-sm">
                         {formatDividerDate(group.messages[0].timestamp)}
                       </span>
-                      <div className="h-px bg-white/[0.03] flex-1 max-w-[100px]" />
                     </div>
                   )}
 
@@ -1385,9 +1383,9 @@ export default function ChatPage({
               setShowNewMessagesPill(false);
               setUnreadCountSinceScroll(0);
             }}
-            className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2.5 rounded-full bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-bold shadow-xl shadow-violet-950/40 border border-violet-500/20"
+            className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-950/80 backdrop-blur-md text-zinc-300 text-[11px] font-bold shadow-2xl border border-white/[0.08] hover:text-white transition-all active:scale-95"
           >
-            <ArrowDown className="w-3.5 h-3.5 animate-bounce" />
+            <span className="animate-bounce font-extrabold">↓</span>
             <span>{unreadCountSinceScroll} New Message{unreadCountSinceScroll > 1 ? 's' : ''}</span>
           </motion.button>
         )}
@@ -1430,7 +1428,7 @@ export default function ChatPage({
           </div>
         )}
 
-        <div className="glass-strong rounded-full border border-white/[0.08] px-4 py-2 shadow-2xl flex gap-2 items-center bg-[#111118]/90 backdrop-blur-md">
+        <div className="h-[60px] rounded-[999px] border border-white/[0.08] px-4.5 shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex gap-2.5 items-center bg-[#09090D]/80 backdrop-blur-[24px]">
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -1441,9 +1439,18 @@ export default function ChatPage({
           <button 
             onClick={() => fileInputRef.current?.click()}
             disabled={uploadProgress !== null}
-            className="p-2 text-zinc-450 hover:text-white rounded-full hover:bg-white/[0.06] disabled:opacity-40 transition-all shrink-0"
+            className="p-2 text-zinc-450 hover:text-white rounded-full hover:bg-white/[0.06] disabled:opacity-40 transition-all shrink-0 hover:scale-110"
+            title="Attach Files"
           >
-            <Paperclip className="w-4 h-4" />
+            <Paperclip className="w-4.5 h-4.5" />
+          </button>
+
+          <button 
+            onClick={() => setText(prev => prev + '😊')}
+            className="p-2 text-zinc-450 hover:text-white rounded-full hover:bg-white/[0.06] transition-all shrink-0 hidden sm:inline-flex hover:scale-110"
+            title="Add Emoji"
+          >
+            <Smile className="w-4.5 h-4.5" />
           </button>
           
           <input
@@ -1459,13 +1466,13 @@ export default function ChatPage({
             }}
             onPaste={handlePaste}
             placeholder={`Message ${matchName}...`}
-            className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-550 outline-none caret-violet-500"
+            className="flex-1 bg-transparent px-3.5 text-xs text-white placeholder:text-zinc-550/80 hover:placeholder:text-zinc-550 outline-none caret-violet-500 w-full transition-all duration-300"
           />
 
           {/* View Once Toggle Button */}
           <button 
             onClick={() => setRetentionMode(prev => prev === 'VIEW_ONCE' ? 'NEVER_DELETE' : 'VIEW_ONCE')}
-            className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border text-[10px] select-none shrink-0 ${
+            className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border text-[10px] select-none shrink-0 ${
               retentionMode === 'VIEW_ONCE' 
                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 font-bold shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-pulse' 
                 : 'bg-zinc-950/40 border-white/[0.04] text-zinc-400 hover:text-zinc-200'
@@ -1473,19 +1480,40 @@ export default function ChatPage({
             title="Toggle View Once Mode"
           >
             <Flame className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">View Once</span>
+            <span className="hidden md:inline">View Once</span>
           </button>
 
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={handleSend}
-            disabled={!text.trim() || isSending || uploadProgress !== null}
-            className={`h-9 w-9 rounded-full flex items-center justify-center text-white shrink-0 transition-all shadow-lg ${
-              text.trim() ? 'bg-gradient-to-br from-[#8B5CF6] to-[#6D4AFF] hover:scale-105 active:scale-95 shadow-[0_4px_16px_rgba(109,74,255,0.4)]' : 'bg-zinc-800/80 opacity-45 cursor-default'
-            }`}
-          >
-            <Send className="h-4 w-4" />
-          </motion.button>
+          {/* Morphing Mic to Send Action button */}
+          <div className="shrink-0 flex items-center justify-center w-10 h-10">
+            <AnimatePresence mode="wait">
+              {text.trim() ? (
+                <motion.button
+                  key="send"
+                  initial={{ scale: 0, rotate: -30, opacity: 0 }}
+                  animate={{ scale: 1.05, rotate: 0, opacity: 1 }}
+                  exit={{ scale: 0, rotate: 30, opacity: 0 }}
+                  transition={{ type: 'spring', ...SPRING_CONFIG }}
+                  onClick={handleSend}
+                  disabled={isSending || uploadProgress !== null}
+                  className="h-10 w-10 rounded-full bg-gradient-to-br from-[#8B5CF6] via-[#6D5DF6] to-[#5A46E8] flex items-center justify-center text-white shadow-[0_4px_16px_rgba(109,74,255,0.4)]"
+                >
+                  <Send className="h-4 w-4" />
+                </motion.button>
+              ) : (
+                <motion.button
+                  key="mic"
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: 'spring', ...SPRING_CONFIG }}
+                  onClick={() => toast.info('Voice messages arriving soon! 🎙️')}
+                  className="h-10 w-10 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 flex items-center justify-center text-zinc-455 hover:text-white"
+                >
+                  <Mic className="h-4 w-4" />
+                </motion.button>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 
@@ -2045,12 +2073,12 @@ export default function ChatPage({
           onClick={() => setShowMenu(false)}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: 10 }}
+            initial={{ opacity: 0, scale: 0.92, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 10 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
+            exit={{ opacity: 0, scale: 0.92, y: 8 }}
+            transition={{ type: 'spring', ...SPRING_CONFIG }}
             style={{ top: menuCoords.y, left: menuCoords.x }}
-            className="absolute bg-zinc-950/85 backdrop-blur-xl border border-white/[0.08] shadow-2xl rounded-3xl w-[240px] overflow-hidden z-[100000] p-1.5 select-none"
+            className="absolute bg-zinc-950/80 backdrop-blur-[20px] border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.6)] rounded-[24px] w-[240px] overflow-hidden z-[100000] p-2 select-none"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Top Section - Reaction Bar */}

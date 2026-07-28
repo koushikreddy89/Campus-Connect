@@ -17,6 +17,34 @@ import { startHealthCheckInterval, checkBackendHealth } from "@/services/connect
 import { ConnectionStatusIndicator, ConnectionErrorAlert } from "@/components/ConnectionStatus";
 import { getApiConfig } from "@/config/apiConfig";
 
+if (typeof window !== 'undefined') {
+  const originalSetItem = window.localStorage.setItem;
+  window.localStorage.setItem = function (key, value) {
+    try {
+      originalSetItem.apply(this, arguments as any);
+    } catch (e: any) {
+      if (e.name === 'QuotaExceededError' || e.code === 22 || e.number === 0x8007000E) {
+        console.warn(`⚠️ [localStorage] Storage quota exceeded for key "${key}". Skipping persistence to prevent crash.`);
+      } else {
+        throw e;
+      }
+    }
+  };
+
+  try {
+    const keys = ['campus-connect-profile', 'campus-connect-auth'];
+    keys.forEach(k => {
+      const val = localStorage.getItem(k);
+      if (val && val.length > 500000) {
+        console.log(`🧹 [localStorage] Evicting oversized legacy entry for "${k}" (${val.length} chars)`);
+        localStorage.removeItem(k);
+      }
+    });
+  } catch (e) {
+    console.error('Failed to run localStorage cleanup:', e);
+  }
+}
+
 // Lazy load all pages with proper error handling
 const WelcomePage = lazy(() => import("./pages/WelcomePage.tsx").catch(err => {
   console.error('[Lazy Load Error] WelcomePage:', err);
@@ -109,6 +137,10 @@ const SecuritySettings = lazy(() => import("./pages/SecuritySettings.tsx").catch
 }));
 const HelpSupportPage = lazy(() => import("./pages/HelpSupportPage.tsx").catch(err => {
   console.error('[Lazy Load Error] HelpSupportPage:', err);
+  throw err;
+}));
+const SettingsPage = lazy(() => import("./pages/SettingsPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] SettingsPage:', err);
   throw err;
 }));
 
@@ -234,7 +266,6 @@ const SetupRoute = ({ children }: { children: React.ReactNode }) => {
 
 const App = () => {
   const [isInitialized, setIsInitialized] = useState(false);
-  const [initError, setInitError] = useState<string | null>(null);
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const isProfileComplete = useAuthStore(s => s.isProfileComplete);
   const role = useAuthStore(s => s.role);
@@ -242,6 +273,27 @@ const App = () => {
   const currentUserId = useAuthStore(s => s._id);
   const setupSocketListeners = useNotificationStore(s => s.setupSocketListeners);
   const fetchUnreadCount = useNotificationStore(s => s.fetchUnreadCount);
+  const appearance = useProfileStore(s => s.profile.appearance) || 'dark';
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    const applyTheme = (theme: 'dark' | 'light') => {
+      root.classList.remove('light', 'dark');
+      root.classList.add(theme);
+    };
+
+    if (appearance === 'system') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleSystemThemeChange = (e: MediaQueryListEvent | MediaQueryList) => {
+        applyTheme(e.matches ? 'dark' : 'light');
+      };
+      handleSystemThemeChange(mediaQuery);
+      mediaQuery.addEventListener('change', handleSystemThemeChange);
+      return () => mediaQuery.removeEventListener('change', handleSystemThemeChange);
+    } else {
+      applyTheme(appearance);
+    }
+  }, [appearance]);
 
   useEffect(() => {
     if (currentUserId) {
@@ -263,54 +315,40 @@ const App = () => {
     const apiConfig = getApiConfig();
     console.log('🔧 API Configuration initialized:', apiConfig);
 
-    // Start periodic health checks for backend connectivity
+    // Start periodic health checks for backend connectivity (we do not block app load)
     const stopHealthChecks = startHealthCheckInterval(30000);
 
-    // Check health immediately on app load
-    checkBackendHealth().then((health) => {
-      if (health) {
-        console.log('✅ Backend health check passed:', health);
-      } else {
-        console.warn('⚠️ Backend health check failed - server may not be running');
-      }
-    });
-
-    // Set a timeout to ensure app initializes even if auth check hangs
-    const initTimeout = setTimeout(() => {
-      console.warn('⚠️ Auth initialization timeout - proceeding without session');
-      setIsInitialized(true);
-    }, 5000);
-
-    // Check persisted auth session from useAuthStore
+    // Check persisted auth session from useAuthStore in background
     const checkPersistedSession = async () => {
       const state = useAuthStore.getState();
-      console.log('🔐 [App Init] Checking persisted session:', {
+      console.log('🔐 [App Init] Hydration completed. Restoring session in background if authenticated:', {
         isAuthenticated: state.isAuthenticated,
-        uid: state.uid,
-        email: state.email,
-        role: state.role
+        uid: state.uid
       });
 
+      // Always initialize rendering instantly upon store hydration
+      setIsInitialized(true);
+
       if (state.isAuthenticated && state.uid) {
-        // Ensure jwt_token and auth_token are in localStorage (fallback synchronization)
         if (state.token) {
           localStorage.setItem('jwt_token', state.token);
           localStorage.setItem('auth_token', state.token);
         }
 
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Auth check timeout')), 2500)
+        );
+
         try {
-          const res = await userApi.getCurrentUser();
-          if (res.success && res.data) {
+          const fetchPromise = userApi.getCurrentUser();
+          const res = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+
+          if (res && res.success && res.data) {
             const dbUser = res.data;
             const dbRole = dbUser.role || 'student';
-            // Determine if onboarding is complete
-            let onboardingCompleted = true;
-            if (dbRole === 'student' || dbRole === 'alumni') {
-              // We'll query onboardingCompleted status via profile store or assume true if profile is set
-              onboardingCompleted = dbUser.onboardingCompleted !== false;
-            }
+            let onboardingCompleted = dbUser.onboardingCompleted !== false;
 
-            console.log('✅ [App Init] Database validated session successfully:', {
+            console.log('✅ [App Init] Background auth check completed:', {
               id: dbUser.id,
               role: dbRole,
               onboardingCompleted
@@ -333,16 +371,14 @@ const App = () => {
               await useProfileStore.getState().loadProfile(dbUser.id);
             }
           } else {
-            console.warn('⚠️ [App Init] Server rejected session. Performing clean logout.');
+            console.warn('⚠️ [App Init] Invalid session. Performing clean background logout.');
             await useAuthStore.getState().logout();
           }
         } catch (err) {
-          console.error('❌ [App Init] Error checking user session:', err);
-          setInitError('Unable to restore session. Please check your connection and refresh.');
+          console.warn('⚠️ [App Init] Background session restoration bypassed (backend offline or timeout):', err);
+          // Silently proceed so that the user is not blocked
         }
       }
-      clearTimeout(initTimeout);
-      setIsInitialized(true);
     };
 
     // Hydration check loop to prevent race condition before state is rehydrated
@@ -356,31 +392,16 @@ const App = () => {
     checkHydration();
 
     return () => {
-      clearTimeout(initTimeout);
       stopHealthChecks();
     };
   }, []);
 
-  // Show error screen if session cannot be restored
-  if (initError) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
-        <div className="text-destructive mb-4">
-          <AlertCircle size={48} />
-        </div>
-        <h2 className="text-xl font-bold mb-2">Authentication Error</h2>
-        <p className="text-muted-foreground text-sm max-w-xs mb-4">{initError}</p>
-        <Button onClick={() => window.location.reload()}>Retry Connection</Button>
-      </div>
-    );
-  }
-
-  // Show loading screen during initialization
+  // Show loading screen during initialization (if stores are still hydratings)
   if (!isInitialized) {
     return (
       <div className="min-h-screen bg-[#0B0F19] flex flex-col items-center justify-center gap-4 text-slate-300">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#6D5EF5]" />
-        <span className="text-xs font-bold text-slate-400 animate-pulse">Restoring your session...</span>
+        <span className="text-xs font-bold text-slate-400 animate-pulse">Initializing application...</span>
       </div>
     );
   }
@@ -552,10 +573,18 @@ const App = () => {
                   }
                 />
                 <Route
+                  path="/settings"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
+                    </Suspense>
+                  }
+                />
+                <Route
                   path="/settings/privacy"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <AuthOnlyRoute><PrivacySafetyPage /></AuthOnlyRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />
@@ -563,7 +592,7 @@ const App = () => {
                   path="/settings/security"
                   element={
                     <Suspense fallback={<PageLoader />}>
-                      <AuthOnlyRoute><SecuritySettings /></AuthOnlyRoute>
+                      <ProtectedRoute><SwipeNavigator /></ProtectedRoute>
                     </Suspense>
                   }
                 />

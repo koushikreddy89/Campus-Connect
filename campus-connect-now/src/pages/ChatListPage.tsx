@@ -321,12 +321,19 @@ export default function ChatListPage() {
                       key={g.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.05 }}
+                      whileHover={{ y: -2, scale: 1.01 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ 
+                        type: 'spring', 
+                        stiffness: 400, 
+                        damping: 25,
+                        delay: i * 0.03
+                      }}
                       onClick={() => handleItemClick(g.id, 'group')}
-                      className={`w-full rounded-2xl p-3 flex items-center gap-3 text-left border transition-all ${
+                      className={`w-full rounded-2xl p-3.5 flex items-center gap-3 text-left border transition-all ${
                         selectedChat?.id === g.id 
-                          ? 'bg-violet-600/10 border-violet-500/25 shadow-lg shadow-violet-950/20' 
-                          : 'bg-[#101015]/60 border-zinc-900/60 hover:bg-[#121217]'
+                          ? 'bg-gradient-to-br from-[#8B5CF6]/10 to-[#6D5DF6]/5 border-violet-500/30 shadow-[0_4px_20px_rgba(109,74,255,0.15)]' 
+                          : 'bg-[#101015]/60 border-zinc-900/65 hover:bg-[#121218]/90 hover:border-zinc-800/80 shadow-sm'
                       }`}
                     >
                       <img src={g.avatar} alt="" className="h-11 w-11 rounded-full object-cover bg-zinc-900" />
@@ -763,13 +770,20 @@ function ChatListItem({ match, index, isActive, onClick }: { match: any; index: 
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: index * 0.05 }}
+        whileHover={{ y: -2, scale: 1.01 }}
+        whileTap={{ scale: 0.98 }}
+        transition={{ 
+          type: 'spring', 
+          stiffness: 400, 
+          damping: 25,
+          delay: index * 0.03
+        }}
         onContextMenu={handleContextMenu}
         onClick={onClick}
-        className={`w-full rounded-2xl p-3 flex items-center gap-3 text-left border transition-all cursor-pointer select-none ${
+        className={`w-full rounded-2xl p-3.5 flex items-center gap-3 text-left border transition-all cursor-pointer select-none ${
           isActive 
-            ? 'bg-violet-600/10 border-violet-500/25 shadow-lg shadow-violet-950/20' 
-            : 'bg-[#101015]/60 border-zinc-900/60 hover:bg-[#121217]'
+            ? 'bg-gradient-to-br from-[#8B5CF6]/10 to-[#6D5DF6]/5 border-violet-500/30 shadow-[0_4px_20px_rgba(109,74,255,0.15)]' 
+            : 'bg-[#101015]/60 border-zinc-900/65 hover:bg-[#121218]/90 hover:border-zinc-800/80 shadow-sm'
         }`}
       >
         <div 

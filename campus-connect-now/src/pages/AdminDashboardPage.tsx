@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/store/authStore';
 import { useAnnouncementStore } from '@/store/announcementStore';
+import { socketService } from '@/services/socketService';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { useNavigate } from 'react-router-dom';
@@ -82,6 +83,7 @@ export default function AdminDashboardPage() {
   const [category, setCategory] = useState<any>('announcement');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [invalidFields, setInvalidFields] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Placement Form States
@@ -247,6 +249,64 @@ export default function AdminDashboardPage() {
   // Analytics modal state
   const [analyticsBroadcast, setAnalyticsBroadcast] = useState<any | null>(null);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  const fetchAnalyticsData = useAnnouncementStore(s => s.fetchAnalytics);
+
+  useEffect(() => {
+    if (!showAnalyticsModal || !analyticsBroadcast) {
+      setAnalyticsData(null);
+      setAnalyticsError(null);
+      return;
+    }
+
+    const targetId = analyticsBroadcast.id || analyticsBroadcast._id || analyticsBroadcast.relatedId;
+    if (!targetId) return;
+
+    let isMounted = true;
+    const loadData = async () => {
+      setLoadingAnalytics(true);
+      setAnalyticsError(null);
+      try {
+        const data = await fetchAnalyticsData(targetId);
+        if (isMounted) {
+          setAnalyticsData(data);
+        }
+      } catch (err: any) {
+        console.error('Failed to load broadcast analytics:', err);
+        if (isMounted) {
+          setAnalyticsError(err.message || 'Unable to load analytics.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoadingAnalytics(false);
+        }
+      }
+    };
+
+    loadData();
+
+    // Listen to real-time socket updates
+    const socket = socketService.getSocket();
+    if (socket) {
+      const handleUpdate = (update: any) => {
+        if (update.announcementId === targetId && isMounted) {
+          setAnalyticsData(update);
+        }
+      };
+      socket.on('analytics:update', handleUpdate);
+      return () => {
+        isMounted = false;
+        socket.off('analytics:update', handleUpdate);
+      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [showAnalyticsModal, analyticsBroadcast, fetchAnalyticsData]);
   
   // Preview modal state
   const [previewBroadcast, setPreviewBroadcast] = useState<any | null>(null);
@@ -356,40 +416,110 @@ export default function AdminDashboardPage() {
   }, [category, showForm, targetYears, targetDepts, minCGPA, maxBacklogs, passingBatches]);
 
   const handleSubmit = async (isSaveDraft = false) => {
+    setInvalidFields([]);
+    const invalid: string[] = [];
+
     // Basic Form validation
     if (category === 'placement') {
-      if (!compName.trim() || !jobRoleTitle.trim() || !dateRegDeadline || !appLink.trim()) {
-        toast.error('Please fill in all required fields (Company Name, Job Role, Registration Deadline, and Application Link)');
+      if (!compName.trim()) invalid.push('compName');
+      if (!jobRoleTitle.trim()) invalid.push('jobRoleTitle');
+      if (!workMode) invalid.push('workMode');
+      if (!dateRegDeadline) invalid.push('dateRegDeadline');
+      if (!appLink.trim()) invalid.push('appLink');
+
+      if (invalid.length > 0) {
+        setInvalidFields(invalid);
+        toast.error('Please fill in all required fields (Company Name, Job Role, Work Mode, Registration Deadline, and Application Link)');
+        const first = document.getElementById(invalid[0]);
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
       if (minCGPA < 0 || minCGPA > 10) {
         toast.error('Minimum CGPA must be between 0 and 10');
+        setInvalidFields(['minCGPA']);
+        const first = document.getElementById('minCGPA');
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
     } else if (category === 'internship') {
-      if (!compName.trim() || !jobRoleTitle.trim() || !dateRegDeadline || !appLink.trim()) {
-        toast.error('Please fill in all required fields');
+      if (!compName.trim()) invalid.push('compName');
+      if (!jobRoleTitle.trim()) invalid.push('jobRoleTitle');
+      if (!internshipMode) invalid.push('internshipMode');
+      if (!dateRegDeadline) invalid.push('dateRegDeadline');
+      if (!appLink.trim()) invalid.push('appLink');
+
+      if (invalid.length > 0) {
+        setInvalidFields(invalid);
+        toast.error('Please fill in all required fields (Company Name, Job Role, Work Mode, Registration Deadline, and Application Link)');
+        const first = document.getElementById(invalid[0]);
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
     } else if (category === 'event') {
-      if (!eventName.trim() || !eventDate || !appLink.trim()) {
+      if (!eventName.trim()) invalid.push('eventName');
+      if (!eventDate) invalid.push('eventDate');
+      if (!appLink.trim()) invalid.push('appLink');
+
+      if (invalid.length > 0) {
+        setInvalidFields(invalid);
         toast.error('Please fill in Event Name, Date, and Registration Link');
+        const first = document.getElementById(invalid[0]);
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
     } else if (category === 'notice') {
-      if (!title.trim() || !circularNumber.trim()) {
+      if (!title.trim()) invalid.push('title');
+      if (!circularNumber.trim()) invalid.push('circularNumber');
+
+      if (invalid.length > 0) {
+        setInvalidFields(invalid);
         toast.error('Please fill in Circular Title and Circular Number');
+        const first = document.getElementById(invalid[0]);
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
     } else if (category === 'emergency') {
-      if (!title.trim() || !emergencyMessage.trim()) {
+      if (!title.trim()) invalid.push('title');
+      if (!emergencyMessage.trim()) invalid.push('emergencyMessage');
+
+      if (invalid.length > 0) {
+        setInvalidFields(invalid);
         toast.error('Please fill in Emergency Title and Message');
+        const first = document.getElementById(invalid[0]);
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
     } else {
       // General announcements
-      if (!title.trim() || !description.trim()) {
+      if (!title.trim()) invalid.push('title');
+      if (!description.trim()) invalid.push('description');
+
+      if (invalid.length > 0) {
+        setInvalidFields(invalid);
         toast.error('Please fill in Title and Description');
+        const first = document.getElementById(invalid[0]);
+        if (first) {
+          first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          first.focus();
+        }
         return;
       }
     }
@@ -535,7 +665,8 @@ Contact Person: ${contactPerson} (${contactNumber})
       resetForm();
       fetchAnnouncements(college);
     } catch (e: any) {
-      toast.error(e.message || 'Failed to submit broadcast');
+      console.error('Failed to publish announcement:', e);
+      toast.error('Unable to publish announcement. Please try again.');
     } finally {
       setIsCreating(false);
     }
@@ -1319,20 +1450,22 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 <label className="text-[10px] text-muted-foreground block font-medium">Company Name *</label>
                                 <input
                                   type="text"
+                                  id="compName"
                                   placeholder="e.g. Google"
                                   value={compName}
                                   onChange={e => setCompName(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('compName') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                               <div className="space-y-1.5">
                                 <label className="text-[10px] text-muted-foreground block font-medium">Job Role Title *</label>
                                 <input
                                   type="text"
+                                  id="jobRoleTitle"
                                   placeholder="e.g. Software Engineer"
                                   value={jobRoleTitle}
                                   onChange={e => setJobRoleTitle(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('jobRoleTitle') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                             </div>
@@ -1350,9 +1483,10 @@ Contact Person: ${contactPerson} (${contactNumber})
                               <div className="space-y-1.5">
                                 <label className="text-[10px] text-muted-foreground block font-medium">Work Mode</label>
                                 <select
+                                  id="workMode"
                                   value={workMode}
                                   onChange={e => setWorkMode(e.target.value as any)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('workMode') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 >
                                   <option value="On-Site">On-Site</option>
                                   <option value="Hybrid">Hybrid</option>
@@ -1363,9 +1497,10 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 <label className="text-[10px] text-muted-foreground block font-medium">Reg Deadline *</label>
                                 <input
                                   type="date"
+                                  id="dateRegDeadline"
                                   value={dateRegDeadline}
                                   onChange={e => setDateRegDeadline(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('dateRegDeadline') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                             </div>
@@ -1374,10 +1509,11 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 <label className="text-[10px] text-muted-foreground block font-medium">Apply Link / registration channel *</label>
                                 <input
                                   type="text"
+                                  id="appLink"
                                   placeholder="https://careers.google.com"
                                   value={appLink}
                                   onChange={e => setAppLink(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('appLink') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                               <div className="space-y-1.5">
@@ -1396,12 +1532,13 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 <label className="text-[10px] text-muted-foreground block font-medium font-semibold">Min CGPA requirement *</label>
                                 <input
                                   type="number"
+                                  id="minCGPA"
                                   step="0.1"
                                   min="0"
                                   max="10"
                                   value={minCGPA || ''}
                                   onChange={e => setMinCGPA(parseFloat(e.target.value) || 0)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('minCGPA') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                               <div className="space-y-1.5">
@@ -1442,24 +1579,26 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 <label className="text-[10px] text-muted-foreground block font-medium">Company Name *</label>
                                 <input
                                   type="text"
+                                  id="compName"
                                   placeholder="e.g. Google"
                                   value={compName}
                                   onChange={e => setCompName(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('compName') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                               <div className="space-y-1.5">
                                 <label className="text-[10px] text-muted-foreground block font-medium">Internship Role Title *</label>
                                 <input
                                   type="text"
+                                  id="jobRoleTitle"
                                   placeholder="e.g. Frontend Intern"
                                   value={jobRoleTitle}
                                   onChange={e => setJobRoleTitle(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('jobRoleTitle') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                             </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                               <div className="space-y-1.5">
                                 <label className="text-[10px] text-muted-foreground block font-medium">Monthly Stipend *</label>
                                 <input
@@ -1481,12 +1620,26 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 />
                               </div>
                               <div className="space-y-1.5">
+                                <label className="text-[10px] text-muted-foreground block font-medium">Work Mode *</label>
+                                <select
+                                  id="internshipMode"
+                                  value={internshipMode}
+                                  onChange={e => setInternshipMode(e.target.value as any)}
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('internshipMode') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
+                                >
+                                  <option value="On-Site">On-Site</option>
+                                  <option value="Hybrid">Hybrid</option>
+                                  <option value="Remote">Remote</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1.5">
                                 <label className="text-[10px] text-muted-foreground block font-medium">Reg Deadline *</label>
                                 <input
                                   type="date"
+                                  id="dateRegDeadline"
                                   value={dateRegDeadline}
                                   onChange={e => setDateRegDeadline(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('dateRegDeadline') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                             </div>
@@ -1495,20 +1648,22 @@ Contact Person: ${contactPerson} (${contactNumber})
                                 <label className="text-[10px] text-muted-foreground block font-medium">Apply Link / Registration Channel *</label>
                                 <input
                                   type="text"
+                                  id="appLink"
                                   placeholder="https://careers.google.com"
                                   value={appLink}
                                   onChange={e => setAppLink(e.target.value)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('appLink') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                               <div className="space-y-1.5">
                                 <label className="text-[10px] text-muted-foreground block font-medium font-semibold">Min CGPA *</label>
                                 <input
                                   type="number"
+                                  id="minCGPA"
                                   step="0.1"
                                   value={minCGPA || ''}
                                   onChange={e => setMinCGPA(parseFloat(e.target.value) || 0)}
-                                  className="w-full bg-secondary/80 border border-white/5 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                                  className={`w-full bg-secondary/80 border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-blue-500 ${invalidFields.includes('minCGPA') ? 'border-red-500/80 bg-red-500/5' : 'border-white/5'}`}
                                 />
                               </div>
                             </div>
@@ -3332,17 +3487,19 @@ Contact Person: ${contactPerson} (${contactNumber})
 
         {/* ANALYTICS MODAL */}
         {showAnalyticsModal && analyticsBroadcast && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="glass-card max-w-md w-full border border-white/10"
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.3 }}
+              className="glass-card max-w-md w-full border border-white/10 shadow-2xl bg-[#0F131E]/95"
             >
               <div className="p-6 space-y-6">
+                {/* Header */}
                 <div className="flex items-center justify-between border-b border-white/5 pb-4">
                   <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                    <BarChart3 className="h-4 w-4 text-emerald-400" /> Broadcast Performance Analytics
+                    <BarChart3 className="h-4 w-4 text-emerald-400 animate-pulse" /> Broadcast Performance Analytics
                   </h3>
                   <button 
                     onClick={() => { setShowAnalyticsModal(false); setAnalyticsBroadcast(null); }}
@@ -3352,41 +3509,163 @@ Contact Person: ${contactPerson} (${contactNumber})
                   </button>
                 </div>
 
-                <div className="space-y-4">
+                {/* Content */}
+                <div className="space-y-5">
                   <div>
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Broadcast Title</p>
-                    <p className="text-xs font-bold text-foreground mt-1 line-clamp-2">{analyticsBroadcast.title}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase font-black tracking-widest">Broadcast Title</p>
+                    <p className="text-xs font-bold text-white mt-1 line-clamp-2 bg-white/5 px-3 py-2 rounded-xl border border-white/5">{analyticsBroadcast.title}</p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center">
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold">Views</p>
-                      <p className="text-xl font-black text-emerald-400 mt-1">{analyticsBroadcast.views || 0}</p>
-                      <p className="text-[9px] text-muted-foreground mt-1">Times card was opened</p>
-                    </div>
-
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center">
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold">Applications / Clicks</p>
-                      <p className="text-xl font-black text-blue-400 mt-1">{analyticsBroadcast.applications || analyticsBroadcast.clicks || 0}</p>
-                      <p className="text-[9px] text-muted-foreground mt-1">Times link was clicked</p>
-                    </div>
-                  </div>
-
-                  {analyticsBroadcast.category === 'placement' && (
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold mb-2">Click Through Rate (CTR)</p>
-                      <div className="flex items-center justify-between">
-                        <div className="w-full bg-zinc-800 rounded-full h-2 mr-3">
-                          <div 
-                            className="bg-primary h-2 rounded-full" 
-                            style={{ width: `${analyticsBroadcast.views ? Math.min(100, Math.round(((analyticsBroadcast.applications || 0) / analyticsBroadcast.views) * 100)) : 0}%` }}
-                          />
+                  {loadingAnalytics && (
+                    <div className="space-y-4 py-2">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white/5 p-4 rounded-2xl border border-white/5 h-20 animate-pulse flex flex-col justify-between">
+                          <div className="h-2.5 bg-white/10 rounded w-1/2"></div>
+                          <div className="h-5 bg-white/10 rounded w-3/4 mt-2"></div>
                         </div>
-                        <span className="text-xs font-bold text-foreground">
-                          {analyticsBroadcast.views ? Math.round(((analyticsBroadcast.applications || 0) / analyticsBroadcast.views) * 100) : 0}%
-                        </span>
+                        <div className="bg-white/5 p-4 rounded-2xl border border-white/5 h-20 animate-pulse flex flex-col justify-between">
+                          <div className="h-2.5 bg-white/10 rounded w-1/2"></div>
+                          <div className="h-5 bg-white/10 rounded w-3/4 mt-2"></div>
+                        </div>
+                      </div>
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 h-20 animate-pulse space-y-2">
+                        <div className="h-2.5 bg-white/10 rounded w-1/3"></div>
+                        <div className="h-2 bg-white/10 rounded w-full"></div>
                       </div>
                     </div>
+                  )}
+
+                  {analyticsError && (
+                    <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-2xl text-center space-y-3">
+                      <AlertTriangle className="h-8 w-8 text-red-500 mx-auto" />
+                      <p className="text-xs font-bold text-red-400">Unable to load analytics</p>
+                      <p className="text-[10px] text-muted-foreground leading-relaxed">{analyticsError}</p>
+                      <button
+                        onClick={async () => {
+                          const targetId = analyticsBroadcast.id || analyticsBroadcast._id || analyticsBroadcast.relatedId;
+                          if (targetId) {
+                            setLoadingAnalytics(true);
+                            setAnalyticsError(null);
+                            try {
+                              const data = await fetchAnalyticsData(targetId);
+                              setAnalyticsData(data);
+                            } catch (err: any) {
+                              setAnalyticsError(err.message || 'Failed to fetch analytics.');
+                            } finally {
+                              setLoadingAnalytics(false);
+                            }
+                          }
+                        }}
+                        className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-xs font-bold transition-all flex items-center gap-1.5 mx-auto border border-white/5"
+                      >
+                        <RotateCcw className="h-3 w-3" /> Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {!loadingAnalytics && !analyticsError && analyticsData && (
+                    <>
+                      {analyticsData.views === 0 ? (
+                        <div className="bg-white/5 p-6 rounded-2xl border border-white/5 text-center space-y-2 py-8">
+                          <Megaphone className="h-8 w-8 text-zinc-500 mx-auto animate-bounce" />
+                          <p className="text-xs font-bold text-white">No engagement yet</p>
+                          <p className="text-[10px] text-muted-foreground">Your broadcast hasn't been viewed yet.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <motion.div 
+                              initial={{ scale: 0.95, opacity: 0 }} 
+                              animate={{ scale: 1, opacity: 1 }} 
+                              className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center flex flex-col justify-center"
+                            >
+                              <p className="text-[9px] text-muted-foreground uppercase font-black tracking-wider">Views</p>
+                              <p className="text-2xl font-black text-emerald-400 mt-1">{analyticsData.views || 0}</p>
+                              <p className="text-[8px] text-muted-foreground mt-1">Times card entered viewport</p>
+                            </motion.div>
+
+                            <motion.div 
+                              initial={{ scale: 0.95, opacity: 0 }} 
+                              animate={{ scale: 1, opacity: 1 }} 
+                              transition={{ delay: 0.05 }}
+                              className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center flex flex-col justify-center"
+                            >
+                              <p className="text-[9px] text-muted-foreground uppercase font-black tracking-wider">Unique Viewers</p>
+                              <p className="text-2xl font-black text-violet-400 mt-1">{analyticsData.uniqueViewers || 0}</p>
+                              <p className="text-[8px] text-muted-foreground mt-1">Unique student accounts</p>
+                            </motion.div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <motion.div 
+                              initial={{ scale: 0.95, opacity: 0 }} 
+                              animate={{ scale: 1, opacity: 1 }} 
+                              transition={{ delay: 0.1 }}
+                              className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center flex flex-col justify-center"
+                            >
+                              <p className="text-[9px] text-muted-foreground uppercase font-black tracking-wider">Clicks / Applications</p>
+                              <p className="text-2xl font-black text-blue-400 mt-1">{analyticsData.clicks || 0}</p>
+                              <p className="text-[8px] text-muted-foreground mt-1">Times links were clicked</p>
+                            </motion.div>
+
+                            <motion.div 
+                              initial={{ scale: 0.95, opacity: 0 }} 
+                              animate={{ scale: 1, opacity: 1 }} 
+                              transition={{ delay: 0.15 }}
+                              className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center flex flex-col justify-center"
+                            >
+                              <p className="text-[9px] text-muted-foreground uppercase font-black tracking-wider">Click Through Rate (CTR)</p>
+                              <p className="text-2xl font-black text-amber-400 mt-1">{(analyticsData.CTR !== undefined ? analyticsData.CTR : analyticsData.ctr || 0).toFixed(1)}%</p>
+                              <p className="text-[8px] text-muted-foreground mt-1">Clicks relative to views</p>
+                            </motion.div>
+                          </div>
+
+                          {/* CTR Progress Bar */}
+                          <motion.div 
+                            initial={{ opacity: 0, y: 5 }} 
+                            animate={{ opacity: 1, y: 0 }} 
+                            transition={{ delay: 0.2 }}
+                            className="bg-white/5 p-4 rounded-2xl border border-white/5"
+                          >
+                            <p className="text-[9px] text-muted-foreground uppercase font-black tracking-wider mb-2">CTR Performance</p>
+                            <div className="flex items-center justify-between">
+                              <div className="w-full bg-zinc-800 rounded-full h-2 mr-3 overflow-hidden">
+                                <motion.div 
+                                  initial={{ width: 0 }} 
+                                  animate={{ width: `${Math.min(100, (analyticsData.CTR !== undefined ? analyticsData.CTR : analyticsData.ctr || 0))}%` }}
+                                  transition={{ duration: 0.6, ease: "easeOut" }}
+                                  className="bg-gradient-to-r from-[#6D5EF5] to-emerald-400 h-2 rounded-full" 
+                                />
+                              </div>
+                              <span className="text-xs font-bold text-white">
+                                {(analyticsData.CTR !== undefined ? analyticsData.CTR : analyticsData.ctr || 0).toFixed(1)}%
+                              </span>
+                            </div>
+                          </motion.div>
+
+                          {/* Historical Times */}
+                          <motion.div 
+                            initial={{ opacity: 0 }} 
+                            animate={{ opacity: 1 }} 
+                            transition={{ delay: 0.25 }}
+                            className="bg-white/5 p-4 rounded-2xl border border-white/5 text-[10px] space-y-2 text-muted-foreground"
+                          >
+                            <div className="flex justify-between">
+                              <span>Published:</span>
+                              <span className="font-bold text-white">{new Date(analyticsData.createdAt).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Last Viewed:</span>
+                              <span className="font-bold text-white">{analyticsData.lastViewed ? new Date(analyticsData.lastViewed).toLocaleString() : 'Never'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Last Clicked:</span>
+                              <span className="font-bold text-white">{analyticsData.lastClicked ? new Date(analyticsData.lastClicked).toLocaleString() : 'Never'}</span>
+                            </div>
+                          </motion.div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 

@@ -419,6 +419,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const tempMsg: Message = {
         id: tempId,
         _id: tempId,
+        stableKey: tempId,
         matchId,
         senderId,
         messageType,
@@ -450,7 +451,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         
         if (index > -1) {
           const listCopy = [...freshList];
-          listCopy[index] = res.data;
+          listCopy[index] = {
+            ...listCopy[index],
+            id: res.data.id || res.data._id,
+            _id: res.data._id || res.data.id,
+            stableKey: listCopy[index].stableKey || res.data.id || res.data._id,
+            status: res.data.status || 'delivered',
+            timestamp: res.data.timestamp,
+            resonanceState: res.data.resonanceState || listCopy[index].resonanceState,
+            reactions: res.data.reactions || listCopy[index].reactions,
+            seenAt: res.data.seenAt,
+            deliveredAt: res.data.deliveredAt
+          };
 
           const seen = new Set<string>();
           const deduped = listCopy.filter(m => {

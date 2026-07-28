@@ -29,7 +29,7 @@ export const BottomTabBar = memo(({ isGlobal }: { isGlobal?: boolean }) => {
   const tabs = role === 'alumni' ? alumniTabs : defaultTabs;
 
   // Detect student swipe routing paths
-  const isSwipeRoute = ['/student/dashboard', '/home', '/feed', '/alumni', '/chat', '/profile'].some(path => 
+  const isSwipeRoute = ['/student/dashboard', '/home', '/feed', '/alumni', '/chat', '/profile', '/settings'].some(path => 
     location.pathname.startsWith(path)
   );
 
@@ -48,7 +48,8 @@ export const BottomTabBar = memo(({ isGlobal }: { isGlobal?: boolean }) => {
         <nav className="relative flex items-center justify-around h-[64px] max-w-lg mx-auto px-2">
           {tabs.map(({ path, icon: Icon, label }) => {
             const isActive = location.pathname.startsWith(path) || 
-              (path === '/home' && location.pathname.startsWith('/student/dashboard'));
+              (path === '/home' && location.pathname.startsWith('/student/dashboard')) ||
+              (path === '/profile' && location.pathname.startsWith('/settings'));
             
             return (
               <motion.button

@@ -1,8 +1,9 @@
-import { useState, useMemo, useEffect, useCallback, memo, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useState, useMemo, useEffect, useCallback, memo, useRef, lazy, Suspense } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useProfileStore } from '@/store/profileStore';
 import { getValidName } from '@/utils/validation';
+import { usePreferencesStore } from '@/store/preferencesStore';
 import { useMatchStore } from '@/store/matchStore';
 import { alumniProfileService } from '@/services/alumniService';
 import { useProfileViewerStore } from '@/store/profileViewerStore';
@@ -18,6 +19,7 @@ import { INTERESTS, COURSES, YEARS } from '@/data/constants';
 import { getApiUrl } from '@/services/connectionService';
 import { 
   LogOut, 
+  ArrowLeft,
   Shield, 
   UserX, 
   ChevronRight, 
@@ -57,10 +59,28 @@ import {
   UserMinus,
   Plus,
   Search,
-  User
+  User,
+  Settings,
+  Bell,
+  Palette,
+  Globe,
+  FileText,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+
+const SettingsPage = lazy(() => import('./SettingsPage'));
+const PrivacySafetyPage = lazy(() => import('./PrivacySafetyPage'));
+const SecuritySettings = lazy(() => import('./SecuritySettings'));
+
+import { Loader } from '@/components/Loader';
+
+const PageLoader = () => (
+  <div className="flex items-center justify-center p-8 w-full">
+    <Loader size="lg" />
+  </div>
+);
 
 interface TagBuilderProps {
   tags: string[];
@@ -442,7 +462,8 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   const saveProfile = useProfileStore(s => s.saveProfile);
   const isLoading = useProfileStore(s => s.isLoading);
   const currentUserId = useAuthStore(s => s._id) || useAuthStore(s => s.uid);
-  const targetUserId = propTargetUserId || params.userId;
+  const targetUserIdRaw = propTargetUserId || params.userId;
+  const targetUserId = targetUserIdRaw === 'me' ? undefined : targetUserIdRaw;
   const uid = targetUserId || currentUserId;
   const isOwnProfile: boolean = Boolean(
     !targetUserId || 
@@ -456,9 +477,10 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   const viewersLoading = useProfileViewerStore(s => s.isLoading);
   const fetchViewers = useProfileViewerStore(s => s.fetchViewers);
   const loadProfile = useProfileStore(s => s.loadProfile);
+  const fetchPreferences = usePreferencesStore(s => s.fetchPreferences);
 
-  const [editing, setEditing] = useState(false);
-  const [editTab, setEditTab] = useState<'basic' | 'social' | 'skills' | 'career'>('basic');
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
+  const [activeSettingsSubView, setActiveSettingsSubView] = useState<'main' | 'account-info' | 'change-password' | 'email-mgmt' | 'visibility' | 'theme' | 'language' | 'timezone' | 'date-format' | 'notification-sound' | 'data-saver'>('main');
   const [profileStats, setProfileStats] = useState<any>(null);
   const [profileMedia, setProfileMedia] = useState<any[]>([]);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
@@ -466,6 +488,8 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   const [profileFriends, setProfileFriends] = useState<any[]>([]);
   const [profileFollowers, setProfileFollowers] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'about' | 'photos' | 'videos' | 'projects' | 'achievements' | 'friends'>('about');
+
+
 
   // Friends Page Redesign states
   const [friendsSubTab, setFriendsSubTab] = useState<'all' | 'requests' | 'suggestions' | 'mutual' | 'recent' | 'online' | 'blocked'>('all');
@@ -483,10 +507,6 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   const [activeFriendMenuId, setActiveFriendMenuId] = useState<string | null>(null);
 
   const [showBlock, setShowBlock] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [savedReferrals, setSavedReferrals] = useState<any[]>([]);
-
-  // Block & Report variables
   const [modalTab, setModalTab] = useState<'block' | 'report'>('block');
   const [blockSearch, setBlockSearch] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -496,6 +516,8 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   const [reportDescription, setReportDescription] = useState('');
   const [selectedReportUser, setSelectedReportUser] = useState<any>(null);
   const [submittingReport, setSubmittingReport] = useState(false);
+  const [savedReferrals, setSavedReferrals] = useState<any[]>([]);
+
 
   const [mutualCounts, setMutualCounts] = useState<Record<string, number>>({});
 
@@ -702,6 +724,7 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   useEffect(() => {
     if (!uid) return;
     loadProfile(uid);
+    fetchPreferences();
     loadSavedReferrals();
     fetchStats();
     fetchSuggestions();
@@ -791,13 +814,22 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
     };
   }, [showBlock]);
 
-  const handleSave = async () => {
-    await saveProfile();
-    setEditing(false);
-    toast.success('Profile saved successfully!');
-    fetchStats();
-    window.dispatchEvent(new CustomEvent('profile:stats:update'));
-  };
+  const isSettingsActive = location.pathname.startsWith('/settings');
+
+  // Handle ESC key to close settings side panel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        navigate('/profile');
+      }
+    };
+    if (isSettingsActive) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSettingsActive, navigate]);
 
   // User Search effect
   useEffect(() => {
@@ -948,7 +980,7 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   // Real-Time Profile Strength Items Configuration
   const checkItems = useMemo(() => {
     return [
-      { id: 'photos', name: 'Profile Picture', checked: !!(profile.photos && profile.photos.length > 0 && profile.photos[0]), actionText: 'Add Profile Picture', tab: 'basic' as const },
+      { id: 'photos', name: 'Profile Picture', checked: !!(profile?.photos?.length && profile.photos[0]), actionText: 'Add Profile Picture', tab: 'basic' as const },
       { id: 'name', name: 'Full Name', checked: !!(displayName && displayName.trim() !== ''), actionText: 'Add Full Name', tab: 'basic' as const },
       { id: 'bio', name: 'Bio/About', checked: !!(profile.bio && profile.bio.trim() !== ''), actionText: 'Add Bio/About', tab: 'basic' as const },
       { id: 'course', name: 'Department', checked: !!(profile.course && profile.course.trim() !== ''), actionText: 'Add Department / Course', tab: 'basic' as const },
@@ -1003,8 +1035,21 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
   const strokeDashoffset = progressCircleCircumference - (progressCircleCircumference * profileCompletion) / 100;
 
   return (
-    <div className="min-h-screen bg-[#070709] pb-24 page-transition w-full text-zinc-100 overflow-x-hidden">
-      <div className="max-w-[1400px] mx-auto px-4 md:px-6 lg:px-8 py-6">
+    <div className="min-h-screen bg-[#070709] pb-24 page-transition w-full text-zinc-100 overflow-x-hidden relative">
+      <motion.div
+        animate={{
+          scale: isSettingsActive ? 0.98 : 1.0,
+          opacity: isSettingsActive ? 0.96 : 1.0,
+          filter: isSettingsActive ? 'blur(8px)' : 'blur(0px)',
+        }}
+        transition={{
+          type: 'spring',
+          stiffness: 260,
+          damping: 30,
+        }}
+        className="w-full h-full"
+      >
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 lg:px-8 py-6">
         
         {/* Responsive Grid Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
@@ -1026,7 +1071,7 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
                   {/* Large Circular Avatar */}
                   <div className="relative h-28 w-28 sm:h-36 sm:w-36 rounded-full border-4 border-[#070709] overflow-hidden bg-zinc-900/80 shadow-2xl flex-shrink-0 group">
                     <img
-                      src={profile.photos[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=me'}
+                      src={profile?.photos?.[0] || 'https://api.dicebear.com/7.x/avataaars/svg?seed=me'}
                       alt=""
                       className="h-full w-full object-cover transition-transform group-hover:scale-105 duration-500"
                     />
@@ -1095,19 +1140,7 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
                     </div>
                     
                     {/* Actions Row */}
-                    <div className="flex flex-wrap gap-2.5 items-center">
-                      <Button 
-                        onClick={() => setEditing(!editing)} 
-                        className={`rounded-2xl h-11 px-5 text-xs font-black tracking-wide transition-all duration-300 border flex items-center gap-2 ${
-                          editing 
-                            ? 'bg-primary text-primary-foreground glow-primary border-transparent' 
-                            : 'bg-zinc-950/40 text-white border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700'
-                        }`}
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        {editing ? "View Profile" : "Edit Profile"}
-                      </Button>
-                      
+                    <div className="flex flex-wrap gap-2.5 items-center relative">
                       <Button 
                         variant="outline"
                         onClick={() => {
@@ -1119,6 +1152,22 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
                       >
                         <ChevronRight className="w-4.5 h-4.5 rotate-90" />
                       </Button>
+
+                      {/* Settings trigger gear button */}
+                      <motion.button
+                        whileHover={{ y: -2, boxShadow: '0 0 15px rgba(124, 92, 255, 0.2)', borderColor: '#5f3fe1' }}
+                        whileTap={{ scale: 0.96 }}
+                        onMouseEnter={() => {
+                          import('./SettingsPage').catch(() => {});
+                          import('./PrivacySafetyPage').catch(() => {});
+                          import('./SecuritySettings').catch(() => {});
+                        }}
+                        onClick={() => navigate('/settings')}
+                        className="rounded-2xl h-11 w-11 border border-zinc-800 bg-zinc-950/40 text-white hover:bg-zinc-900 flex items-center justify-center p-0 cursor-pointer transition-colors"
+                        title="Profile Actions & Settings"
+                      >
+                        <Settings className="w-4.5 h-4.5" />
+                      </motion.button>
                     </div>
                   </div>
                 </div>
@@ -1158,16 +1207,11 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
               </div>
             </div>
             {/* Redesigned Premium Glassmorphism Statistics Cards Grid */}
-            <div className={`grid grid-cols-2 sm:grid-cols-4 ${isOwnProfile ? 'lg:grid-cols-7' : 'lg:grid-cols-8'} gap-3.5`}>
+            <div className="grid grid-cols-3 max-w-xl mx-auto gap-3.5 w-full">
               {[
                 { label: 'Posts', value: profileStats?.posts || 0, color: 'from-violet-500/20 to-purple-500/5', border: 'border-violet-500/20 hover:border-violet-500/40', textColor: 'text-violet-400', glow: 'shadow-violet-500/5', icon: Newspaper },
-                { label: 'Friends', value: profileStats?.friends || 0, color: 'from-blue-500/20 to-cyan-500/5', border: 'border-blue-500/20 hover:border-blue-500/40', textColor: 'text-blue-400', glow: 'shadow-blue-500/5', icon: Users },
                 { label: 'Followers', value: profileStats?.followers || 0, color: 'from-fuchsia-500/20 to-pink-500/5', border: 'border-fuchsia-500/20 hover:border-fuchsia-500/40', textColor: 'text-fuchsia-400', glow: 'shadow-fuchsia-500/5', icon: UserCheck },
-                { label: 'Following', value: profileStats?.following || 0, color: 'from-indigo-500/20 to-blue-500/5', border: 'border-indigo-500/20 hover:border-indigo-500/40', textColor: 'text-indigo-400', glow: 'shadow-indigo-500/5', icon: UserPlus },
-                { label: 'Circles', value: profileStats?.circles || 0, color: 'from-teal-500/20 to-emerald-500/5', border: 'border-teal-500/20 hover:border-teal-500/40', textColor: 'text-teal-400', glow: 'shadow-teal-500/5', icon: Network },
-                { label: 'Achievements', value: profileStats?.achievements ?? (profile?.achievements?.length || 0), color: 'from-amber-500/20 to-yellow-500/5', border: 'border-amber-500/20 hover:border-amber-500/40', textColor: 'text-amber-400', glow: 'shadow-amber-500/5', icon: Trophy },
-                { label: 'Projects', value: profileStats?.projects ?? (profile?.projects?.length || 0), color: 'from-rose-500/20 to-red-500/5', border: 'border-rose-500/20 hover:border-rose-500/40', textColor: 'text-rose-400', glow: 'shadow-rose-500/5', icon: Briefcase },
-                ...(!isOwnProfile ? [{ label: 'Mutual', value: profileStats?.mutual || 0, color: 'from-emerald-500/20 to-teal-500/5', border: 'border-emerald-500/20 hover:border-emerald-500/40', textColor: 'text-emerald-400', glow: 'shadow-emerald-500/5', icon: Sparkles }] : [])
+                { label: 'Following', value: profileStats?.following || 0, color: 'from-indigo-500/20 to-blue-500/5', border: 'border-indigo-500/20 hover:border-indigo-500/40', textColor: 'text-indigo-400', glow: 'shadow-indigo-500/5', icon: UserPlus }
               ].map((stat, i) => {
                 const IconComponent = stat.icon;
                 return (
@@ -1190,277 +1234,14 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
               })}
             </div>
 
-            {/* Editing State vs Tabs Details View */}
-            <AnimatePresence mode="wait">
-              {editing ? (
-                <motion.div 
-                  key="edit" 
-                  initial={{ opacity: 0, y: 15 }} 
-                  animate={{ opacity: 1, y: 0 }} 
-                  exit={{ opacity: 0, y: -15 }} 
-                  className="space-y-4"
-                >
-                  {/* Form Tabs list */}
-                  <div className="flex gap-2 border-b border-white/5 pb-2 mb-4 overflow-x-auto hide-scrollbar">
-                    {[
-                      { id: 'basic', label: 'Basic Info' },
-                      { id: 'social', label: 'Social & Links' },
-                      { id: 'skills', label: 'Skills & Clubs' },
-                      { id: 'career', label: 'Career & Projects' }
-                    ].map(t => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setEditTab(t.id as any)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                          editTab === t.id ? 'gradient-primary text-primary-foreground glow-primary' : 'bg-zinc-900/40 text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Edit Basic Info Tab */}
-                  {editTab === 'basic' && (
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Full Name</label>
-                        <input 
-                          id="field-name"
-                          value={displayName} 
-                          onChange={e => updateProfile({ name: e.target.value })} 
-                          placeholder="e.g. Alice Cooper"
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all shadow-inner" 
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Personal Email</label>
-                        <input 
-                          id="field-personalEmail"
-                          value={profile.personalEmail || ''} 
-                          onChange={e => updateProfile({ personalEmail: e.target.value })} 
-                          placeholder="e.g. alice@example.com"
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all shadow-inner" 
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Department</label>
-                          <select 
-                            id="field-course"
-                            value={profile.course || ''} 
-                            onChange={e => updateProfile({ course: e.target.value })} 
-                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
-                          >
-                            <option value="">Select Course</option>
-                            {COURSES.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Batch</label>
-                          <select 
-                            id="field-year"
-                            value={profile.year || ''} 
-                            onChange={e => updateProfile({ year: e.target.value })} 
-                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
-                          >
-                            <option value="">Select Year</option>
-                            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-                          </select>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Academic Year</label>
-                        <select 
-                          id="field-academicYear"
-                          value={profile.academicYear || ''} 
-                          onChange={e => updateProfile({ academicYear: e.target.value })} 
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
-                        >
-                          <option value="">Select Academic Year</option>
-                          <option value="1st Year">1st Year</option>
-                          <option value="2nd Year">2nd Year</option>
-                          <option value="3rd Year">3rd Year</option>
-                          <option value="4th Year">4th Year</option>
-                        </select>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">CGPA</label>
-                          <input 
-                            id="field-cgpa"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max="10"
-                            value={profile.cgpa !== undefined ? profile.cgpa : ''} 
-                            onChange={e => updateProfile({ cgpa: e.target.value ? parseFloat(e.target.value) : 0 })} 
-                            placeholder="e.g. 8.5"
-                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Active Backlogs</label>
-                          <input 
-                            id="field-backlogs"
-                            type="number"
-                            min="0"
-                            max="50"
-                            value={profile.backlogs !== undefined ? profile.backlogs : ''} 
-                            onChange={e => updateProfile({ backlogs: e.target.value ? parseInt(e.target.value) : 0 })} 
-                            placeholder="e.g. 0"
-                            className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Bio</label>
-                        <textarea 
-                          id="field-bio"
-                          value={profile.bio || ''} 
-                          onChange={e => updateProfile({ bio: e.target.value })} 
-                          rows={3} 
-                          maxLength={200} 
-                          placeholder="Tell us about yourself, your interests, or what you study..."
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-all" 
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Edit Social Links */}
-                  {editTab === 'social' && (
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide flex items-center gap-1.5">
-                          <Linkedin className="h-3.5 w-3.5 text-blue-400" />
-                          LinkedIn Profile URL
-                        </label>
-                        <input 
-                          id="field-linkedinUrl"
-                          value={profile.linkedinUrl || ''} 
-                          onChange={e => updateProfile({ linkedinUrl: e.target.value })} 
-                          placeholder="e.g. https://linkedin.com/in/username"
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide flex items-center gap-1.5">
-                          <Github className="h-3.5 w-3.5" />
-                          GitHub Profile URL
-                        </label>
-                        <input 
-                          id="field-githubUrl"
-                          value={profile.githubUrl || ''} 
-                          onChange={e => updateProfile({ githubUrl: e.target.value })} 
-                          placeholder="e.g. https://github.com/username"
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all" 
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Edit Skills & Clubs */}
-                  {editTab === 'skills' && (
-                    <div className="space-y-4">
-                      <TagBuilder
-                        id="field-skills"
-                        label="Skills"
-                        placeholder="e.g. React (Press Enter or Add)"
-                        tags={profile.skills || []}
-                        onAdd={(tag) => updateProfile({ skills: [...(profile.skills || []), tag] })}
-                        onRemove={(tag) => updateProfile({ skills: (profile.skills || []).filter(s => s !== tag) })}
-                      />
-
-                      <TagBuilder
-                        id="field-clubs"
-                        label="Clubs & Organizations"
-                        placeholder="e.g. Coding Club (Press Enter or Add)"
-                        tags={profile.clubs || []}
-                        onAdd={(tag) => updateProfile({ clubs: [...(profile.clubs || []), tag] })}
-                        onRemove={(tag) => updateProfile({ clubs: (profile.clubs || []).filter(c => c !== tag) })}
-                      />
-
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-2 block font-bold uppercase tracking-wide">Interests</label>
-                        <div className="flex flex-wrap gap-1.5 p-2 bg-zinc-950/60 rounded-2xl border border-white/5 max-h-48 overflow-y-auto">
-                          {INTERESTS.map(interest => {
-                            const hasInterest = profile.interests?.includes(interest);
-                            return (
-                              <motion.button
-                                key={interest}
-                                type="button"
-                                whileTap={{ scale: 0.92 }}
-                                onClick={() => {
-                                  const interests = hasInterest
-                                    ? (profile.interests || []).filter(i => i !== interest)
-                                    : [...(profile.interests || []), interest];
-                                  updateProfile({ interests });
-                                }}
-                                className={`rounded-full px-3 py-1.5 text-[11px] font-bold tracking-wide uppercase transition-all ${
-                                  hasInterest ? 'gradient-primary text-primary-foreground glow-primary' : 'bg-zinc-900/40 text-zinc-400 hover:text-white'
-                                }`}
-                              >
-                                {interest}
-                              </motion.button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Edit Career & Projects */}
-                  {editTab === 'career' && (
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide flex items-center gap-1.5">
-                          <Target className="h-3.5 w-3.5 text-primary" />
-                          Career Goals
-                        </label>
-                        <textarea 
-                          id="field-careerGoals"
-                          value={profile.careerGoals || ''} 
-                          onChange={e => updateProfile({ careerGoals: e.target.value })} 
-                          rows={3} 
-                          placeholder="What are your career objectives?..."
-                          className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-all" 
-                        />
-                      </div>
-
-                      <TagBuilder
-                        id="field-projects"
-                        label="Projects"
-                        placeholder="e.g. Portfolio Website (Press Enter or Add)"
-                        tags={profile.projects || []}
-                        onAdd={(tag) => updateProfile({ projects: [...(profile.projects || []), tag] })}
-                        onRemove={(tag) => updateProfile({ projects: (profile.projects || []).filter(p => p !== tag) })}
-                      />
-
-                      <TagBuilder
-                        id="field-achievements"
-                        label="Achievements & Awards"
-                        placeholder="e.g. HackMIT Finalist (Press Enter or Add)"
-                        tags={profile.achievements || []}
-                        onAdd={(tag) => updateProfile({ achievements: [...(profile.achievements || []), tag] })}
-                        onRemove={(tag) => updateProfile({ achievements: (profile.achievements || []).filter(a => a !== tag) })}
-                      />
-                    </div>
-                  )}
-
-                  <Button onClick={handleSave} disabled={isLoading} className="w-full gradient-primary rounded-2xl h-12 font-bold tracking-wide uppercase glow-primary mt-6">
-                    {isLoading ? 'Saving...' : 'Save Changes'}
-                  </Button>
-                </motion.div>
-              ) : (
-                <motion.div 
-                  key="view" 
-                  initial={{ opacity: 0, y: 15 }} 
-                  animate={{ opacity: 1, y: 0 }} 
-                  exit={{ opacity: 0, y: -15 }} 
-                  className="space-y-6 w-full"
-                >
+            {/* Tabs Details View */}
+            <motion.div 
+              key="view" 
+              initial={{ opacity: 0, y: 15 }} 
+              animate={{ opacity: 1, y: 0 }} 
+              exit={{ opacity: 0, y: -15 }} 
+              className="space-y-6 w-full"
+            >
                   
                   {/* Premium Segmented Navigation Tabs */}
                   <div className="relative flex bg-zinc-950/60 border border-white/5 p-1 rounded-2xl mb-6 overflow-x-auto hide-scrollbar scroll-smooth gap-1">
@@ -2161,8 +1942,6 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
 
                   </div>
                 </motion.div>
-              )}
-            </AnimatePresence>
           </div>
 
           {/* Right Panel widgets (25% Width) */}
@@ -2252,46 +2031,6 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
               ) : (
                 <span className="text-[10px] text-zinc-500 italic block">No recent views.</span>
               )}
-            </div>
-
-            {/* Widget 3: Quick Settings Action Panel */}
-            <div className="rounded-[24px] border border-white/[0.08] bg-zinc-950/40 p-5 space-y-2 shadow-[0_15px_30px_rgba(0,0,0,0.3)]">
-              <span className="text-[10px] text-zinc-450 font-black uppercase tracking-widest block mb-2">Quick Shortcuts</span>
-              
-              {[
-                { label: 'Privacy & Safety', icon: Shield, path: '/settings/privacy', color: 'text-primary bg-primary/10' },
-                { label: 'Help & Support', icon: HelpCircle, path: '/support', color: 'text-zinc-400 bg-secondary' },
-                { label: 'Block & Report', icon: UserX, action: () => setShowBlock(true), color: 'text-accent bg-accent/10' },
-              ].map((act, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => act.action ? act.action() : navigate(act.path!)}
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.02] hover:bg-white/5 transition-all text-left border border-white/[0.02]"
-                >
-                  <div className={`h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 ${act.color}`}>
-                    <act.icon className="h-4 w-4" />
-                  </div>
-                  <span className="text-xs text-zinc-300 font-bold">{act.label}</span>
-                </button>
-              ))}
-
-              <button 
-                onClick={async () => {
-                  setLoggingOut(true);
-                  try {
-                    await logout();
-                  } catch (e) {
-                    setLoggingOut(false);
-                  }
-                }}
-                disabled={loggingOut}
-                className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-red-500/5 hover:bg-red-500/10 transition-all text-left border border-red-500/10 mt-2"
-              >
-                <div className="h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-red-500/10 text-red-400">
-                  <LogOut className="h-4 w-4" />
-                </div>
-                <span className="text-xs text-red-400 font-extrabold">{loggingOut ? 'Logging out...' : 'Logout'}</span>
-              </button>
             </div>
             
           </div>
@@ -2664,6 +2403,8 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
         )}
       </AnimatePresence>
 
+
+
       <ImageViewer
         isOpen={imageViewerOpen}
         onClose={() => setImageViewerOpen(false)}
@@ -2674,6 +2415,96 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
 
       <PostDetailModal />
       <BottomTabBar />
+      </motion.div>
+
+      {/* Premium slide-in settings panel overlay */}
+      <AnimatePresence>
+        {isSettingsActive && (
+          <>
+            {/* Backdrop dark overlay with fade */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              exit={{ opacity: 0 }}
+              onClick={() => navigate('/profile')}
+              className="fixed inset-0 bg-black z-45"
+            />
+            
+            {/* Slide-in settings drawer panel */}
+            <motion.div
+              initial={{ x: '100%', opacity: 0, scale: 0.99 }}
+              animate={{ x: 0, opacity: 1, scale: 1.0 }}
+              exit={{ x: '100%', opacity: 0, scale: 0.99 }}
+              transition={{
+                type: 'spring',
+                stiffness: 260,
+                damping: 30,
+              }}
+              className="fixed inset-y-0 right-0 w-full sm:w-[520px] md:w-[600px] bg-[#070709] border-l border-zinc-800 shadow-[0_0_60px_rgba(0,0,0,0.85)] z-50 overflow-y-auto flex flex-col"
+            >
+              {/* Back button and title header */}
+              <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-900 bg-[#070709] sticky top-0 z-10 w-full">
+                <div className="flex items-center gap-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      if (activeSettingsSubView !== 'main') {
+                        setActiveSettingsSubView('main');
+                      } else if (location.pathname === '/settings') {
+                        navigate('/profile');
+                      } else {
+                        navigate('/settings');
+                      }
+                    }}
+                    className="rounded-full p-2.5 h-10 w-10 hover:bg-zinc-900 text-zinc-400 hover:text-white"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </Button>
+                  <div className="flex flex-col">
+                    <h2 className="text-base font-bold text-white leading-tight">
+                      {activeSettingsSubView === 'main' && 'Settings'}
+                      {activeSettingsSubView === 'account-info' && 'Account Information'}
+                      {activeSettingsSubView === 'change-password' && 'Change Password'}
+                      {activeSettingsSubView === 'email-mgmt' && 'Email Management'}
+                      {activeSettingsSubView === 'visibility' && 'Account Visibility'}
+                    </h2>
+                    <p className="text-[10px] text-zinc-500 font-semibold tracking-wide uppercase mt-0.5">Campus Connect Platform</p>
+                  </div>
+                </div>
+
+                {/* Integrated Search Box */}
+                {activeSettingsSubView === 'main' && location.pathname === '/settings' && (
+                  <div className="relative w-40 sm:w-60">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Search settings..."
+                      value={settingsSearchQuery}
+                      onChange={(e) => setSettingsSearchQuery(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-4 py-1.5 text-xs font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-violet-500/50 transition-colors"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Settings content wrapper */}
+              <div className="flex-1 p-6">
+                <Suspense fallback={<PageLoader />}>
+                  {location.pathname === '/settings' && (
+                    <SettingsPage 
+                      searchQuery={settingsSearchQuery} 
+                      activeSubView={activeSettingsSubView} 
+                      setActiveSubView={setActiveSettingsSubView} 
+                    />
+                  )}
+                  {location.pathname === '/settings/privacy' && <PrivacySafetyPage />}
+                  {location.pathname === '/settings/security' && <SecuritySettings />}
+                </Suspense>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

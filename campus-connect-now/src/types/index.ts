@@ -78,6 +78,7 @@ export interface Message {
   status?: 'sent' | 'delivered' | 'seen';
   resonanceState?: 'dormant' | 'bridged' | 'harmonized' | 'vibrant' | 'resonating' | 'absorbed';
   reactions?: Reaction[];
+  stableKey?: string;
 }
 
 export type PostCategory = 'general' | 'events' | 'clubs' | 'announcements';
@@ -177,6 +178,10 @@ export interface ProfileSetupData {
   jobRole?: string;
   experience?: string;
   role?: 'student' | 'alumni'; // User role
+  collegeEmail?: string;
+  collegeEmailVerified?: boolean;
+  personalEmailVerified?: boolean;
+  alumniVerified?: boolean;
 
   // Profile Strength & Professional fields
   skills?: string[];
@@ -188,6 +193,14 @@ export interface ProfileSetupData {
   careerGoals?: string;
   onboardingCompleted?: boolean;
   onboardingStep?: number;
+  showActiveStatus?: boolean;
+  showReadReceipts?: boolean;
+  showTypingIndicator?: boolean;
+  showOnlinePresence?: boolean;
+  autoSeen?: boolean;
+  notificationEnabled?: boolean;
+  appearance?: 'dark' | 'light' | 'system';
+  language?: string;
 }
 
 /**

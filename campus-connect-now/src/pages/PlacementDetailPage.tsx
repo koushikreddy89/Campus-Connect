@@ -9,13 +9,22 @@ import {
 import { toast } from 'sonner';
 import { placementService } from '@/services/placementService';
 import { useAuthStore } from '@/store/authStore';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useAnnouncementStore } from '@/store/announcementStore';
 
 export default function PlacementDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const role = useAuthStore(s => s.role);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const trackView = useAnnouncementStore(s => s.trackView);
+  const trackClick = useAnnouncementStore(s => s.trackClick);
+
+  useEffect(() => {
+    if (id && role !== 'admin') {
+      trackView(id);
+    }
+  }, [id, role, trackView]);
 
   const { data: placement, isLoading, error } = useQuery({
     queryKey: ['placement', id],
@@ -177,6 +186,9 @@ export default function PlacementDetailPage() {
                 href={placement.applyLink.startsWith('http') ? placement.applyLink : `https://${placement.applyLink}`}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => {
+                  if (id) trackClick(id);
+                }}
                 className={`px-7 py-3.5 rounded-2xl text-xs font-black transition-all shadow-xl flex items-center gap-2 ${
                   isExpired 
                     ? 'bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed'

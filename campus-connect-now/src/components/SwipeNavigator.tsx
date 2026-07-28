@@ -28,7 +28,7 @@ export const getIndexFromPath = (path: string) => {
   if (path.startsWith('/feed')) return 1;
   if (path.startsWith('/alumni')) return 2;
   if (path.startsWith('/chat')) return 3;
-  if (path.startsWith('/profile')) return 4;
+  if (path.startsWith('/profile') || path.startsWith('/settings')) return 4;
   return -1;
 };
 
@@ -92,9 +92,11 @@ function SwipePageWrapper({
         scale: pageScale,
         opacity: pageOpacity,
         pointerEvents: i === activeIndex ? 'auto' : 'none',
-        zIndex: i === activeIndex ? 20 : 10
+        zIndex: i === activeIndex ? 20 : 10,
+        willChange: 'transform, opacity',
+        backfaceVisibility: 'hidden'
       }}
-      className="absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden hide-scrollbar"
+      className="absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden hide-scrollbar [transform:translateZ(0)]"
     >
       {children}
     </motion.div>
@@ -262,11 +264,15 @@ export default function SwipeNavigator() {
               prefersReduced={prefersReduced}
             >
               <Suspense fallback={<PageLoader />}>
-                {i === 0 && <HomePage />}
-                {i === 1 && <FeedPage />}
-                {i === 2 && <PremiumAlumniFeedPage />}
-                {i === 3 && <ChatListPage />}
-                {i === 4 && <ProfilePage />}
+                {(i === activeIndex || isDragging || Math.abs(activeIndex - i) <= 1) ? (
+                  <>
+                    {i === 0 && <HomePage />}
+                    {i === 1 && <FeedPage />}
+                    {i === 2 && <PremiumAlumniFeedPage />}
+                    {i === 3 && <ChatListPage />}
+                    {i === 4 && <ProfilePage />}
+                  </>
+                ) : null}
               </Suspense>
             </SwipePageWrapper>
           );

@@ -647,10 +647,43 @@ function CommunicationCard({ ann, getBadgeClass, getCategoryIcon }: Communicatio
   
   // Custom mock analytics for premium SaaS look
   const [likesCount, setLikesCount] = useState(Math.floor(Math.random() * 45) + 12);
-  const [viewsCount] = useState(Math.floor(Math.random() * 250) + 78);
   const [readTime] = useState(Math.max(1, Math.ceil((ann.description || '').split(' ').length / 200)));
 
   const cardRef = useRef<HTMLDivElement>(null);
+  const trackView = useAnnouncementStore(s => s.trackView);
+  const trackClick = useAnnouncementStore(s => s.trackClick);
+
+  useEffect(() => {
+    if (!ann.id && !ann._id) return;
+    const targetId = ann.id || ann._id;
+    if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
+
+    let timer: NodeJS.Timeout;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            timer = setTimeout(() => {
+              trackView(targetId);
+            }, 1000);
+          } else {
+            if (timer) clearTimeout(timer);
+          }
+        });
+      },
+      { threshold: 0.2 }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [ann.id, ann._id, trackView]);
+
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
   const spotlightOpacity = useMotionValue(0);
@@ -863,7 +896,7 @@ function CommunicationCard({ ann, getBadgeClass, getCategoryIcon }: Communicatio
 
             {/* Metrics */}
             <span className="text-[10px] text-zinc-500 font-bold flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" /> {viewsCount}
+              <Clock className="w-3.5 h-3.5" /> {ann.views || 0}
             </span>
 
             {/* Like */}
@@ -890,6 +923,9 @@ function CommunicationCard({ ann, getBadgeClass, getCategoryIcon }: Communicatio
                 href={ann.pdfAttachment}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => {
+                  trackClick(ann.id || ann._id || '');
+                }}
                 className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
               >
                 <Download className="w-4 h-4" />

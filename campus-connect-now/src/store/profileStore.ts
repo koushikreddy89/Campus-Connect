@@ -50,6 +50,19 @@ const DEFAULT_PROFILE: ProfileSetupData = {
   careerGoals: '',
   onboardingCompleted: false,
   onboardingStep: 1,
+  showActiveStatus: true,
+  showReadReceipts: true,
+  showTypingIndicator: true,
+  showOnlinePresence: true,
+  autoSeen: true,
+  notificationEnabled: true,
+  appearance: 'dark',
+  language: 'English',
+  collegeEmail: '',
+  collegeEmailVerified: false,
+  personalEmailVerified: false,
+  alumniVerified: false,
+  role: 'student',
 };
 
 export const useProfileStore = create<ProfileState>()(
@@ -128,7 +141,7 @@ export const useProfileStore = create<ProfileState>()(
                 achievements: state.profile.achievements || [],
                 skills: state.profile.skills || [],
                 linkedinUrl: state.profile.linkedinUrl || '',
-                profileImageUrl: state.profile.photos[0] || '',
+                profileImageUrl: state.profile?.photos?.[0] || '',
                 onboardingCompleted: onboardingData?.onboardingCompleted !== undefined 
                   ? onboardingData.onboardingCompleted 
                   : state.profile.onboardingCompleted,
@@ -242,6 +255,11 @@ export const useProfileStore = create<ProfileState>()(
                 course: dbProf.department || dbProf.course || '',
                 year: dbProf.batch || dbProf.year || '',
                 personalEmail: dbProf.personalEmail || dbProf.email || '',
+                collegeEmail: dbProf.collegeEmail || dbProf.email || '',
+                collegeEmailVerified: dbProf.collegeEmailVerified || false,
+                personalEmailVerified: dbProf.personalEmailVerified || false,
+                alumniVerified: dbProf.alumniVerified || false,
+                role: dbProf.role || 'student',
                 academicYear: dbProf.academicYear || '',
                 cgpa: dbProf.cgpa || 0,
                 backlogs: dbProf.backlogs || 0,
@@ -271,6 +289,21 @@ export const useProfileStore = create<ProfileState>()(
         }
       },
     }),
-    { name: 'campus-connect-profile' }
+    {
+      name: 'campus-connect-profile',
+      partialize: (state) => ({
+        uid: state.uid,
+        profile: {
+          showActiveStatus: state.profile.showActiveStatus,
+          showReadReceipts: state.profile.showReadReceipts,
+          showTypingIndicator: state.profile.showTypingIndicator,
+          showOnlinePresence: state.profile.showOnlinePresence,
+          autoSeen: state.profile.autoSeen,
+          notificationEnabled: state.profile.notificationEnabled,
+          appearance: state.profile.appearance,
+          language: state.profile.language,
+        }
+      })
+    }
   )
 );

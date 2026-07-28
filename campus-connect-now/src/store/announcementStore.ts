@@ -114,6 +114,9 @@ interface AnnouncementState {
   permanentDeleteAnnouncement: (id: string) => Promise<void>;
   archiveAnnouncement: (id: string) => Promise<void>;
   trackActivity: (id: string, action: 'view' | 'click' | 'apply') => Promise<void>;
+  trackView: (id: string) => Promise<void>;
+  trackClick: (id: string) => Promise<void>;
+  fetchAnalytics: (id: string) => Promise<any>;
   fetchTrash: () => Promise<Announcement[]>;
   getByCollege: (college: string) => Announcement[];
 }
@@ -380,13 +383,56 @@ export const useAnnouncementStore = create<AnnouncementState>()(
 
       trackActivity: async (id, action) => {
         try {
-          await fetch(`${getApiUrl()}/api/admin/posts/${id}/track`, {
+          const endpoint = action === 'view' ? '/api/analytics/view' : '/api/analytics/click';
+          const res = await fetch(`${getApiUrl()}${endpoint}`, {
             method: 'POST',
             headers: getAuthHeaders(),
-            body: JSON.stringify({ action })
+            body: JSON.stringify({ announcementId: id })
           });
+          const result = await res.json();
+          if (result.success && result.data) {
+            set((state) => ({
+              announcements: state.announcements.map((a) =>
+                a.id === id
+                  ? {
+                      ...a,
+                      views: result.data.views,
+                      clicks: result.data.clicks,
+                      applications: result.data.applications,
+                      uniqueViewers: result.data.uniqueViewers,
+                      lastViewed: result.data.lastViewed,
+                      lastClicked: result.data.lastClicked,
+                    }
+                  : a
+              ),
+            }));
+          }
         } catch (e) {
           console.error('Failed to track activity:', e);
+        }
+      },
+
+      trackView: async (id) => {
+        const store = get();
+        await store.trackActivity(id, 'view');
+      },
+
+      trackClick: async (id) => {
+        const store = get();
+        await store.trackActivity(id, 'click');
+      },
+
+      fetchAnalytics: async (id) => {
+        try {
+          const res = await fetch(`${getApiUrl()}/api/analytics/${id}`, {
+            headers: getAuthHeaders()
+          });
+          const result = await res.json();
+          if (!result.success) throw new Error(result.error || 'Failed to fetch analytics');
+          return result.data;
+        } catch (error) {
+          console.error('[AnnouncementStore] Error fetching analytics:', error);
+          throw error;
         }
       },
 

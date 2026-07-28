@@ -98,7 +98,7 @@ export default function SecuritySettings() {
     <div className="min-h-screen bg-background text-foreground pb-12">
       {/* Header */}
       <div className="sticky top-0 z-10 glass-card border-b border-white/5 py-4 px-6 flex items-center gap-4">
-        <button onClick={() => navigate(-1)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+        <button onClick={() => navigate('/settings')} className="p-2 hover:bg-white/5 rounded-full transition-colors">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div>

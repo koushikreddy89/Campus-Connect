@@ -1,7 +1,8 @@
 /**
  * Connection Service - Backend Health Check & Connection Management
- * Mock version for Client-Only Frontend deployment
  */
+
+import { toast } from 'sonner';
 
 export interface HealthResponse {
   status: string;
@@ -17,34 +18,52 @@ export interface ConnectionStatus {
   latency?: number;
 }
 
-// Connection status cache - always true for frontend-only mode
+// Start in offline state until validated
 let connectionStatus: ConnectionStatus = {
   isConnected: true,
   lastChecked: new Date(),
   latency: 5,
 };
 
+let hasShownOfflineToast = false;
+
 // Observers for connection status changes
 const observers: Set<(status: ConnectionStatus) => void> = new Set();
 
 /**
- * Check backend health
+ * Check backend health with 2000ms timeout
  */
 export async function checkBackendHealth(): Promise<HealthResponse | null> {
   const startTime = Date.now();
-  try {
-    const res = await fetch(`${getApiUrl()}/health`);
+  
+  const fetchPromise = fetch(`${getApiUrl()}/health`).then(async (res) => {
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-    const data = await res.json();
+    return res.json();
+  });
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Connection timed out')), 2000)
+  );
+
+  try {
+    const data = await Promise.race([fetchPromise, timeoutPromise]);
     
+    if (!connectionStatus.isConnected) {
+      toast.success('Connected to backend server.', {
+        id: 'cc-offline-toast',
+      });
+    }
+
     connectionStatus = {
       isConnected: true,
       lastChecked: new Date(),
       latency: Date.now() - startTime,
     };
+    hasShownOfflineToast = false;
     notifyObservers();
     return data;
   } catch (err: any) {
+    const isOffline = connectionStatus.isConnected;
     connectionStatus = {
       isConnected: false,
       lastChecked: new Date(),
@@ -52,6 +71,14 @@ export async function checkBackendHealth(): Promise<HealthResponse | null> {
       latency: Date.now() - startTime,
     };
     notifyObservers();
+
+    if (!hasShownOfflineToast) {
+      toast.error('Backend unavailable. Running in offline mode.', {
+        id: 'cc-offline-toast',
+        duration: 5000,
+      });
+      hasShownOfflineToast = true;
+    }
     return null;
   }
 }

@@ -49,11 +49,58 @@
     --sidebar-border: 240 11% 18%;
     --sidebar-ring: 249 76% 65%;
   }
+
+  .light {
+    --background: 240 14% 97%;
+    --foreground: 240 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 262 83% 68%;
+
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 10% 10%;
+
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+
+    --accent: 262 83% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 72% 50%;
+    --success-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 262 83% 58%;
+
+    --sidebar-background: 240 14% 97%;
+    --sidebar-foreground: 240 10% 10%;
+    --sidebar-primary: 262 83% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 5% 96%;
+    --sidebar-accent-foreground: 240 10% 10%;
+    --sidebar-border: 240 6% 90%;
+    --sidebar-ring: 262 83% 58%;
+  }
 }
 
 @layer base {
   * {
     @apply border-border;
+  }
+
+  body, body *, .glass-card, .glass-strong, button, input, textarea, select {
+    transition: background-color 280ms ease-in-out, color 280ms ease-in-out, border-color 280ms ease-in-out, box-shadow 280ms ease-in-out;
   }
 
   html,
@@ -195,5 +242,41 @@
   @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
+  }
+
+  /* Premium Light Mode Overrides */
+  .light .glass {
+    background-color: rgba(255, 255, 255, 0.88) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.04) !important;
+  }
+
+  .light .glass-strong {
+    background-color: rgba(255, 255, 255, 0.94) !important;
+    backdrop-filter: blur(28px) !important;
+    -webkit-backdrop-filter: blur(28px) !important;
+    border: 1px solid rgba(15, 23, 42, 0.1) !important;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.06) !important;
+  }
+
+  .light .glass-card {
+    background-color: #FFFFFF !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border: 1px solid rgba(15, 23, 42, 0.06) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.05) !important;
+  }
+
+  .light .glass-card:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08) !important;
+    transition: transform 180ms ease-out, box-shadow 180ms ease-out !important;
+  }
+
+  .light .gradient-primary {
+    background: linear-gradient(135deg, #7C4DFF, #9A6CFF) !important;
   }
 }

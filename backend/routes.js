@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
-const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug, Follow } = require('./models');
+const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug, Follow, AnnouncementView, AnnouncementClick, UserPreferences } = require('./models');
 const emailService = require('./emailService');
 const crypto = require('crypto');
 const { validatePasswordStrength, isDisposableEmail, generateCaptcha, verifyCaptcha } = require('./securityUtils');
@@ -3086,12 +3086,15 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
 
       const placement = new Placement({
         companyLogo: postData.companyLogo || postData.imageURL || '',
+        companyName: postData.companyName || (postData.title && postData.title.includes(':') ? postData.title.split(':')[0].trim() : postData.title || ''),
         company: postData.companyName || (postData.title && postData.title.includes(':') ? postData.title.split(':')[0].trim() : postData.title || ''),
+        jobRole: postData.jobRole || postData.internshipRole || postData.title,
         role: postData.jobRole || postData.internshipRole || postData.title,
         employmentType: isIntern ? 'Internship' : (postData.employmentType || 'Full Time'),
         salary: String(pkgStr || ''),
         packageVal: computedPackageVal,
         location: postData.location || postData.venue || 'Remote',
+        expiryDate: new Date(expDate),
         registrationDeadline: new Date(expDate),
         description: postData.content || postData.description || postData.internshipDescription || '',
         eligibility: postData.eligibility || '',
@@ -3108,7 +3111,7 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
         college: postData.college,
         
         companyWebsite: postData.companyWebsite || '',
-        workMode: postData.workMode || postData.internshipMode || 'Onsite',
+        workMode: (postData.workMode === 'On-Site' || postData.workMode === 'Onsite') ? 'Onsite' : (postData.workMode || (postData.internshipMode === 'On-Site' || postData.internshipMode === 'Onsite' ? 'Onsite' : postData.internshipMode) || 'Onsite'),
         responsibilities: postData.responsibilities || '',
         requiredSkills: postData.skillsRequired || postData.requiredSkills || [],
         applyLink: postData.registrationLink || postData.applyLink || '',
@@ -3188,6 +3191,17 @@ router.post('/admin/posts', requireAuth, async (req, res) => {
     await newPost.save();
     res.status(201).json({ success: true, data: newPost });
   } catch (error) {
+    if (error.name === 'ValidationError') {
+      const messages = Object.keys(error.errors).map(key => {
+        let fieldName = key;
+        if (key === 'companyName') fieldName = 'Company Name';
+        else if (key === 'jobRole') fieldName = 'Job Role';
+        else if (key === 'expiryDate') fieldName = 'Expiry Date';
+        else if (key === 'employmentType') fieldName = 'Employment Type';
+        return `${fieldName} is required.`;
+      });
+      return res.status(400).json({ success: false, error: messages.join(' ') });
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -3331,7 +3345,7 @@ router.put('/admin/posts/:id', requireAuth, async (req, res) => {
         isPinned: updates.isPinned !== undefined ? updates.isPinned : targetDoc.isPinned,
         visibility: updates.visibility || targetDoc.visibility || 'Public',
         companyWebsite: updates.companyWebsite || targetDoc.companyWebsite || '',
-        workMode: updates.workMode || targetDoc.workMode || 'Onsite',
+        workMode: (updates.workMode === 'On-Site' || updates.workMode === 'Onsite') ? 'Onsite' : (updates.workMode || targetDoc.workMode || 'Onsite'),
         responsibilities: updates.responsibilities || targetDoc.responsibilities || '',
         requiredSkills: updates.skillsRequired || updates.requiredSkills || targetDoc.requiredSkills || [],
         applyLink: updates.registrationLink || updates.applyLink || targetDoc.applyLink || '',
@@ -3525,26 +3539,258 @@ router.post('/admin/posts/:id/duplicate', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/admin/posts/:id/track - Track action views, clicks, applications
+// Helper function to calculate CTR accurately
+function calculateCTR(clicks, views) {
+  if (!views || views === 0) return 0.0;
+  const ctr = (clicks / views) * 100;
+  return Math.min(100.0, parseFloat(ctr.toFixed(1)));
+}
+
+// Helper to broadcast analytics updates in real-time
+function broadcastAnalyticsUpdate(announcementId, analyticsData) {
+  if (globalThis.io) {
+    globalThis.io.emit('analytics:update', {
+      announcementId: announcementId.toString(),
+      ...analyticsData
+    });
+  }
+}
+
+// GET /api/analytics/:announcementId - Fetch live analytics
+router.get('/analytics/:announcementId', requireAuth, async (req, res) => {
+  try {
+    const { announcementId } = req.params;
+
+    let doc = await Placement.findById(announcementId);
+    if (!doc) {
+      doc = await AdminPost.findById(announcementId);
+    }
+
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Broadcast not found' });
+    }
+
+    if (doc.status === 'trash') {
+      return res.status(400).json({ success: false, error: 'Cannot fetch analytics for a deleted broadcast' });
+    }
+
+    const uniqueViewers = await AnnouncementView.countDocuments({ announcementId });
+    const clicksCount = await AnnouncementClick.countDocuments({ announcementId });
+
+    const lastViewDoc = await AnnouncementView.findOne({ announcementId }).sort({ createdAt: -1 });
+    const lastClickDoc = await AnnouncementClick.findOne({ announcementId }).sort({ createdAt: -1 });
+
+    const views = uniqueViewers; // unique view tracking
+    const CTR = calculateCTR(clicksCount, views);
+
+    res.json({
+      success: true,
+      data: {
+        views,
+        uniqueViewers,
+        clicks: clicksCount,
+        applications: clicksCount,
+        ctr: CTR,
+        CTR,
+        lastViewed: lastViewDoc ? lastViewDoc.createdAt : doc.lastViewed || null,
+        lastClicked: lastClickDoc ? lastClickDoc.createdAt : doc.lastClicked || null,
+        createdAt: doc.createdAt,
+        title: doc.title || doc.jobRole || 'Broadcast Announcement',
+        category: doc.category || (doc.employmentType === 'Internship' ? 'internship' : 'placement')
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/analytics/view - Record a unique view
+router.post('/analytics/view', requireAuth, async (req, res) => {
+  try {
+    const { announcementId } = req.body;
+    const userId = req.user.userId;
+
+    if (!announcementId) {
+      return res.status(400).json({ success: false, error: 'announcementId is required' });
+    }
+
+    let doc = await Placement.findById(announcementId);
+    if (!doc) {
+      doc = await AdminPost.findById(announcementId);
+    }
+
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Broadcast not found' });
+    }
+
+    if (doc.status === 'trash') {
+      return res.status(400).json({ success: false, error: 'Cannot view a deleted broadcast' });
+    }
+
+    // Check if view already exists
+    let view = await AnnouncementView.findOne({ announcementId, userId });
+    if (!view) {
+      // Atomic insertion to avoid race conditions
+      try {
+        view = await AnnouncementView.create({ announcementId, userId });
+        
+        // Update parent document
+        doc.views = (doc.views || 0) + 1;
+        doc.uniqueViewers = (doc.uniqueViewers || 0) + 1;
+        doc.lastViewed = new Date();
+        await doc.save();
+      } catch (err) {
+        // Handle duplicate key error gracefully if another request inserted it concurrently
+        if (err.code !== 11000) {
+          throw err;
+        }
+      }
+    }
+
+    // Fetch updated analytics
+    const uniqueViewers = await AnnouncementView.countDocuments({ announcementId });
+    const clicksCount = await AnnouncementClick.countDocuments({ announcementId });
+    const lastViewDoc = await AnnouncementView.findOne({ announcementId }).sort({ createdAt: -1 });
+    const lastClickDoc = await AnnouncementClick.findOne({ announcementId }).sort({ createdAt: -1 });
+    const CTR = calculateCTR(clicksCount, uniqueViewers);
+
+    const analyticsData = {
+      views: uniqueViewers,
+      uniqueViewers,
+      clicks: clicksCount,
+      applications: clicksCount,
+      ctr: CTR,
+      CTR,
+      lastViewed: lastViewDoc ? lastViewDoc.createdAt : new Date(),
+      lastClicked: lastClickDoc ? lastClickDoc.createdAt : doc.lastClicked || null,
+      createdAt: doc.createdAt,
+      title: doc.title || doc.jobRole || '',
+      category: doc.category || (doc.employmentType === 'Internship' ? 'internship' : 'placement')
+    };
+
+    broadcastAnalyticsUpdate(announcementId, analyticsData);
+
+    res.json({ success: true, data: analyticsData });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/analytics/click - Record a non-spam click
+router.post('/analytics/click', requireAuth, async (req, res) => {
+  try {
+    const { announcementId } = req.body;
+    const userId = req.user.userId;
+
+    if (!announcementId) {
+      return res.status(400).json({ success: false, error: 'announcementId is required' });
+    }
+
+    let doc = await Placement.findById(announcementId);
+    if (!doc) {
+      doc = await AdminPost.findById(announcementId);
+    }
+
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Broadcast not found' });
+    }
+
+    if (doc.status === 'trash') {
+      return res.status(400).json({ success: false, error: 'Cannot click a deleted broadcast' });
+    }
+
+    // Anti-spam click check: same user clicking within last 10 seconds
+    const tenSecondsAgo = new Date(Date.now() - 10000);
+    const recentClick = await AnnouncementClick.findOne({
+      announcementId,
+      userId,
+      createdAt: { $gte: tenSecondsAgo }
+    });
+
+    if (!recentClick) {
+      await AnnouncementClick.create({ announcementId, userId });
+      
+      // Update parent document
+      doc.clicks = (doc.clicks || 0) + 1;
+      doc.applications = (doc.applications || 0) + 1;
+      doc.lastClicked = new Date();
+      await doc.save();
+    }
+
+    // Fetch updated analytics
+    const uniqueViewers = await AnnouncementView.countDocuments({ announcementId });
+    const clicksCount = await AnnouncementClick.countDocuments({ announcementId });
+    const lastViewDoc = await AnnouncementView.findOne({ announcementId }).sort({ createdAt: -1 });
+    const lastClickDoc = await AnnouncementClick.findOne({ announcementId }).sort({ createdAt: -1 });
+    const CTR = calculateCTR(clicksCount, uniqueViewers);
+
+    const analyticsData = {
+      views: uniqueViewers,
+      uniqueViewers,
+      clicks: clicksCount,
+      applications: clicksCount,
+      ctr: CTR,
+      CTR,
+      lastViewed: lastViewDoc ? lastViewDoc.createdAt : doc.lastViewed || null,
+      lastClicked: lastClickDoc ? lastClickDoc.createdAt : new Date(),
+      createdAt: doc.createdAt,
+      title: doc.title || doc.jobRole || '',
+      category: doc.category || (doc.employmentType === 'Internship' ? 'internship' : 'placement')
+    };
+
+    broadcastAnalyticsUpdate(announcementId, analyticsData);
+
+    res.json({ success: true, data: analyticsData });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/admin/posts/:id/track - Track action views, clicks, applications (Redirects to new logic)
 router.post('/admin/posts/:id/track', requireAuth, async (req, res) => {
   try {
     const { action } = req.body;
-    let doc = await Placement.findById(req.params.id);
-    if (doc) {
-      if (action === 'view') doc.views = (doc.views || 0) + 1;
-      else if (action === 'click') doc.clicks = (doc.clicks || 0) + 1;
-      else if (action === 'apply') doc.applications = (doc.applications || 0) + 1;
-      await doc.save();
-      return res.json({ success: true, data: doc });
+    const announcementId = req.params.id;
+    const userId = req.user.userId;
+
+    if (action === 'view') {
+      let view = await AnnouncementView.findOne({ announcementId, userId });
+      if (!view) {
+        try {
+          await AnnouncementView.create({ announcementId, userId });
+          let doc = await Placement.findById(announcementId) || await AdminPost.findById(announcementId);
+          if (doc) {
+            doc.views = (doc.views || 0) + 1;
+            doc.uniqueViewers = (doc.uniqueViewers || 0) + 1;
+            doc.lastViewed = new Date();
+            await doc.save();
+          }
+        } catch (err) {
+          if (err.code !== 11000) throw err;
+        }
+      }
+    } else if (action === 'click' || action === 'apply') {
+      const tenSecondsAgo = new Date(Date.now() - 10000);
+      const recentClick = await AnnouncementClick.findOne({
+        announcementId,
+        userId,
+        createdAt: { $gte: tenSecondsAgo }
+      });
+      if (!recentClick) {
+        await AnnouncementClick.create({ announcementId, userId });
+        let doc = await Placement.findById(announcementId) || await AdminPost.findById(announcementId);
+        if (doc) {
+          doc.clicks = (doc.clicks || 0) + 1;
+          doc.applications = (doc.applications || 0) + 1;
+          doc.lastClicked = new Date();
+          await doc.save();
+        }
+      }
     }
 
-    doc = await AdminPost.findById(req.params.id);
+    let doc = await Placement.findById(announcementId);
+    if (!doc) doc = await AdminPost.findById(announcementId);
     if (!doc) return res.status(404).json({ success: false, error: 'Broadcast not found' });
-
-    if (action === 'view') doc.views = (doc.views || 0) + 1;
-    else if (action === 'click') doc.clicks = (doc.clicks || 0) + 1;
-    else if (action === 'apply') doc.applications = (doc.applications || 0) + 1;
-    await doc.save();
 
     res.json({ success: true, data: doc });
   } catch (error) {
@@ -4303,7 +4549,10 @@ router.post('/notifications/:id/read', requireAuth, async (req, res) => {
 // GET /api/student/profile & /api/student/profile/:userId - Get student profile
 const handleGetStudentProfile = async (req, res) => {
   try {
-    const rawId = req.params.userId || req.params.id || req.query.userId || (req.user && req.user.userId);
+    let rawId = req.params.userId || req.params.id || req.query.userId || (req.user && req.user.userId);
+    if (rawId === 'me' && req.user) {
+      rawId = req.user.userId;
+    }
 
     let profile = await User.findOne({ userId: rawId }) || await Alumni.findOne({ userId: rawId });
     if (!profile && mongoose.Types.ObjectId.isValid(rawId)) {
@@ -7043,14 +7292,17 @@ router.post('/referrals/:id/apply', async (req, res) => {
 // 0. GET /api/users/:userId - Retrieve user public details & block relationship status
 router.get('/users/:userId', requireAuth, async (req, res) => {
   try {
-    const { userId } = req.params;
+    let { userId } = req.params;
+    if (userId === 'me' && req.user) {
+      userId = req.user.userId;
+    }
     const currentUserId = req.user.userId;
     
-    let target = await User.findOne({ userId }) || await User.findOne({ _id: userId });
+    let target = await User.findOne({ userId }) || (mongoose.Types.ObjectId.isValid(userId) ? await User.findOne({ _id: userId }) : null);
     let role = 'student';
     
     if (!target) {
-      target = await Alumni.findOne({ userId }) || await Alumni.findOne({ _id: userId });
+      target = await Alumni.findOne({ userId }) || (mongoose.Types.ObjectId.isValid(userId) ? await Alumni.findOne({ _id: userId }) : null);
       role = 'alumni';
     }
     
@@ -9791,11 +10043,15 @@ async function computeMutualCount(user1Id, user2Id) {
 }
 
 // Helper to resolve User or Alumni document by string userId or ObjectId
-const findUserByAnyId = async (rawId) => {
+const findUserByAnyId = async (rawId, currentUserId = null) => {
   if (!rawId) return null;
-  let user = await User.findOne({ userId: rawId }) || await Alumni.findOne({ userId: rawId });
-  if (!user && mongoose.Types.ObjectId.isValid(rawId)) {
-    user = await User.findById(rawId) || await Alumni.findById(rawId);
+  let resolvedId = rawId;
+  if (resolvedId === 'me' && currentUserId) {
+    resolvedId = currentUserId;
+  }
+  let user = await User.findOne({ userId: resolvedId }) || await Alumni.findOne({ userId: resolvedId });
+  if (!user && mongoose.Types.ObjectId.isValid(resolvedId)) {
+    user = await User.findById(resolvedId) || await Alumni.findById(resolvedId);
   }
   return user;
 };
@@ -9804,7 +10060,7 @@ const findUserByAnyId = async (rawId) => {
 const handleGetProfileStats = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId || (req.user ? req.user.userId : null);
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     if (!userDoc) {
       return res.status(404).json({ success: false, error: 'User profile not found' });
     }
@@ -9854,7 +10110,7 @@ router.get('/users/:id/stats', requireAuth, handleGetProfileStats);
 const handleGetProfilePosts = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     const userId = userDoc ? userDoc.userId : rawId;
 
     const posts = await StudentPost.find({ userId }).sort({ createdAt: -1 });
@@ -9886,7 +10142,7 @@ router.get('/users/:id/posts', requireAuth, handleGetProfilePosts);
 const handleGetProfilePhotos = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     const userId = userDoc ? userDoc.userId : rawId;
     const authorName = userDoc ? (userDoc.fullName || userDoc.name || 'User') : 'User';
     const authorAvatar = userDoc ? (userDoc.profileImageUrl || (userDoc.photos && userDoc.photos[0]) || '') : '';
@@ -10019,7 +10275,7 @@ router.get('/users/:id/media', requireAuth, handleGetProfilePhotos);
 const handleGetProfileVideos = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     const userId = userDoc ? userDoc.userId : rawId;
 
     const postsWithVideos = await StudentPost.find({ 
@@ -10050,7 +10306,7 @@ router.get('/profile/:id/videos', requireAuth, handleGetProfileVideos);
 const handleGetProfileProjects = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     if (!userDoc) return res.status(404).json({ success: false, error: 'User not found' });
     
     const rawProjects = userDoc.projects || [];
@@ -10074,7 +10330,7 @@ router.get('/profile/:id/projects', requireAuth, handleGetProfileProjects);
 const handleGetProfileAchievements = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     if (!userDoc) return res.status(404).json({ success: false, error: 'User not found' });
 
     const rawAchievements = userDoc.achievements || [];
@@ -10098,7 +10354,7 @@ router.get('/profile/:id/achievements', requireAuth, handleGetProfileAchievement
 const handleGetProfileFriends = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     const userId = userDoc ? userDoc.userId : rawId;
 
     const connections = await Connection.find({ participants: userId });
@@ -10139,7 +10395,7 @@ router.get('/users/:id/friends', requireAuth, handleGetProfileFriends);
 const handleGetProfileFollowers = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     const userId = userDoc ? userDoc.userId : rawId;
 
     const follows = await Follow.find({ followingId: userId });
@@ -10173,7 +10429,7 @@ router.get('/users/:id/followers', requireAuth, handleGetProfileFollowers);
 const handleGetProfileFollowing = async (req, res) => {
   try {
     const rawId = req.params.userId || req.params.id || req.query.userId;
-    const userDoc = await findUserByAnyId(rawId);
+    const userDoc = await findUserByAnyId(rawId, req.user ? req.user.userId : null);
     const userId = userDoc ? userDoc.userId : rawId;
 
     const follows = await Follow.find({ followerId: userId });
@@ -10382,6 +10638,610 @@ router.post('/posts/upload', safeMulterMiddleware, handleUploadEndpoint);
 router.post('/media/upload', safeMulterMiddleware, handleUploadEndpoint);
 router.post('/chats/:chatId/upload', safeMulterMiddleware, handleUploadEndpoint);
 router.post('/chat/:chatId/upload', safeMulterMiddleware, handleUploadEndpoint);
+
+// PREFERENCES API (Production-Ready)
+const getOrCreatePreferences = async (userId) => {
+  let prefs = await UserPreferences.findOne({ userId });
+  if (!prefs) {
+    prefs = new UserPreferences({ userId });
+    await prefs.save();
+  }
+  return prefs;
+};
+
+// GET /api/preferences
+router.get('/preferences', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is missing from request session' });
+    }
+    const prefs = await getOrCreatePreferences(userId);
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    console.error('Error fetching preferences:', error);
+    res.status(500).json({ success: false, error: 'Unable to retrieve preferences. Please try again.' });
+  }
+});
+
+// PUT /api/preferences
+router.put('/preferences', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is missing from request session' });
+    }
+    const updates = req.body;
+    delete updates.userId;
+    delete updates._id;
+    delete updates.createdAt;
+    delete updates.updatedAt;
+
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: updates },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    console.error('Error updating preferences:', error);
+    res.status(400).json({ success: false, error: 'Unable to update preferences. Please check input parameters.' });
+  }
+});
+
+// PATCH /api/preferences/theme
+router.patch('/preferences/theme', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    const { theme } = req.body;
+    if (!['dark', 'light', 'system'].includes(theme)) {
+      return res.status(400).json({ success: false, error: 'Invalid theme mode specified' });
+    }
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: { theme } },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Unable to update theme. Please try again.' });
+  }
+});
+
+// PATCH /api/preferences/language
+router.patch('/preferences/language', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    const { language } = req.body;
+    const allowed = ['English', 'Hindi', 'Telugu', 'Tamil', 'Kannada', 'Malayalam'];
+    if (!allowed.includes(language)) {
+      return res.status(400).json({ success: false, error: 'Invalid language specified' });
+    }
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: { language } },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Language could not be changed.' });
+  }
+});
+
+// PATCH /api/preferences/timezone
+router.patch('/preferences/timezone', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    const { timezone } = req.body;
+    if (!timezone || typeof timezone !== 'string') {
+      return res.status(400).json({ success: false, error: 'Invalid timezone specified' });
+    }
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: { timezone } },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Unable to update timezone.' });
+  }
+});
+
+// PATCH /api/preferences/date-format
+router.patch('/preferences/date-format', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    const { dateFormat, timeFormat } = req.body;
+    const updates = {};
+    if (dateFormat) {
+      if (!['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'].includes(dateFormat)) {
+        return res.status(400).json({ success: false, error: 'Invalid date format' });
+      }
+      updates.dateFormat = dateFormat;
+    }
+    if (timeFormat) {
+      if (!['12h', '24h'].includes(timeFormat)) {
+        return res.status(400).json({ success: false, error: 'Invalid time format' });
+      }
+      updates.timeFormat = timeFormat;
+    }
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: updates },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Unable to update date/time formats.' });
+  }
+});
+
+// PATCH /api/preferences/notification
+router.patch('/preferences/notification', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    const { notificationSound, notificationVolume } = req.body;
+    const updates = {};
+    if (notificationSound) {
+      if (!['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent'].includes(notificationSound)) {
+        return res.status(400).json({ success: false, error: 'Invalid notification sound specified' });
+      }
+      updates.notificationSound = notificationSound;
+    }
+    if (notificationVolume !== undefined) {
+      const vol = Number(notificationVolume);
+      if (isNaN(vol) || vol < 0 || vol > 100) {
+        return res.status(400).json({ success: false, error: 'Invalid volume level (must be 0-100)' });
+      }
+      updates.notificationVolume = vol;
+    }
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: updates },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Unable to update notification parameters.' });
+  }
+});
+
+// PATCH /api/preferences/data-saver
+router.patch('/preferences/data-saver', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    const { dataSaver, autoPlayVideos, imageQuality, mediaCompression, videoHd, wifiOnlyDownloads } = req.body;
+    const updates = {};
+    if (dataSaver !== undefined) updates.dataSaver = Boolean(dataSaver);
+    if (autoPlayVideos !== undefined) updates.autoPlayVideos = Boolean(autoPlayVideos);
+    if (mediaCompression !== undefined) updates.mediaCompression = Boolean(mediaCompression);
+    if (videoHd !== undefined) updates.videoHd = Boolean(videoHd);
+    if (wifiOnlyDownloads !== undefined) updates.wifiOnlyDownloads = Boolean(wifiOnlyDownloads);
+    if (imageQuality) {
+      if (!['Auto', 'HD', 'Low Quality'].includes(imageQuality)) {
+        return res.status(400).json({ success: false, error: 'Invalid image quality setting' });
+      }
+      updates.imageQuality = imageQuality;
+    }
+    const prefs = await UserPreferences.findOneAndUpdate(
+      { userId },
+      { $set: updates },
+      { new: true, runValidators: true, upsert: true }
+    );
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Unable to update data saver configurations.' });
+  }
+});
+
+// ==========================================
+// STUDENT TO ALUMNI IDENTITY MIGRATION ENDPOINTS
+// ==========================================
+
+// 1. POST /api/auth/student/login
+router.post('/auth/student/login', checkAccountLoginLimit, async (req, res) => {
+  try {
+    const { collegeEmail, code } = req.body;
+    if (!collegeEmail) {
+      return res.status(400).json({ success: false, error: 'College email is required.' });
+    }
+    const lowerEmail = collegeEmail.toLowerCase().trim();
+
+    // Find user by collegeEmail or email
+    const user = await User.findOne({ $or: [{ collegeEmail: lowerEmail }, { email: lowerEmail }] });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'No student record exists for this college email.' });
+    }
+    if (user.role !== 'student') {
+      return res.status(403).json({ success: false, error: 'Only student accounts can use this login method.' });
+    }
+
+    if (!code) {
+      // Send OTP
+      const mfaCode = crypto.randomInt(100000, 1000000).toString();
+      console.log(`🔑 [OTP Debug] Generated Student login OTP code: [${mfaCode}] for email: [${lowerEmail}]`);
+      const hashedMfa = crypto.createHash('sha256').update(mfaCode).digest('hex');
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+      const emailResult = await emailService.sendOTP(lowerEmail, mfaCode, 15);
+      if (!emailResult.success) {
+        return res.status(500).json({ success: false, error: 'Failed to dispatch verification email.' });
+      }
+
+      await OTP.findOneAndUpdate(
+        { email: lowerEmail },
+        { code: hashedMfa, otp: hashedMfa, expiresAt, role: 'student', attempts: 0, verified: false },
+        { upsert: true, new: true }
+      );
+
+      const responsePayload = { success: true, message: 'OTP sent successfully!' };
+      if (process.env.NODE_ENV !== 'production') {
+        responsePayload.debugOtp = mfaCode;
+      }
+      return res.json(responsePayload);
+    } else {
+      // Verify OTP
+      const otpRecord = await OTP.findOne({ email: lowerEmail });
+      if (!otpRecord || otpRecord.expiresAt < new Date()) {
+        if (otpRecord) await OTP.deleteOne({ _id: otpRecord._id });
+        return res.status(400).json({ success: false, error: 'Verification code expired.' });
+      }
+
+      const hashedInput = crypto.createHash('sha256').update(code.trim()).digest('hex');
+      if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
+        otpRecord.attempts += 1;
+        await otpRecord.save();
+        if (otpRecord.attempts >= 5) {
+          await OTP.deleteOne({ _id: otpRecord._id });
+        }
+        return res.status(400).json({ success: false, error: 'Invalid verification code.' });
+      }
+
+      await OTP.deleteOne({ _id: otpRecord._id });
+      
+      // Update verified status
+      user.collegeEmailVerified = true;
+      if (!user.collegeEmail) {
+        user.collegeEmail = user.email;
+      }
+      await user.save();
+
+      const { token } = await createSessionAndTokens(req, res, user.userId, 'student', lowerEmail);
+      return res.json({ success: true, token, role: 'student', user });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
+// 2. POST /api/auth/alumni/verify
+router.post('/auth/alumni/verify', requireAuth, async (req, res) => {
+  try {
+    const { collegeEmail, personalEmail } = req.body;
+    if (!collegeEmail || !personalEmail) {
+      return res.status(400).json({ success: false, error: 'Both college email and personal email are required.' });
+    }
+
+    const lowerCollege = collegeEmail.toLowerCase().trim();
+    const lowerPersonal = personalEmail.toLowerCase().trim();
+
+    // Verify user identity by looking up the student record
+    const user = await User.findOne({
+      $or: [{ collegeEmail: lowerCollege }, { email: lowerCollege }]
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'No student record exists for this college email.' });
+    }
+
+    const currentRole = (user.role || '').toLowerCase().trim();
+    if (currentRole === 'alumni') {
+      return res.status(400).json({ success: false, error: 'This account has already been converted to Alumni.' });
+    }
+    if (currentRole !== 'student') {
+      return res.status(400).json({ success: false, error: 'Only verified student accounts can transition to alumni.' });
+    }
+
+    const dbPersonalEmail = (user.personalEmail || '').toLowerCase().trim();
+    if (dbPersonalEmail !== lowerPersonal) {
+      // Personal email mismatch -> Create Admin Verification Request
+      await AlumniVerification.create({
+        userId: user.userId,
+        email: lowerPersonal,
+        name: user.name,
+        rollNumber: user.rollNumber || '',
+        batch: user.batch || '',
+        status: 'pending',
+        method: 'email'
+      });
+
+      return res.status(400).json({
+        success: false,
+        error: 'The personal email does not match the email linked to your student account.'
+      });
+    }
+
+    // Role migration
+    user.alumniVerified = true;
+    user.role = 'alumni';
+    user.collegeEmailVerified = true;
+    user.personalEmailVerified = true;
+    if (!user.collegeEmail) {
+      user.collegeEmail = user.email;
+    }
+    await user.save();
+
+    // Create main Alumni profile document if it doesn't exist
+    const existingAlumni = await Alumni.findOne({ alumniId: user.userId });
+    if (!existingAlumni) {
+      await Alumni.create({
+        alumniId: user.userId,
+        name: user.name,
+        email: lowerPersonal,
+        personalEmail: lowerPersonal,
+        collegeEmail: lowerCollege,
+        department: user.department || 'General',
+        passoutYear: user.batch || '',
+        batch: user.batch || '',
+        company: '',
+        jobRole: '',
+        experience: 0,
+        bio: user.bio || '',
+        skills: user.skills || [],
+        interests: user.interests || []
+      });
+    }
+
+    const { token } = await createSessionAndTokens(req, res, user.userId, 'alumni', lowerPersonal);
+    return res.json({ success: true, token, role: 'alumni', message: 'Successfully transitioned to Alumni!' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
+// 3. POST /api/auth/alumni/login
+router.post('/auth/alumni/login', checkAccountLoginLimit, async (req, res) => {
+  try {
+    const { personalEmail, code } = req.body;
+    if (!personalEmail) {
+      return res.status(400).json({ success: false, error: 'Personal email is required.' });
+    }
+    const lowerEmail = personalEmail.toLowerCase().trim();
+
+    // Find user by personalEmail and ensure they are alumniVerified
+    const user = await User.findOne({ personalEmail: lowerEmail, alumniVerified: true });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'No verified alumni record exists for this personal email.' });
+    }
+
+    if (!code) {
+      // Send OTP
+      const mfaCode = crypto.randomInt(100000, 1000000).toString();
+      console.log(`🔑 [OTP Debug] Generated Alumni login OTP code: [${mfaCode}] for email: [${lowerEmail}]`);
+      const hashedMfa = crypto.createHash('sha256').update(mfaCode).digest('hex');
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+      const emailResult = await emailService.sendOTP(lowerEmail, mfaCode, 15);
+      if (!emailResult.success) {
+        return res.status(500).json({ success: false, error: 'Failed to dispatch verification email.' });
+      }
+
+      await OTP.findOneAndUpdate(
+        { email: lowerEmail },
+        { code: hashedMfa, otp: hashedMfa, expiresAt, role: 'alumni', attempts: 0, verified: false },
+        { upsert: true, new: true }
+      );
+
+      const responsePayload = { success: true, message: 'OTP sent successfully!' };
+      if (process.env.NODE_ENV !== 'production') {
+        responsePayload.debugOtp = mfaCode;
+      }
+      return res.json(responsePayload);
+    } else {
+      // Verify OTP
+      const otpRecord = await OTP.findOne({ email: lowerEmail });
+      if (!otpRecord || otpRecord.expiresAt < new Date()) {
+        if (otpRecord) await OTP.deleteOne({ _id: otpRecord._id });
+        return res.status(400).json({ success: false, error: 'Verification code expired.' });
+      }
+
+      const hashedInput = crypto.createHash('sha256').update(code.trim()).digest('hex');
+      if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
+        otpRecord.attempts += 1;
+        await otpRecord.save();
+        if (otpRecord.attempts >= 5) {
+          await OTP.deleteOne({ _id: otpRecord._id });
+        }
+        return res.status(400).json({ success: false, error: 'Invalid verification code.' });
+      }
+
+      await OTP.deleteOne({ _id: otpRecord._id });
+
+      const { token } = await createSessionAndTokens(req, res, user.userId, 'alumni', lowerEmail);
+      return res.json({ success: true, token, role: 'alumni', user });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
+// 4. PATCH /api/profile/personal-email
+router.patch('/profile/personal-email', requireAuth, async (req, res) => {
+  try {
+    const { personalEmail, code } = req.body;
+    if (!personalEmail) {
+      return res.status(400).json({ success: false, error: 'Personal email is required.' });
+    }
+    const lowerEmail = personalEmail.toLowerCase().trim();
+
+    const user = await User.findOne({ userId: req.user.userId });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    if (!code) {
+      // Check duplicate
+      const duplicateUser = await User.findOne({ personalEmail: lowerEmail });
+      if (duplicateUser && duplicateUser.userId !== user.userId) {
+        return res.status(400).json({ success: false, error: 'This personal email is already linked to another account.' });
+      }
+
+      // Send OTP
+      const mfaCode = crypto.randomInt(100000, 1000000).toString();
+      console.log(`🔑 [OTP Debug] Generated personal email change OTP code: [${mfaCode}] for email: [${lowerEmail}]`);
+      const hashedMfa = crypto.createHash('sha256').update(mfaCode).digest('hex');
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+      const emailResult = await emailService.sendOTP(lowerEmail, mfaCode, 15);
+      if (!emailResult.success) {
+        return res.status(500).json({ success: false, error: 'Failed to dispatch verification email.' });
+      }
+
+      await OTP.findOneAndUpdate(
+        { email: lowerEmail },
+        { code: hashedMfa, otp: hashedMfa, expiresAt, role: req.user.role, attempts: 0, verified: false },
+        { upsert: true, new: true }
+      );
+
+      const responsePayload = { success: true, message: 'OTP sent successfully!' };
+      if (process.env.NODE_ENV !== 'production') {
+        responsePayload.debugOtp = mfaCode;
+      }
+      return res.json(responsePayload);
+    } else {
+      // Verify OTP
+      const otpRecord = await OTP.findOne({ email: lowerEmail });
+      if (!otpRecord || otpRecord.expiresAt < new Date()) {
+        if (otpRecord) await OTP.deleteOne({ _id: otpRecord._id });
+        return res.status(400).json({ success: false, error: 'Verification code expired.' });
+      }
+
+      const hashedInput = crypto.createHash('sha256').update(code.trim()).digest('hex');
+      if (otpRecord.code !== hashedInput && otpRecord.otp !== hashedInput) {
+        otpRecord.attempts += 1;
+        await otpRecord.save();
+        if (otpRecord.attempts >= 5) {
+          await OTP.deleteOne({ _id: otpRecord._id });
+        }
+        return res.status(400).json({ success: false, error: 'Invalid verification code.' });
+      }
+
+      await OTP.deleteOne({ _id: otpRecord._id });
+
+      // Save
+      user.personalEmail = lowerEmail;
+      user.personalEmailVerified = true;
+      await user.save();
+
+      // If they are also an Alumni, sync their alumni profile
+      const alumniProf = await Alumni.findOne({ alumniId: user.userId });
+      if (alumniProf) {
+        alumniProf.personalEmail = lowerEmail;
+        alumniProf.email = lowerEmail;
+        await alumniProf.save();
+      }
+
+      return res.json({ success: true, message: 'Personal email updated successfully.' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
+// 5. GET /api/admin/alumni/pending
+router.get('/admin/alumni/pending', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Unauthorized admin access.' });
+    }
+    const pending = await AlumniVerification.find({ status: 'pending' });
+    res.json({ success: true, data: pending });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
+// 6. POST /api/admin/alumni/approve
+router.post('/admin/alumni/approve', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Unauthorized admin access.' });
+    }
+    const { verificationId } = req.body;
+    const verification = await AlumniVerification.findById(verificationId);
+    if (!verification) {
+      return res.status(404).json({ success: false, error: 'Verification request not found.' });
+    }
+
+    const user = await User.findOne({ userId: verification.userId });
+    if (user) {
+      user.role = 'alumni';
+      user.alumniVerified = true;
+      user.personalEmail = verification.email;
+      user.personalEmailVerified = true;
+      await user.save();
+
+      // Create Alumni profile document if it doesn't exist
+      const existingAlumni = await Alumni.findOne({ alumniId: user.userId });
+      if (!existingAlumni) {
+        await Alumni.create({
+          alumniId: user.userId,
+          name: user.name,
+          email: verification.email,
+          personalEmail: verification.email,
+          collegeEmail: user.collegeEmail || user.email,
+          department: user.department || 'General',
+          batch: user.batch || '',
+          company: '',
+          jobRole: '',
+          experience: 0,
+          bio: user.bio || '',
+          skills: user.skills || [],
+          interests: user.interests || []
+        });
+      }
+    }
+
+    verification.status = 'approved';
+    verification.verifiedAt = new Date();
+    verification.verifiedBy = req.user.userId;
+    await verification.save();
+
+    res.json({ success: true, message: 'Alumni verification approved successfully.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
+// 7. POST /api/admin/alumni/reject
+router.post('/admin/alumni/reject', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Unauthorized admin access.' });
+    }
+    const { verificationId } = req.body;
+    const verification = await AlumniVerification.findById(verificationId);
+    if (!verification) {
+      return res.status(404).json({ success: false, error: 'Verification request not found.' });
+    }
+
+    verification.status = 'rejected';
+    verification.verifiedAt = new Date();
+    verification.verifiedBy = req.user.userId;
+    await verification.save();
+
+    res.json({ success: true, message: 'Alumni verification rejected.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
 
 module.exports.createNotification = createNotification;
 

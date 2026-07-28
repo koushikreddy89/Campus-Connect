@@ -156,6 +156,7 @@ export default function HomePage() {
   const announcements = useAnnouncementStore(s => s.announcements);
   const fetchAnnouncements = useAnnouncementStore(s => s.fetchAnnouncements);
   const isLoading = useAnnouncementStore(s => s.isLoading);
+  const error = useAnnouncementStore(s => s.error);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -163,15 +164,11 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchAnnouncements(college);
-    const interval = setInterval(() => {
-      fetchAnnouncements(college);
-    }, 10000);
-    return () => clearInterval(interval);
   }, [college, fetchAnnouncements]);
 
   const filteredAnnouncements = useMemo(() => {
     return announcements.filter(ann => {
-      if (ann.college.toLowerCase() !== college.toLowerCase()) return false;
+      if (ann.college && ann.college.trim().toLowerCase() !== college.trim().toLowerCase()) return false;
       
       if (selectedCategory !== 'all') {
         const cat = ann.category?.toLowerCase() || '';
@@ -433,6 +430,20 @@ export default function HomePage() {
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500" />
             <span className="text-xs text-zinc-400">Syncing with database...</span>
+          </div>
+        ) : error ? (
+          <div className="py-12 text-center rounded-2xl border border-white/5 bg-red-950/10 p-6 max-w-md mx-auto mt-6">
+            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+            <h3 className="text-sm font-bold text-white">
+              {error.includes('expired') || error.includes('Session') || error.includes('401') ? 'Session Expired' : 
+               error.includes('privileges') || error.includes('403') ? 'Access Denied' : 
+               'Unable to load announcements'}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              {error.includes('expired') || error.includes('Session') || error.includes('401') ? 'Please sign in again.' : 
+               error.includes('privileges') || error.includes('403') ? 'You do not have permission to access this page.' : 
+               'Please try again later.'}
+            </p>
           </div>
         ) : filteredAnnouncements.length === 0 ? (
           <EmptyState 

@@ -45,6 +45,27 @@ export interface PlacementOpportunity {
   placementType?: 'OFFICIAL' | 'ALUMNI_REFERRAL';
   isEligible?: boolean;
   ineligibilityReason?: string;
+  eligibilityChecks?: {
+    cgpa: boolean;
+    department: boolean;
+    batch: boolean;
+    backlogs: boolean;
+  };
+  eligibilityDetails?: {
+    cgpa: { student: number; required: number };
+    department: { student: string; allowed: string[] };
+    batch: { student: string; allowed: string[] };
+    backlogs: { student: number; allowed: number };
+  };
+  failedChecks?: Array<{
+    field: string;
+    label: string;
+    required: string;
+    actual: string;
+  }>;
+  hasApplied?: boolean;
+  isLinkConfigured?: boolean;
+  jobDescription?: string;
 }
 
 function getHeaders(contentType = 'application/json') {
@@ -156,6 +177,18 @@ export const placementService = {
     const result = await res.json();
     if (!result.success) throw new Error(result.error || 'Failed to fetch details');
     return result.data;
+  },
+
+  /**
+   * Securely fetch dynamic application link and submit application record
+   */
+  getSecureApplyLink: async (id: string): Promise<string> => {
+    const res = await fetch(`${getApiUrl()}/api/placements/${id}/apply`, {
+      headers: getHeaders()
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || 'Failed to fetch secure application link');
+    return result.applyLink;
   },
 
   /**

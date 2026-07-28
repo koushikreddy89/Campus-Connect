@@ -405,8 +405,16 @@ export default function PlacementsDashboard() {
         ) : error ? (
           <div className="py-12 text-center rounded-2xl border border-white/5 bg-red-950/10 p-6">
             <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-            <h3 className="text-sm font-bold text-white">Database Sync Failed</h3>
-            <p className="text-xs text-muted-foreground mt-1">Failed to query placements. Check MongoDB connection.</p>
+            <h3 className="text-sm font-bold text-white">
+              {error instanceof Error && (error.message.includes('expired') || error.message.includes('Session') || error.message.includes('token') || error.message.includes('401')) ? 'Session Expired' : 
+               error instanceof Error && (error.message.includes('privileges') || error.message.includes('denied') || error.message.includes('403')) ? 'Permission Denied' : 
+               'Unable to load placement data.'}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              {error instanceof Error && (error.message.includes('expired') || error.message.includes('Session') || error.message.includes('token') || error.message.includes('401')) ? 'Please sign in again.' : 
+               error instanceof Error && (error.message.includes('privileges') || error.message.includes('denied') || error.message.includes('403')) ? 'You do not have permission to access this page.' : 
+               'Please try again later.'}
+            </p>
           </div>
         ) : placements.length === 0 ? (
           // Redesigned Empty States
@@ -523,15 +531,73 @@ export default function PlacementsDashboard() {
                     <div className="flex items-center lg:flex-col lg:items-end justify-between lg:justify-center gap-3">
                       {/* Eligibility Badge */}
                       {role === 'student' && (
-                        placement.isEligible === false ? (
-                          <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-[#F04438]/10 text-[#F04438] border border-[#F04438]/20 uppercase tracking-wide">
-                            Not Eligible
-                          </span>
-                        ) : (
-                          <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-[#16C784]/10 text-[#16C784] border border-[#16C784]/20 uppercase tracking-wide">
-                            Eligible
-                          </span>
-                        )
+                        <div className="flex flex-col lg:items-end gap-1.5 w-full max-w-[200px]">
+                          {placement.isEligible === false ? (
+                            <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-[#F04438]/10 text-[#F04438] border border-[#F04438]/20 uppercase tracking-wide inline-block text-center w-fit">
+                              Not Eligible
+                            </span>
+                          ) : (
+                            <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-[#16C784]/10 text-[#16C784] border border-[#16C784]/20 uppercase tracking-wide inline-block text-center w-fit">
+                              Eligible
+                            </span>
+                          )}
+                          {placement.eligibilityChecks && (
+                            <div className="text-[10px] bg-slate-950/60 backdrop-blur-md border border-white/[0.06] rounded-xl p-2.5 space-y-1 w-full text-left shadow-xl">
+                              {/* CGPA */}
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">CGPA</span>
+                                {!placement.eligibilityChecks.cgpa ? (
+                                  <span className="font-extrabold text-[#F04438] bg-[#F04438]/10 px-1 rounded">
+                                    {placement.eligibilityDetails?.cgpa.student} &lt; {placement.eligibilityDetails?.cgpa.required} ❌
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 font-semibold">
+                                    {placement.eligibilityDetails?.cgpa.student} ✅
+                                  </span>
+                                )}
+                              </div>
+                              {/* Dept */}
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Dept</span>
+                                {!placement.eligibilityChecks.department ? (
+                                  <span className="font-extrabold text-[#F04438] bg-[#F04438]/10 px-1 rounded max-w-[100px] truncate" title={placement.eligibilityDetails?.department.student}>
+                                    {placement.eligibilityDetails?.department.student || 'None'} ❌
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 font-semibold truncate max-w-[100px]" title={placement.eligibilityDetails?.department.student}>
+                                    {placement.eligibilityDetails?.department.student} ✅
+                                  </span>
+                                )}
+                              </div>
+                              {/* Batch */}
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Batch</span>
+                                {!placement.eligibilityChecks.batch ? (
+                                  <span className="font-extrabold text-[#F04438] bg-[#F04438]/10 px-1 rounded">
+                                    {placement.eligibilityDetails?.batch.student || 'None'} ❌
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 font-semibold">
+                                    {placement.eligibilityDetails?.batch.student} ✅
+                                  </span>
+                                )}
+                              </div>
+                              {/* Backlogs */}
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Backlogs</span>
+                                {!placement.eligibilityChecks.backlogs ? (
+                                  <span className="font-extrabold text-[#F04438] bg-[#F04438]/10 px-1 rounded">
+                                    {placement.eligibilityDetails?.backlogs.student} &gt; {placement.eligibilityDetails?.backlogs.allowed} ❌
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 font-semibold">
+                                    {placement.eligibilityDetails?.backlogs.student} ✅
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       <div className="flex items-center gap-2">

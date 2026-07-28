@@ -4,7 +4,8 @@ import {
   ArrowLeft, Briefcase, MapPin, DollarSign, Calendar, 
   CheckCircle, AlertCircle, Shield, UserCheck, Share2, 
   Bookmark, ExternalLink, Mail, Award, Clock, FileText, Check,
-  XCircle, CheckCircle2, ChevronRight, HelpCircle, MessageSquare
+  XCircle, CheckCircle2, ChevronRight, HelpCircle, MessageSquare,
+  Zap, Wrench, Star, ClipboardList, Gift, AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { placementService } from '@/services/placementService';
@@ -20,17 +21,48 @@ export default function PlacementDetailPage() {
   const trackView = useAnnouncementStore(s => s.trackView);
   const trackClick = useAnnouncementStore(s => s.trackClick);
 
-  useEffect(() => {
-    if (id && role !== 'admin') {
-      trackView(id);
-    }
-  }, [id, role, trackView]);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyError, setApplyError] = useState('');
+  const [hasAppliedState, setHasAppliedState] = useState(false);
 
   const { data: placement, isLoading, error } = useQuery({
     queryKey: ['placement', id],
     queryFn: () => placementService.getPlacementDetails(id || ''),
     enabled: !!id
   });
+
+  useEffect(() => {
+    if (id && role !== 'admin') {
+      trackView(id);
+    }
+  }, [id, role, trackView]);
+
+  useEffect(() => {
+    if (placement) {
+      setHasAppliedState(!!placement.hasApplied);
+    }
+  }, [placement]);
+
+  const handleApply = async () => {
+    if (!id) return;
+    setIsApplying(true);
+    setApplyError('');
+    try {
+      if (role !== 'admin') {
+        trackClick(id);
+      }
+      const link = await placementService.getSecureApplyLink(id);
+      setHasAppliedState(true);
+      window.open(link.startsWith('http') ? link : `https://${link}`, '_blank', 'noopener,noreferrer');
+      toast.success('Successfully applied! Redirecting to application link...');
+    } catch (err: any) {
+      const errMsg = err.message || 'Unable to verify eligibility. Please try again later.';
+      setApplyError(errMsg);
+      toast.error(errMsg);
+    } finally {
+      setIsApplying(false);
+    }
+  };
 
   const handleShare = () => {
     if (navigator.share) {
@@ -181,26 +213,57 @@ export default function PlacementDetailPage() {
               <Share2 className="w-5 h-5" />
             </button>
             
-            {placement.applyLink ? (
-              <a
-                href={placement.applyLink.startsWith('http') ? placement.applyLink : `https://${placement.applyLink}`}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => {
-                  if (id) trackClick(id);
-                }}
-                className={`px-7 py-3.5 rounded-2xl text-xs font-black transition-all shadow-xl flex items-center gap-2 ${
-                  isExpired 
-                    ? 'bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed'
-                    : 'bg-[#6D5EF5] hover:bg-[#6D5EF5]/90 text-white shadow-[#6D5EF5]/20 active:scale-95'
-                }`}
+            {!placement.isLinkConfigured ? (
+              <button 
+                className="px-7 py-3.5 rounded-2xl bg-white/5 border border-white/10 text-slate-500 text-xs font-black cursor-not-allowed"
+                disabled
               >
-                {isExpired ? 'Application Closed' : 'Apply Directly'}
-                <ExternalLink className="w-4 h-4" />
-              </a>
-            ) : (
-              <button className="px-7 py-3.5 rounded-2xl bg-white/5 border border-white/10 text-slate-500 text-xs font-bold cursor-not-allowed">
                 No Link Configured
+              </button>
+            ) : isApplying ? (
+              <button 
+                className="px-7 py-3.5 rounded-2xl text-xs font-black bg-white/10 text-slate-400 border border-white/10 cursor-wait flex items-center gap-2 animate-pulse"
+                disabled
+              >
+                Checking Eligibility...
+              </button>
+            ) : hasAppliedState ? (
+              <button 
+                className="px-7 py-3.5 rounded-2xl text-xs font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default flex items-center gap-2"
+                disabled
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                Application Submitted
+              </button>
+            ) : isExpired ? (
+              <button 
+                className="px-7 py-3.5 rounded-2xl text-xs font-black bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex items-center gap-2"
+                disabled
+              >
+                Deadline Passed
+              </button>
+            ) : placement.status === 'archived' ? (
+              <button 
+                className="px-7 py-3.5 rounded-2xl text-xs font-black bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex items-center gap-2"
+                disabled
+              >
+                Drive Archived
+              </button>
+            ) : role === 'student' && placement.isEligible === false ? (
+              <button 
+                title="You do not currently meet the eligibility requirements for this placement."
+                className="px-7 py-3.5 rounded-2xl text-xs font-black bg-red-500/10 text-red-400 border border-red-500/20 cursor-not-allowed opacity-50 flex items-center gap-2 transition-none"
+                disabled
+              >
+                Not Eligible to Apply
+              </button>
+            ) : (
+              <button
+                onClick={handleApply}
+                className="px-7 py-3.5 rounded-2xl text-xs font-black bg-[#6D5EF5] hover:bg-[#6D5EF5]/90 text-white shadow-xl shadow-[#6D5EF5]/20 active:scale-95 flex items-center gap-2 group-hover:scale-[1.02] transition-all"
+              >
+                Apply Directly
+                <ExternalLink className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -237,75 +300,41 @@ export default function PlacementDetailPage() {
         <div className="space-y-6 lg:col-span-1">
           {/* ELIGIBILITY STATUS CARD */}
           {role === 'student' && (
-            placement.isEligible === false ? (
-              <div className="rounded-3xl border border-[#F04438]/20 bg-[#F04438]/10 p-6 space-y-4">
-                <div className="flex items-center gap-3">
-                  <XCircle className="w-8 h-8 text-[#F04438] flex-shrink-0" />
-                  <div>
-                    <h3 className="text-base font-extrabold text-white">Not Eligible</h3>
-                    <p className="text-[10px] text-slate-300 uppercase tracking-widest font-black mt-0.5">Matching Failed</p>
-                  </div>
+            <div className={`rounded-3xl border p-6 space-y-4 ${placement.isEligible === false ? 'border-[#F04438]/20 bg-[#F04438]/10' : 'border-[#16C784]/20 bg-[#16C784]/10'}`}>
+              <div className="flex items-center gap-3">
+                <span className="text-xl">{placement.isEligible === false ? '🔴' : '🟢'}</span>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">
+                    {placement.isEligible === false ? 'Not Eligible' : 'Eligible'}
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1">
+                    {placement.isEligible === false 
+                      ? 'You are currently not eligible for this placement.' 
+                      : 'You satisfy all placement eligibility requirements.'}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed font-semibold">
-                  {placement.ineligibilityReason || "You don't meet the academic criteria configured for this drive."}
-                </p>
               </div>
-            ) : (
-              <div className="rounded-3xl border border-[#16C784]/20 bg-[#16C784]/10 p-6 space-y-4">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="w-8 h-8 text-[#16C784] flex-shrink-0" />
-                  <div>
-                    <h3 className="text-base font-extrabold text-white">You are Eligible</h3>
-                    <p className="text-[10px] text-slate-300 uppercase tracking-widest font-black mt-0.5">Matching Succeeded</p>
-                  </div>
+
+              {placement.isEligible === false && placement.failedChecks && placement.failedChecks.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-white/[0.06] space-y-3">
+                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Why?</h4>
+                  <ul className="space-y-3">
+                    {placement.failedChecks.map((check: any, idx: number) => (
+                      <li key={idx} className="text-xs">
+                        <div className="font-bold text-slate-300">{check.label}</div>
+                        <div className="flex justify-between items-center mt-1 text-slate-400">
+                          <span>Required: <strong className="text-slate-200">{check.required}</strong></span>
+                          <span>Your profile: <strong className="text-[#F04438] font-black bg-[#F04438]/10 px-1.5 py-0.5 rounded">{check.actual}</strong></span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed font-medium">
-                  Your academic profile satisfies all constraints. You can proceed with the application.
-                </p>
-              </div>
-            )
+              )}
+            </div>
           )}
 
-          {/* ELIGIBILITY CRITERIA PANEL */}
-          <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-5">
-            <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-[#16C784]" />
-              Eligibility Parameters
-            </h3>
-            
-            <div className="space-y-4">
-              <div className="flex items-start justify-between border-b border-white/[0.04] pb-3">
-                <span className="text-xs text-slate-400 font-semibold">Target Branches</span>
-                <span className="text-xs text-white font-extrabold text-right max-w-[60%]">
-                  {resolvedBranches.length > 0 ? resolvedBranches.join(', ') : 'All Departments'}
-                </span>
-              </div>
-              <div className="flex items-start justify-between border-b border-white/[0.04] pb-3">
-                <span className="text-xs text-slate-400 font-semibold">Target Batches</span>
-                <span className="text-xs text-white font-extrabold text-right">
-                  {resolvedBatches.length > 0 ? resolvedBatches.join(', ') : 'All Batches'}
-                </span>
-              </div>
-              <div className="flex items-start justify-between border-b border-white/[0.04] pb-3">
-                <span className="text-xs text-slate-400 font-semibold">Minimum CGPA</span>
-                <span className="text-xs text-[#16C784] font-extrabold">
-                  {resolvedCGPA > 0 ? `${resolvedCGPA} CGPA` : 'No Threshold'}
-                </span>
-              </div>
-              <div className="flex items-start justify-between border-b border-white/[0.04] pb-3">
-                <span className="text-xs text-slate-400 font-semibold">Max Backlogs</span>
-                <span className="text-xs text-white font-extrabold">
-                  {resolvedBacklogs} Active
-                </span>
-              </div>
-              <div className="flex items-start justify-between pb-1">
-                <span className="text-xs text-slate-400 font-semibold">Drive Date</span>
-                <span className="text-xs text-white font-extrabold">
-                  {placement.driveDate ? new Date(placement.driveDate).toLocaleDateString() : 'To Be Announced'}
-                </span>
-              </div>
-            </div>
-          </div>
+
 
           {/* CONTACT RECRUITER SECTION */}
           {placement.placementType === 'ALUMNI_REFERRAL' && placement.contactAlumni && (
@@ -331,28 +360,34 @@ export default function PlacementDetailPage() {
         {/* RIGHT COMPONENT: DETAILED TEXT INFO */}
         <div className="lg:col-span-2 space-y-6">
           {/* JOB DESCRIPTION */}
-          {placement.description && (
-            <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
-              <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
-                <Briefcase className="w-4 h-4 text-[#6D5EF5]" />
-                Job Description & Scope
-              </h3>
+          <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
+            <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
+              <FileText className="w-4 h-4 text-[#6D5EF5]" />
+              Job Description
+            </h3>
+            {placement.jobDescription && placement.jobDescription.trim() ? (
               <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
-                {placement.description}
+                {placement.jobDescription}
               </p>
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-slate-500 italic leading-relaxed">
+                No detailed job description has been provided by the recruiter.
+              </p>
+            )}
+          </div>
 
           {/* KEY RESPONSIBILITIES */}
-          {placement.responsibilities && (
+          {placement.responsibilities && placement.responsibilities.length > 0 && (
             <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
               <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4 text-[#6D5EF5]" />
-                Responsibilities & Deliverables
+                <Zap className="w-4 h-4 text-[#6D5EF5]" />
+                Responsibilities
               </h3>
-              <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
-                {placement.responsibilities}
-              </p>
+              <ul className="list-disc pl-5 space-y-2 text-xs text-slate-300">
+                {placement.responsibilities.map((resp: string, idx: number) => (
+                  <li key={idx} className="break-words">{resp}</li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -361,8 +396,8 @@ export default function PlacementDetailPage() {
             (placement.skillsRequired && placement.skillsRequired.length > 0)) && (
             <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
               <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#6D5EF5]" />
-                Target Skills
+                <Wrench className="w-4 h-4 text-[#6D5EF5]" />
+                Required Skills
               </h3>
               <div className="flex flex-wrap gap-2 pt-1">
                 {(placement.requiredSkills && placement.requiredSkills.length > 0 ? placement.requiredSkills : (placement.skillsRequired || [])).map((skill: string) => (
@@ -371,6 +406,70 @@ export default function PlacementDetailPage() {
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* PREFERRED SKILLS */}
+          {placement.preferredSkills && placement.preferredSkills.length > 0 && (
+            <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
+              <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
+                <Star className="w-4 h-4 text-[#6D5EF5]" />
+                Preferred Skills
+              </h3>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {placement.preferredSkills.map((skill: string) => (
+                  <span key={skill} className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/[0.06] text-xs font-bold text-slate-300">
+                    {skill}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SELECTION PROCESS */}
+          {placement.selectionProcess && placement.selectionProcess.length > 0 && (
+            <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
+              <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
+                <ClipboardList className="w-4 h-4 text-[#6D5EF5]" />
+                Selection Process
+              </h3>
+              <ol className="list-decimal pl-5 space-y-2 text-xs text-slate-300">
+                {placement.selectionProcess.map((step: string, idx: number) => (
+                  <li key={idx} className="break-words font-semibold">
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* BENEFITS */}
+          {placement.benefits && placement.benefits.length > 0 && (
+            <div className="rounded-3xl border border-white/[0.06] bg-[#121826] p-6 space-y-3">
+              <h3 className="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2">
+                <Gift className="w-4 h-4 text-[#6D5EF5]" />
+                Benefits
+              </h3>
+              <ul className="list-disc pl-5 space-y-2 text-xs text-slate-300">
+                {placement.benefits.map((benefit: string, idx: number) => (
+                  <li key={idx} className="break-words">{benefit}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* IMPORTANT NOTES */}
+          {placement.notes && placement.notes.length > 0 && (
+            <div className="rounded-3xl border border-[#FFB020]/20 bg-[#FFB020]/5 p-6 space-y-3">
+              <h3 className="text-xs font-black uppercase text-[#FFB020] tracking-widest flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#FFB020]" />
+                Important Notes
+              </h3>
+              <ul className="list-disc pl-5 space-y-2 text-xs text-slate-300">
+                {placement.notes.map((note: string, idx: number) => (
+                  <li key={idx} className="break-words font-medium">{note}</li>
+                ))}
+              </ul>
             </div>
           )}
 

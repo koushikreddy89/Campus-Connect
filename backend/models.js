@@ -432,9 +432,12 @@ const PlacementSchema = new mongoose.Schema({
   // Dynamic fields from broadcast system integration
   companyWebsite: { type: String, default: '' },
   workMode: { type: String, enum: ['Remote', 'Onsite', 'Hybrid'], default: 'Onsite' },
-  responsibilities: { type: String, default: '' },
+  responsibilities: { type: [String], default: [] },
   requiredSkills: { type: [String], default: [] },
   preferredSkills: { type: [String], default: [] },
+  selectionProcess: { type: [String], default: [] },
+  benefits: { type: [String], default: [] },
+  notes: { type: [String], default: [] },
   registrationLink: { type: String, default: '' },
   assessmentDate: { type: Date },
   interviewDate: { type: Date },
@@ -464,7 +467,12 @@ const PlacementSchema = new mongoose.Schema({
   registrationDeadline: { type: Date },
   driveDate: { type: Date },
   applyLink: { type: String },
-  placementType: { type: String, enum: ['OFFICIAL', 'ALUMNI_REFERRAL'] }
+  placementType: { type: String, enum: ['OFFICIAL', 'ALUMNI_REFERRAL'] },
+  jobDescription: { type: String, default: '' },
+  applicants: [{
+    userId: { type: String, required: true },
+    appliedAt: { type: Date, default: Date.now }
+  }]
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // Pre-save hook to synchronize new and old fields
@@ -594,7 +602,24 @@ module.exports = {
     batch: { type: String, default: '' },
     cgpa: { type: Number, default: 0.0 },
     backlogs: { type: Number, default: 0 },
-    academicYear: { type: String, default: '' },
+    academicYear: { 
+      type: String, 
+      default: '',
+      get: function(v) {
+        if (!this.admissionYear) return v || '1st Year';
+        const currentYear = new Date().getFullYear();
+        const currentMonth = new Date().getMonth();
+        let diff = currentYear - this.admissionYear;
+        if (currentMonth >= 6) {
+          diff += 1;
+        }
+        if (diff <= 0) diff = 1;
+        if (diff > 4) return 'Graduated';
+        const yearNames = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+        return yearNames[diff - 1] || 'Graduated';
+      }
+    },
+    admissionYear: { type: Number },
     skills: { type: [String], default: [] },
     bio: { type: String, default: '' },
     interests: { type: [String], default: [] },
@@ -1004,6 +1029,8 @@ const UserPreferencesSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 module.exports.UserPreferences = mongoose.model('UserPreferences', UserPreferencesSchema, 'user_preferences');
+
+
 
 
 

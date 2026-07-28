@@ -1308,31 +1308,55 @@ export default function SettingsPage({
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Year/Batch</label>
+                      <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Admission Year</label>
                       <select
-                        value={profile.year || ''}
-                        onChange={e => updateProfile({ year: e.target.value })}
+                        value={profile.admissionYear || ''}
+                        onChange={e => updateProfile({ admissionYear: e.target.value ? parseInt(e.target.value) : undefined })}
                         className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
                       >
-                        <option value="">Select Year</option>
-                        {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+                        <option value="">Select Admission Year</option>
+                        {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 8 + i).map(year => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Graduation Year</label>
+                      <select
+                        value={profile.graduationYear || ''}
+                        onChange={e => updateProfile({ graduationYear: e.target.value ? parseInt(e.target.value) : undefined })}
+                        className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
+                      >
+                        <option value="">Select Graduation Year</option>
+                        {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 4 + i).map(year => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">Academic Year</label>
-                    <select
-                      value={profile.academicYear || ''}
-                      onChange={e => updateProfile({ academicYear: e.target.value })}
-                      className="w-full bg-zinc-950/40 border border-white/5 rounded-2xl px-4 py-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
-                    >
-                      <option value="">Select Academic Year</option>
-                      <option value="1st Year">1st Year</option>
-                      <option value="2nd Year">2nd Year</option>
-                      <option value="3rd Year">3rd Year</option>
-                      <option value="4th Year">4th Year</option>
-                    </select>
-                  </div>
+                  {profile.admissionYear && profile.graduationYear && (
+                    <div className="bg-zinc-950/20 border border-white/[0.04] rounded-2xl p-4 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-400 font-semibold">Academic Duration</span>
+                        <span className="text-white font-extrabold">{profile.admissionYear} – {profile.graduationYear}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-400 font-semibold">Current Academic Year</span>
+                        <span className="text-violet-400 font-black">
+                          {(() => {
+                            const currentYear = new Date().getFullYear();
+                            const currentMonth = new Date().getMonth();
+                            let diff = currentYear - profile.admissionYear;
+                            if (currentMonth >= 6) diff += 1;
+                            if (diff <= 0) diff = 1;
+                            if (diff > 4) return 'Graduated';
+                            const yearNames = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+                            return yearNames[diff - 1] || 'Graduated';
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-zinc-400 mb-1.5 block font-bold uppercase tracking-wide">CGPA</label>

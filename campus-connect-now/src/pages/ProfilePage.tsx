@@ -984,7 +984,7 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
       { id: 'name', name: 'Full Name', checked: !!(displayName && displayName.trim() !== ''), actionText: 'Add Full Name', tab: 'basic' as const },
       { id: 'bio', name: 'Bio/About', checked: !!(profile.bio && profile.bio.trim() !== ''), actionText: 'Add Bio/About', tab: 'basic' as const },
       { id: 'course', name: 'Department', checked: !!(profile.course && profile.course.trim() !== ''), actionText: 'Add Department / Course', tab: 'basic' as const },
-      { id: 'year', name: 'Batch', checked: !!(profile.year && profile.year.trim() !== ''), actionText: 'Add Batch / Year', tab: 'basic' as const },
+      { id: 'year', name: 'Academic Duration', checked: !!(profile.admissionYear && profile.graduationYear), actionText: 'Add Academic Duration', tab: 'basic' as const },
       { id: 'personalEmail', name: 'Personal Email', checked: !!(profile.personalEmail && profile.personalEmail.trim() !== ''), actionText: 'Add Personal Email', tab: 'basic' as const },
       { id: 'linkedinUrl', name: 'LinkedIn Profile', checked: !!(profile.linkedinUrl && profile.linkedinUrl.trim() !== ''), actionText: 'Add LinkedIn Profile', tab: 'social' as const },
       { id: 'githubUrl', name: 'GitHub Profile', checked: !!(profile.githubUrl && profile.githubUrl.trim() !== ''), actionText: 'Add GitHub Profile', tab: 'social' as const },
@@ -1129,11 +1129,32 @@ export default function ProfilePage({ targetUserId: propTargetUserId }: { target
                         @{displayName ? displayName.toLowerCase().replace(/[^a-z0-9]/g, '') : 'user'}
                       </p>
                       
-                      {/* Department / Batch */}
+                      {/* Department / Academic Duration */}
                       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-2 text-xs text-zinc-350 font-bold">
                         {profile.course && <span>{profile.course}</span>}
-                        {profile.course && profile.year && <span className="text-zinc-700">•</span>}
-                        {profile.year && <span>Batch of {profile.year}</span>}
+                        {profile.course && (profile.admissionYear && profile.graduationYear) && <span className="text-zinc-700">•</span>}
+                        {profile.admissionYear && profile.graduationYear ? (
+                          <>
+                            <span>Academic Duration: {profile.admissionYear} – {profile.graduationYear}</span>
+                            <span className="text-zinc-700">•</span>
+                            <span className="text-violet-400">
+                              {(() => {
+                                const currentYear = new Date().getFullYear();
+                                const currentMonth = new Date().getMonth();
+                                let diff = currentYear - profile.admissionYear;
+                                if (currentMonth >= 6) diff += 1;
+                                if (diff <= 0) diff = 1;
+                                if (diff > 4) return 'Graduated';
+                                const yearNames = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+                                return yearNames[diff - 1] || 'Graduated';
+                              })()}
+                            </span>
+                          </>
+                        ) : profile.year ? (
+                          <>
+                            <span>Batch of {profile.year}</span>
+                          </>
+                        ) : null}
                         {email && <span className="text-zinc-700">•</span>}
                         {email && <span className="text-zinc-450 hover:text-white transition-colors">{email}</span>}
                       </div>

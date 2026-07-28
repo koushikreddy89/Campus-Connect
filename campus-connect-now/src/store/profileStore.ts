@@ -32,6 +32,8 @@ const DEFAULT_PROFILE: ProfileSetupData = {
   year: '',
   personalEmail: '',
   academicYear: '',
+  admissionYear: undefined,
+  graduationYear: undefined,
   cgpa: 0,
   backlogs: 0,
   // Alumni fields
@@ -158,9 +160,9 @@ export const useProfileStore = create<ProfileState>()(
               interests: state.profile.interests,
               photos: state.profile.photos,
               course: state.profile.course, // maps to department on backend
-              year: state.profile.year, 
+              year: state.profile.graduationYear ? state.profile.graduationYear.toString() : state.profile.year, 
               department: state.profile.course,
-              batch: state.profile.batch || state.profile.passoutYear || state.profile.year || '2026',
+              batch: state.profile.graduationYear ? state.profile.graduationYear.toString() : (state.profile.batch || state.profile.passoutYear || state.profile.year || '2026'),
               personalEmail: state.profile.personalEmail,
               skills: state.profile.skills || [],
               clubs: state.profile.clubs || [],
@@ -169,7 +171,9 @@ export const useProfileStore = create<ProfileState>()(
               githubUrl: state.profile.githubUrl || '',
               cgpa: state.profile.cgpa,
               backlogs: state.profile.backlogs,
-              academicYear: state.profile.year || state.profile.academicYear || '',
+              academicYear: state.profile.academicYear || '',
+              admissionYear: state.profile.admissionYear,
+              graduationYear: state.profile.graduationYear,
               projects: state.profile.projects || [],
               careerGoals: state.profile.careerGoals || '',
               onboardingCompleted: onboardingData?.onboardingCompleted !== undefined 

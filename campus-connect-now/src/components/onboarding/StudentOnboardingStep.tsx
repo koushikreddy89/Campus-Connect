@@ -5,11 +5,13 @@ import CourseAndBranchSelector from './CourseAndBranchSelector';
 
 interface StudentOnboardingStepProps {
   course: string;
-  year: string;
+  admissionYear?: number;
+  graduationYear?: number;
   bio: string;
   personalEmail: string;
   onUpdateCourse: (course: string) => void;
-  onUpdateYear: (year: string) => void;
+  onUpdateAdmissionYear: (year: number) => void;
+  onUpdateGraduationYear: (year: number) => void;
   onUpdateBio: (bio: string) => void;
   onUpdatePersonalEmail: (email: string) => void;
 }
@@ -48,8 +50,10 @@ export default function StudentOnboardingStep({
       />
 
       <AcademicYearSelector
-        selectedYear={year}
-        onSelectYear={onUpdateYear}
+        admissionYear={admissionYear}
+        graduationYear={graduationYear}
+        onSelectAdmissionYear={onUpdateAdmissionYear}
+        onSelectGraduationYear={onUpdateGraduationYear}
       />
 
       <div>

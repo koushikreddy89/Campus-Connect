@@ -169,6 +169,8 @@ export interface ProfileSetupData {
   year?: string;
   personalEmail?: string;
   academicYear?: string;
+  admissionYear?: number;
+  graduationYear?: number;
   cgpa?: number;
   backlogs?: number;
   // Alumni fields

@@ -376,19 +376,23 @@ const requireAuth = async (req, res, next) => {
       return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
     }
     
+    console.log(`🔑 [Auth] JWT Received. Verifying...`);
     const decoded = jwt.verify(token, JWT_SECRET);
+    console.log(`🔑 [Auth] JWT Verified: user=${decoded.userId}, role=${decoded.role}, session=${decoded.sessionId || 'none'}`);
     
     // DB-backed session check
     let college = '';
     if (decoded.sessionId) {
       const session = await Session.findOne({ sessionId: decoded.sessionId });
       if (!session || new Date() > session.expiresAt) {
+        console.warn(`🔑 [Auth] Session expired or revoked: session=${decoded.sessionId}`);
         return res.status(401).json({ success: false, error: 'Session expired or revoked. Please log in again.', isSessionInvalid: true });
       }
       
       // Inactivity limit check (30 minutes)
       const idleLimit = 30 * 60 * 1000;
       if (Date.now() - new Date(session.lastActiveAt).getTime() > idleLimit) {
+        console.warn(`🔑 [Auth] Session expired due to inactivity: session=${decoded.sessionId}`);
         await Session.deleteOne({ sessionId: session.sessionId });
         res.clearCookie('access_token');
         res.clearCookie('refresh_token');
@@ -403,6 +407,7 @@ const requireAuth = async (req, res, next) => {
       await session.save();
     } else if (decoded.role !== 'admin') {
       // Require session ID for non-admin accounts to ensure active session tracking
+      console.warn(`🔑 [Auth] Missing sessionId in non-admin token`);
       return res.status(401).json({ success: false, error: 'Session tracking is required. Please log in again.', isSessionInvalid: true });
     }
 
@@ -413,6 +418,7 @@ const requireAuth = async (req, res, next) => {
       const account = await Model.findOne({ userId: decoded.userId });
       if (account) {
         if (account.isSuspended) {
+          console.warn(`🔑 [Auth] Account suspended: user=${decoded.userId}`);
           return res.status(403).json({ success: false, error: 'Your account has been suspended. Please contact support.', isSuspended: true });
         }
         college = account.college;
@@ -424,9 +430,12 @@ const requireAuth = async (req, res, next) => {
     }
 
     req.user = { ...decoded, _id: userOid, college };
+    console.log(`🔑 [Auth] Controller Executed: user=${req.user.userId}, role=${req.user.role}, college=${req.user.college}`);
     next();
   } catch (err) {
-    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid token' });
+    const errorMsg = err.name === 'TokenExpiredError' ? 'Unauthorized: Token expired' : 'Unauthorized: Invalid token';
+    console.warn(`🔑 [Auth] JWT Invalid: ${errorMsg}. Reason: ${err.message}`);
+    return res.status(401).json({ success: false, error: errorMsg, isSessionInvalid: true });
   }
 };
 
@@ -3346,8 +3355,12 @@ router.put('/admin/posts/:id', requireAuth, async (req, res) => {
         visibility: updates.visibility || targetDoc.visibility || 'Public',
         companyWebsite: updates.companyWebsite || targetDoc.companyWebsite || '',
         workMode: (updates.workMode === 'On-Site' || updates.workMode === 'Onsite') ? 'Onsite' : (updates.workMode || targetDoc.workMode || 'Onsite'),
-        responsibilities: updates.responsibilities || targetDoc.responsibilities || '',
+        responsibilities: Array.isArray(updates.responsibilities) ? updates.responsibilities : (typeof updates.responsibilities === 'string' && updates.responsibilities.trim() ? updates.responsibilities.split('\n').map(r => r.replace(/^•\s*/, '').trim()).filter(Boolean) : (targetDoc.responsibilities || [])),
         requiredSkills: updates.skillsRequired || updates.requiredSkills || targetDoc.requiredSkills || [],
+        preferredSkills: updates.preferredSkills || targetDoc.preferredSkills || [],
+        selectionProcess: Array.isArray(updates.selectionProcess) ? updates.selectionProcess : (typeof updates.selectionProcess === 'string' && updates.selectionProcess.trim() ? updates.selectionProcess.split('\n').map(s => s.trim()).filter(Boolean) : (targetDoc.selectionProcess || [])),
+        benefits: Array.isArray(updates.benefits) ? updates.benefits : (typeof updates.benefits === 'string' && updates.benefits.trim() ? updates.benefits.split('\n').map(b => b.trim()).filter(Boolean) : (targetDoc.benefits || [])),
+        notes: Array.isArray(updates.notes) ? updates.notes : (typeof updates.notes === 'string' && updates.notes.trim() ? updates.notes.split('\n').map(n => n.trim()).filter(Boolean) : (targetDoc.notes || [])),
         applyLink: updates.registrationLink || updates.applyLink || targetDoc.applyLink || '',
         assessmentDate: updates.assessmentDate ? new Date(updates.assessmentDate) : targetDoc.assessmentDate,
         interviewDate: updates.interviewDate ? new Date(updates.interviewDate) : targetDoc.interviewDate,
@@ -3805,8 +3818,12 @@ router.get('/student/home-feed', requireAuth, async (req, res) => {
     const college = req.user.college || 'SR University';
     const { category } = req.query;
 
+    const cleanCollege = college.trim();
+    const escapedCollege = cleanCollege.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const collegeRegex = new RegExp('^' + escapedCollege + '$', 'i');
+
     let query = {
-      college: new RegExp(college, 'i'),
+      college: { $regex: collegeRegex },
       status: 'active'
     };
 
@@ -3834,7 +3851,7 @@ router.get('/student/home-feed', requireAuth, async (req, res) => {
     // Fetch placements (where placementType is OFFICIAL)
     if (!category || category === 'all' || category === 'placement' || category === 'internship') {
       const placementQuery = {
-        college: new RegExp(college, 'i'),
+        college: { $regex: collegeRegex },
         status: 'active',
         placementType: 'OFFICIAL'
       };
@@ -4609,7 +4626,9 @@ router.post('/student/profile', async (req, res) => {
       onboardingStep,
       cgpa,
       backlogs,
-      academicYear
+      academicYear,
+      admissionYear,
+      graduationYear
     } = req.body;
     if (!userId || !email) {
       return res.status(400).json({ success: false, error: 'userId and email are required' });
@@ -4631,6 +4650,26 @@ router.post('/student/profile', async (req, res) => {
     const existingUser = await User.findOne({ userId });
     const finalName = (name && name.trim() !== '') ? name.trim() : (existingUser?.name || existingUser?.fullName || '');
 
+    const finalAdmissionYear = typeof admissionYear === 'number' ? admissionYear : (admissionYear ? parseInt(admissionYear) : (existingUser?.admissionYear || null));
+    const finalGraduationYear = typeof graduationYear === 'number' ? graduationYear : (graduationYear ? parseInt(graduationYear) : (existingUser?.graduationYear || null));
+
+    let computedAcademicYear = academicYear || existingUser?.academicYear || '';
+    if (finalAdmissionYear) {
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth();
+      let diff = currentYear - finalAdmissionYear;
+      if (currentMonth >= 6) {
+        diff += 1;
+      }
+      if (diff <= 0) diff = 1;
+      if (diff > 4) {
+        computedAcademicYear = 'Graduated';
+      } else {
+        const yearNames = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+        computedAcademicYear = yearNames[diff - 1] || 'Graduated';
+      }
+    }
+
     const updatePayload = {
       email,
       role: 'student',
@@ -4651,7 +4690,9 @@ router.post('/student/profile', async (req, res) => {
       careerGoals: careerGoals !== undefined ? careerGoals : (existingUser?.careerGoals || ''),
       cgpa: typeof cgpa === 'number' ? cgpa : (cgpa ? parseFloat(cgpa) : (existingUser?.cgpa || 0.0)),
       backlogs: typeof backlogs === 'number' ? backlogs : (backlogs ? parseInt(backlogs) : (existingUser?.backlogs || 0)),
-      academicYear: academicYear !== undefined ? academicYear : (existingUser?.academicYear || '')
+      academicYear: computedAcademicYear,
+      admissionYear: finalAdmissionYear,
+      graduationYear: finalGraduationYear
     };
 
     if (finalName) {
@@ -8842,6 +8883,19 @@ router.get('/placements/:id', requireAuth, async (req, res) => {
 
     let isEligible = true;
     let ineligibilityReason = '';
+    let eligibilityChecks = {
+      cgpa: true,
+      department: true,
+      batch: true,
+      backlogs: true
+    };
+    let eligibilityDetails = {
+      cgpa: { student: 0.0, required: 0.0 },
+      department: { student: '', allowed: [] },
+      batch: { student: '', allowed: [] },
+      backlogs: { student: 0, allowed: 0 }
+    };
+    let failedChecks = [];
 
     if (req.user.role === 'student') {
       const student = await User.findOne({ userId: req.user.userId });
@@ -8852,13 +8906,83 @@ router.get('/placements/:id', requireAuth, async (req, res) => {
       const eligibilityInfo = checkPlacementEligibility(student, placement);
       isEligible = eligibilityInfo.eligible;
       ineligibilityReason = eligibilityInfo.reason || '';
+      eligibilityChecks = eligibilityInfo.checks;
+      eligibilityDetails = eligibilityInfo.details;
+      failedChecks = eligibilityInfo.failedChecks || [];
     }
 
     const plainObj = placement.toObject();
     plainObj.isEligible = isEligible;
     plainObj.ineligibilityReason = ineligibilityReason;
+    plainObj.eligibilityChecks = eligibilityChecks;
+    plainObj.eligibilityDetails = eligibilityDetails;
+    plainObj.failedChecks = failedChecks;
+    plainObj.jobDescription = placement.jobDescription || cleanDescription(placement.description);
+    
+    // Check if student already applied
+    const alreadyApplied = placement.applicants && placement.applicants.some(app => app.userId === req.user.userId);
+    plainObj.hasApplied = alreadyApplied;
+
+    plainObj.isLinkConfigured = !!placement.applyLink || !!placement.registrationLink;
+
+    if (req.user.role === 'student') {
+      // Hide link from initial payload to prevent inspection bypass
+      delete plainObj.applyLink;
+      delete plainObj.registrationLink;
+    }
 
     res.json({ success: true, data: plainObj });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/placements/:id/apply - Get secure application link and record application
+router.get('/placements/:id/apply', requireAuth, async (req, res) => {
+  try {
+    const placement = await Placement.findById(req.params.id);
+    if (!placement) {
+      return res.status(404).json({ success: false, error: 'Placement opportunity not found' });
+    }
+
+    if (req.user.role !== 'student') {
+      // Admins/Alumni can get the link directly
+      return res.json({ success: true, applyLink: placement.applyLink });
+    }
+
+    const student = await User.findOne({ userId: req.user.userId });
+    if (!student) {
+      return res.status(404).json({ success: false, error: 'Student profile not found' });
+    }
+
+    // 1. Run eligibility engine
+    const eligibilityInfo = checkPlacementEligibility(student, placement);
+    if (!eligibilityInfo.eligible) {
+      return res.status(403).json({ success: false, error: 'You are not eligible to apply for this placement.' });
+    }
+
+    // 2. Verify deadline has not passed
+    const deadline = placement.registrationDeadline || placement.expiryDate;
+    if (deadline && new Date(deadline) < new Date()) {
+      return res.status(403).json({ success: false, error: 'Application deadline has passed.' });
+    }
+
+    // 3. Verify placement is active
+    if (placement.status !== 'active') {
+      return res.status(403).json({ success: false, error: 'This placement opportunity is no longer active.' });
+    }
+
+    // 4. Record application if not already applied
+    const alreadyApplied = placement.applicants && placement.applicants.some(app => app.userId === req.user.userId);
+    if (!alreadyApplied) {
+      if (!placement.applicants) {
+        placement.applicants = [];
+      }
+      placement.applicants.push({ userId: req.user.userId, appliedAt: new Date() });
+      await placement.save();
+    }
+
+    res.json({ success: true, applyLink: placement.applyLink });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -9027,6 +9151,18 @@ async function getPlacementsWithEligibility(req, typeFilter = null) {
       const plainObj = p.toObject();
       plainObj.isEligible = eligibilityInfo.eligible;
       plainObj.ineligibilityReason = eligibilityInfo.reason || '';
+      plainObj.eligibilityChecks = eligibilityInfo.checks;
+      plainObj.eligibilityDetails = eligibilityInfo.details;
+      plainObj.failedChecks = eligibilityInfo.failedChecks || [];
+      plainObj.jobDescription = p.jobDescription || cleanDescription(p.description);
+      
+      const alreadyApplied = p.applicants && p.applicants.some(app => app.userId === req.user.userId);
+      plainObj.hasApplied = alreadyApplied;
+
+      if (req.user.role === 'student') {
+        delete plainObj.applyLink;
+        delete plainObj.registrationLink;
+      }
       return plainObj;
     });
 
@@ -9038,6 +9174,20 @@ async function getPlacementsWithEligibility(req, typeFilter = null) {
       const plainObj = p.toObject();
       plainObj.isEligible = true;
       plainObj.ineligibilityReason = '';
+      plainObj.eligibilityChecks = {
+        cgpa: true,
+        department: true,
+        batch: true,
+        backlogs: true
+      };
+      plainObj.eligibilityDetails = {
+        cgpa: { student: 0.0, required: 0.0 },
+        department: { student: '', allowed: [] },
+        batch: { student: '', allowed: [] },
+        backlogs: { student: 0, allowed: 0 }
+      };
+      plainObj.failedChecks = [];
+      plainObj.jobDescription = p.jobDescription || cleanDescription(p.description);
       return plainObj;
     });
   }
@@ -9054,54 +9204,158 @@ async function getPlacementsWithEligibility(req, typeFilter = null) {
   };
 }
 
+function getCanonicalDepartment(dept) {
+  if (!dept) return '';
+  const clean = dept.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+  
+  if (clean.includes('computerscience') || clean === 'cse' || clean.includes('cse') || clean.includes('comp') || clean.includes('cs')) {
+    return 'CSE';
+  }
+  if (clean.includes('informationtechnology') || clean === 'it' || clean.includes('it')) {
+    return 'IT';
+  }
+  if (clean.includes('mechanical') || clean === 'me' || clean === 'mech' || clean.includes('mechengg')) {
+    return 'MECH';
+  }
+  if (clean.includes('electrical') || clean === 'eee' || clean.includes('eee')) {
+    return 'EEE';
+  }
+  if (clean.includes('electronics') || clean === 'ece' || clean.includes('ece')) {
+    return 'ECE';
+  }
+  if (clean.includes('civil')) {
+    return 'CIVIL';
+  }
+  if (clean.includes('datascience') || clean.includes('data')) {
+    return 'DATA_SCIENCE';
+  }
+  if (clean.includes('aiml') || clean.includes('ai') || clean.includes('artificial')) {
+    return 'AIML';
+  }
+  return clean.toUpperCase();
+}
+
+function cleanDescription(desc) {
+  if (!desc) return '';
+  const lines = desc.split('\n');
+  const filtered = lines.filter(line => {
+    const trimmed = line.trim().toLowerCase();
+    return !(
+      trimmed.startsWith('work mode:') ||
+      trimmed.startsWith('package:') ||
+      trimmed.startsWith('eligibility:') ||
+      trimmed.startsWith('deadline:') ||
+      trimmed.startsWith('job title:') ||
+      trimmed.startsWith('company:') ||
+      trimmed.startsWith('batch:') ||
+      trimmed.startsWith('posting date:')
+    );
+  });
+  return filtered.join('\n').trim();
+}
+
 function checkPlacementEligibility(student, placement) {
-  const cgpa = student.cgpa || 0.0;
-  const backlogs = student.backlogs || 0;
+  const cgpa = student.cgpa !== undefined && student.cgpa !== null ? Number(student.cgpa) : 0.0;
+  const backlogs = student.backlogs !== undefined && student.backlogs !== null ? Number(student.backlogs) : 0;
   const dept = student.department || '';
-  const year = student.academicYear || '';
-  const batch = student.batch || '';
+  const batch = student.graduationYear ? student.graduationYear.toString() : (student.batch || '');
   const college = student.college || 'SR University';
 
+  // Default checks
+  const checks = {
+    cgpa: true,
+    department: true,
+    batch: true,
+    backlogs: true
+  };
+
   if (placement.college && placement.college.toLowerCase() !== college.toLowerCase()) {
-    return { eligible: false, reason: `This drive is for ${placement.college} students.` };
+    return {
+      eligible: false,
+      checks: {
+        cgpa: false,
+        department: false,
+        batch: false,
+        backlogs: false
+      },
+      reason: `This drive is for ${placement.college} students.`
+    };
   }
 
-  const minCGPA = placement.minCGPA !== undefined ? placement.minCGPA : (placement.minimumCGPA !== undefined ? placement.minimumCGPA : 0.0);
-  if (cgpa < minCGPA) {
-    return { eligible: false, reason: `Minimum CGPA required is ${minCGPA}. Your CGPA is ${cgpa}.` };
-  }
+  const minCGPA = placement.minCGPA !== undefined ? Number(placement.minCGPA) : (placement.minimumCGPA !== undefined ? Number(placement.minimumCGPA) : 0.0);
+  checks.cgpa = cgpa >= minCGPA;
 
-  const maxBacklogs = placement.maxBacklogs !== undefined ? placement.maxBacklogs : (placement.maximumBacklogs !== undefined ? placement.maximumBacklogs : 0);
-  if (backlogs > maxBacklogs) {
-    return { eligible: false, reason: `Maximum backlogs allowed is ${maxBacklogs}. You have ${backlogs} active backlogs.` };
-  }
+  const maxBacklogs = placement.maxBacklogs !== undefined ? Number(placement.maxBacklogs) : (placement.maximumBacklogs !== undefined ? Number(placement.maximumBacklogs) : 0);
+  checks.backlogs = backlogs <= maxBacklogs;
 
   const branches = placement.branches && placement.branches.length > 0 ? placement.branches : (placement.eligibleDepartments && placement.eligibleDepartments.length > 0 ? placement.eligibleDepartments : []);
-  if (branches.length > 0 && !branches.includes("All Departments")) {
-    const studentEquivalents = getDepartmentEquivalents(dept);
-    const hasBranchMatch = studentEquivalents.some(d => branches.some(b => b.toLowerCase() === d.toLowerCase()));
-    if (!hasBranchMatch) {
-      return { eligible: false, reason: `Eligible branches are: ${branches.join(', ')}.` };
-    }
+  if (branches.length > 0 && !branches.includes("All Departments") && !branches.includes("All")) {
+    const studentCanonical = getCanonicalDepartment(dept);
+    checks.department = branches.some(b => getCanonicalDepartment(b) === studentCanonical);
   }
 
   const batches = placement.batches && placement.batches.length > 0 ? placement.batches : (placement.eligibleBatches && placement.eligibleBatches.length > 0 ? placement.eligibleBatches : []);
   if (batches.length > 0) {
-    const hasBatchMatch = batches.some(b => b.toString() === batch.toString());
-    if (!hasBatchMatch) {
-      return { eligible: false, reason: `Eligible batches are: ${batches.join(', ')}.` };
-    }
+    checks.batch = batches.some(b => b.toString().trim() === batch.toString().trim());
   }
 
-  const years = placement.eligibleYears || [];
-  if (years.length > 0 && !years.includes("All Years")) {
-    const hasYearMatch = years.includes(year);
-    if (!hasYearMatch) {
-      return { eligible: false, reason: `Eligible academic years are: ${years.join(', ')}.` };
-    }
+  const eligible = checks.cgpa && checks.backlogs && checks.department && checks.batch;
+
+  // Build reason string for failures
+  const reasons = [];
+  if (!checks.cgpa) reasons.push(`CGPA: ${cgpa} (Required: ${minCGPA})`);
+  if (!checks.backlogs) reasons.push(`Backlogs: ${backlogs} (Max allowed: ${maxBacklogs})`);
+  if (!checks.department) reasons.push(`Department: ${dept} (Allowed: ${branches.join(', ')})`);
+  if (!checks.batch) reasons.push(`Batch: ${batch} (Allowed: ${batches.join(', ')})`);
+
+  const details = {
+    cgpa: { student: cgpa, required: minCGPA },
+    department: { student: dept, allowed: branches.length > 0 ? branches : ['All Departments'] },
+    batch: { student: batch, allowed: batches.length > 0 ? batches : ['All Batches'] },
+    backlogs: { student: backlogs, allowed: maxBacklogs }
+  };
+
+  const failedChecks = [];
+  if (!checks.cgpa) {
+    failedChecks.push({
+      field: "cgpa",
+      label: "Minimum CGPA",
+      required: minCGPA.toString(),
+      actual: cgpa.toString()
+    });
+  }
+  if (!checks.department) {
+    failedChecks.push({
+      field: "department",
+      label: "Allowed Departments",
+      required: branches.length > 0 ? branches.join(', ') : 'All Departments',
+      actual: dept || 'None'
+    });
+  }
+  if (!checks.batch) {
+    failedChecks.push({
+      field: "batch",
+      label: "Required Batch",
+      required: batches.length > 0 ? batches.join(', ') : 'All Batches',
+      actual: batch || 'None'
+    });
+  }
+  if (!checks.backlogs) {
+    failedChecks.push({
+      field: "backlogs",
+      label: "Maximum Backlogs",
+      required: maxBacklogs.toString(),
+      actual: backlogs.toString()
+    });
   }
 
-  return { eligible: true };
+  return {
+    eligible,
+    checks,
+    details,
+    failedChecks,
+    reason: reasons.length > 0 ? reasons.join('; ') : ''
+  };
 }
 
 // 3. POST /api/placements - Create placement post (Admins & Verified Alumni)
@@ -9154,7 +9408,14 @@ router.post('/placements', requireAuth, async (req, res) => {
       contactAlumni,
       applyLink,
       registrationLink,
-      workMode
+      workMode,
+      responsibilities,
+      requiredSkills,
+      skillsRequired,
+      preferredSkills,
+      selectionProcess,
+      benefits,
+      notes
     } = req.body;
 
     const finalCompany = company || companyName;
@@ -9171,6 +9432,50 @@ router.post('/placements', requireAuth, async (req, res) => {
     } else if (salary || packageStr) {
       const match = String(salary || packageStr).match(/(\d+(\.\d+)?)/);
       if (match) computedPackageVal = parseFloat(match[1]);
+    }
+
+    let finalResponsibilities = [];
+    if (Array.isArray(responsibilities)) {
+      finalResponsibilities = responsibilities;
+    } else if (typeof responsibilities === 'string' && responsibilities.trim()) {
+      finalResponsibilities = responsibilities.split('\n').map(r => r.replace(/^•\s*/, '').trim()).filter(Boolean);
+    }
+
+    let finalReqSkills = [];
+    if (Array.isArray(requiredSkills)) {
+      finalReqSkills = requiredSkills;
+    } else if (Array.isArray(skillsRequired)) {
+      finalReqSkills = skillsRequired;
+    } else if (typeof requiredSkills === 'string' && requiredSkills.trim()) {
+      finalReqSkills = requiredSkills.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    let finalPrefSkills = [];
+    if (Array.isArray(preferredSkills)) {
+      finalPrefSkills = preferredSkills;
+    } else if (typeof preferredSkills === 'string' && preferredSkills.trim()) {
+      finalPrefSkills = preferredSkills.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    let finalSelection = [];
+    if (Array.isArray(selectionProcess)) {
+      finalSelection = selectionProcess;
+    } else if (typeof selectionProcess === 'string' && selectionProcess.trim()) {
+      finalSelection = selectionProcess.split('\n').map(s => s.trim()).filter(Boolean);
+    }
+
+    let finalBenefits = [];
+    if (Array.isArray(benefits)) {
+      finalBenefits = benefits;
+    } else if (typeof benefits === 'string' && benefits.trim()) {
+      finalBenefits = benefits.split('\n').map(b => b.trim()).filter(Boolean);
+    }
+
+    let finalNotes = [];
+    if (Array.isArray(notes)) {
+      finalNotes = notes;
+    } else if (typeof notes === 'string' && notes.trim()) {
+      finalNotes = notes.split('\n').map(n => n.trim()).filter(Boolean);
     }
 
     const placement = new Placement({
@@ -9201,7 +9506,13 @@ router.post('/placements', requireAuth, async (req, res) => {
       college,
       status: 'active',
       workMode: workMode || 'Onsite',
-      eligibleYears: eligibleYears || []
+      eligibleYears: eligibleYears || [],
+      responsibilities: finalResponsibilities,
+      requiredSkills: finalReqSkills,
+      preferredSkills: finalPrefSkills,
+      selectionProcess: finalSelection,
+      benefits: finalBenefits,
+      notes: finalNotes
     });
 
     await placement.save();

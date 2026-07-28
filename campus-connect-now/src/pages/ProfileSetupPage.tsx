@@ -119,9 +119,9 @@ export default function ProfileSetupPage() {
       // Alumni must have: passout year, company, and job role
       return !!(profile.passoutYear && profile.company && profile.jobRole);
     } else {
-      // Students must have: course, year, and a valid personal email
+      // Students must have: course, admissionYear, graduationYear, and a valid personal email
       const emailValid = profile.personalEmail && /\S+@\S+\.\S+/.test(profile.personalEmail);
-      return !!(profile.course && profile.year && emailValid);
+      return !!(profile.course && profile.admissionYear && profile.graduationYear && emailValid);
     }
   };
 
@@ -275,11 +275,13 @@ export default function ProfileSetupPage() {
               ) : (
                 <StudentOnboardingStep
                   course={profile.course || ''}
-                  year={profile.year || ''}
+                  admissionYear={profile.admissionYear}
+                  graduationYear={profile.graduationYear}
                   bio={profile.bio}
                   personalEmail={profile.personalEmail || ''}
                   onUpdateCourse={(course) => updateProfile({ course })}
-                  onUpdateYear={(year) => updateProfile({ year })}
+                  onUpdateAdmissionYear={(admissionYear) => updateProfile({ admissionYear })}
+                  onUpdateGraduationYear={(graduationYear) => updateProfile({ graduationYear })}
                   onUpdateBio={(bio) => updateProfile({ bio })}
                   onUpdatePersonalEmail={(personalEmail) => updateProfile({ personalEmail })}
                 />

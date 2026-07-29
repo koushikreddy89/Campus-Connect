@@ -14,9 +14,7 @@ type PostType = 'text' | 'image' | 'video' | 'referral' | 'roadmap' | undefined;
 
 export const AlumniSocialFeedPage: React.FC = () => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuthStore(s => ({
-    isAuthenticated: !!s.uid,
-  }));
+  const isAuthenticated = useAuthStore(s => !!s.uid);
   const [selectedType, setSelectedType] = useState<PostType>(undefined);
   const [postCount, setPostCount] = useState(0);
   const [showFilters, setShowFilters] = useState(false);

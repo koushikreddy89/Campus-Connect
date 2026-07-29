@@ -1,3 +1,5 @@
+import { playSoundEffect } from './soundEngine';
+
 export const TRANSLATIONS = {
   English: {
     settings: 'Settings',
@@ -329,43 +331,11 @@ export const formatPreferenceDate = (
 };
 
 export const playNotificationSound = (
-  sound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent',
+  sound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent' | 'Aurora' | 'Pulse' | 'Zen' | 'Echo' | 'Minimal',
   volume: number = 80
 ) => {
-  if (sound === 'Silent') return;
-  try {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
-    const gainNode = ctx.createGain();
-    gainNode.gain.setValueAtTime(volume / 100, ctx.currentTime);
-    gainNode.connect(ctx.destination);
-
-    const playTone = (freqs: number[], duration: number, type: OscillatorType = 'sine') => {
-      freqs.forEach((freq, idx) => {
-        const osc = ctx.createOscillator();
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.1);
-        osc.connect(gainNode);
-        osc.start(ctx.currentTime + idx * 0.1);
-        osc.stop(ctx.currentTime + idx * 0.1 + duration);
-      });
-    };
-
-    if (sound === 'Default') {
-      playTone([440, 880], 0.15);
-    } else if (sound === 'Chime') {
-      playTone([523.25, 659.25, 783.99, 1046.50], 0.25);
-    } else if (sound === 'Pop') {
-      playTone([600, 900], 0.08, 'triangle');
-    } else if (sound === 'Chime') {
-      playTone([523.25, 659.25, 783.99, 1046.50], 0.25);
-    } else if (sound === 'Bell') {
-      playTone([880, 880, 880], 0.2);
-    } else if (sound === 'Campus') {
-      playTone([329.63, 392.00, 523.25, 392.00], 0.3);
-    }
-  } catch (e) {
-    console.warn('Audio playback failed:', e);
-  }
+  let mappedSound = sound;
+  if (sound === 'Chime') mappedSound = 'Aurora';
+  else if (sound === 'Bell') mappedSound = 'Zen';
+  playSoundEffect('incoming_message', mappedSound);
 };

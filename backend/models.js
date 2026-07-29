@@ -759,7 +759,7 @@ module.exports = {
     conversationId: { type: String, index: true },
     senderId: { type: String, required: true, index: true },
     college: { type: String, default: 'SR University', index: true },
-    messageType: { type: String, enum: ['text', 'image', 'document', 'link', 'file'], default: 'text', index: true },
+    messageType: { type: String, enum: ['text', 'image', 'document', 'link', 'file', 'voice'], default: 'text', index: true },
     text: { type: String, default: '' },
     attachments: [{
       fileName: { type: String, required: true },
@@ -1018,7 +1018,7 @@ const UserPreferencesSchema = new mongoose.Schema({
   timezone: { type: String, default: 'Asia/Kolkata' },
   dateFormat: { type: String, enum: ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'], default: 'DD/MM/YYYY' },
   timeFormat: { type: String, enum: ['12h', '24h'], default: '12h' },
-  notificationSound: { type: String, enum: ['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent'], default: 'Default' },
+  notificationSound: { type: String, enum: ['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent', 'Aurora', 'Pulse', 'Zen', 'Echo', 'Minimal'], default: 'Default' },
   notificationVolume: { type: Number, min: 0, max: 100, default: 80 },
   dataSaver: { type: Boolean, default: false },
   autoPlayVideos: { type: Boolean, default: true },
@@ -1029,6 +1029,20 @@ const UserPreferencesSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 module.exports.UserPreferences = mongoose.model('UserPreferences', UserPreferencesSchema, 'user_preferences');
+
+const UserSettingsSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true, index: true },
+  readReceipts: { type: Boolean, default: true },
+  activeStatus: { type: Boolean, default: true },
+  typingIndicator: { type: Boolean, default: true },
+  onlinePresence: { type: Boolean, default: true },
+  autoSeen: { type: Boolean, default: true },
+  pushNotifications: { type: Boolean, default: true },
+  soundEffects: { type: Boolean, default: true },
+  messagePreview: { type: Boolean, default: true }
+}, { timestamps: true });
+
+module.exports.UserSettings = mongoose.model('UserSettings', UserSettingsSchema, 'user_settings');
 
 
 

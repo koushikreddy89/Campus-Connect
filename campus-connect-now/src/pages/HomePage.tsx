@@ -32,6 +32,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Logo } from '@/components/Logo';
 import PlacementsDashboard from '@/components/placements/PlacementsDashboard';
+import PremiumAlumniFeedPage from './PremiumAlumniFeedPage';
 
 // Apple/Linear style ambient gradient mesh and drifting micro-particles
 function AmbientBackground() {
@@ -161,6 +162,7 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [feedTab, setFeedTab] = useState<'students' | 'alumni'>('students');
 
   useEffect(() => {
     fetchAnnouncements(college);
@@ -296,184 +298,119 @@ export default function HomePage() {
         </div>
       </motion.div>
 
-      {/* Hero Header Card */}
-      {selectedCategory !== 'placement' && (
-        <div className="px-6 mt-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: "spring", damping: 20, stiffness: 100, delay: 0.15 }}
-            className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-gradient-to-br from-[#141824]/90 via-[#0E111A]/95 to-[#09090B] p-6 md:p-8 shadow-2xl backdrop-blur-xl"
+      {/* Segmented Control Feed Selector */}
+      <div className="px-6 mt-4 relative z-10 flex justify-center">
+        <div className="flex bg-zinc-900/60 p-1 rounded-xl border border-white/[0.06] w-full max-w-[280px]">
+          <button
+            onClick={() => setFeedTab('students')}
+            className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all duration-200 ${
+              feedTab === 'students'
+                ? 'bg-violet-600 text-white shadow-md shadow-violet-600/20'
+                : 'text-zinc-400 hover:text-white'
+            }`}
           >
-            <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-              <Shield className="h-28 w-28 text-white" />
-            </div>
-            
-            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="space-y-3 max-w-xl">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black bg-violet-500/10 text-violet-400 border border-violet-500/20 uppercase tracking-widest">
-                  <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-                  Official Channel
-                </span>
-                <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Campus News & Broadcast</h2>
-                <p className="text-xs text-zinc-400 leading-relaxed">
-                  Real-time official notices, placement opportunities, upcoming hackathons, and circulars directly from {college} administration.
-                </p>
-              </div>
-
-              <motion.div
-                animate={{ y: [-4, 4] }}
-                transition={{ repeat: Infinity, repeatType: "reverse", duration: 6, ease: "easeInOut" }}
-                className="hidden md:flex h-20 w-20 rounded-2xl bg-white/[0.02] border border-white/10 items-center justify-center shadow-xl backdrop-blur-md"
-              >
-                <Shield className="h-10 w-10 text-violet-400" />
-              </motion.div>
-            </div>
-
-            {/* Live Stats */}
-            <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t border-white/[0.06] z-10 relative">
-              {[
-                { label: 'Announcements', value: stats.announcements, color: 'text-violet-400' },
-                { label: 'Placements', value: stats.placements, color: 'text-blue-400' },
-                { label: 'Events', value: stats.events, color: 'text-amber-400' },
-                { label: 'Notices', value: stats.notices, color: 'text-emerald-400' },
-              ].map((stat, idx) => (
-                <div key={idx} className="text-center md:text-left space-y-1">
-                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">{stat.label}</span>
-                  <span className={`text-xl md:text-2xl font-black ${stat.color}`}>
-                    <Counter value={stat.value} />
-                  </span>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        </div>
-      )}
-
-      {/* Search and Category Filters */}
-      <div className="px-6 mt-6 space-y-4 relative z-10">
-        {selectedCategory !== 'placement' && (
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="relative w-full"
+            Students Feed
+          </button>
+          <button
+            onClick={() => setFeedTab('alumni')}
+            className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all duration-200 ${
+              feedTab === 'alumni'
+                ? 'bg-violet-600 text-white shadow-md shadow-violet-600/20'
+                : 'text-zinc-400 hover:text-white'
+            }`}
           >
-            <motion.div
-              animate={{
-                borderColor: isSearchFocused ? "rgba(139, 92, 246, 0.4)" : "rgba(255, 255, 255, 0.08)",
-                boxShadow: isSearchFocused 
-                  ? "0 0 20px 2px rgba(139, 92, 246, 0.1), inset 0 1px 1px rgba(255,255,255,0.05)" 
-                  : "0 4px 6px -1px rgba(0,0,0,0.1), inset 0 1px 1px rgba(255,255,255,0.02)"
-              }}
-              transition={{ duration: 0.2 }}
-              className="flex items-center w-full bg-white/[0.02] backdrop-blur-xl border rounded-xl overflow-hidden px-4 py-2.5"
-            >
-              <motion.div whileHover={{ rotate: 15 }} className="mr-3">
-                <Search className="w-4 h-4 text-zinc-500" />
-              </motion.div>
-              <input
-                type="text"
-                placeholder="Search official notices..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setIsSearchFocused(false)}
-                className="w-full bg-transparent border-none text-xs focus:outline-none text-white placeholder:text-zinc-500"
-              />
-            </motion.div>
-          </motion.div>
-        )}
-
-        {/* Categories filters */}
-        <div className="flex gap-2 overflow-x-auto scrollbar-none py-2 w-full">
-          {[
-            { id: 'all', label: 'All Board' },
-            { id: 'announcement', label: 'Announcements' },
-            { id: 'placement', label: 'Placements' },
-            { id: 'event', label: 'Events' },
-            { id: 'notice', label: 'Notices' },
-          ].map((cat) => {
-            const isActive = selectedCategory === cat.id;
-            return (
-              <motion.button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                whileHover={{ y: -3, scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                className={`relative px-4 py-2 rounded-xl text-xs font-bold border transition-all duration-200 flex-shrink-0
-                  ${isActive 
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 border-violet-500 text-white shadow-[0_0_15px_rgba(139,92,246,0.25)]' 
-                    : 'bg-[#141824]/40 border-white/[0.08] text-zinc-400 hover:text-white hover:border-white/20'
-                  }
-                `}
-              >
-                {isActive && (
-                  <motion.span 
-                    layoutId="activeFilterBg" 
-                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-violet-600/20 to-indigo-600/20 mix-blend-overlay" 
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                  />
-                )}
-                {cat.label}
-              </motion.button>
-            );
-          })}
+            Alumni Feed
+          </button>
         </div>
       </div>
 
-      {/* Announcements Content Grid */}
-      <div className="px-6 mt-6 flex-1 flex flex-col space-y-6 relative z-10">
-        {selectedCategory === 'placement' ? (
-          <PlacementsDashboard />
-        ) : isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500" />
-            <span className="text-xs text-zinc-400">Syncing with database...</span>
-          </div>
-        ) : error ? (
-          <div className="py-12 text-center rounded-2xl border border-white/5 bg-red-950/10 p-6 max-w-md mx-auto mt-6">
-            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-            <h3 className="text-sm font-bold text-white">
-              {error.includes('expired') || error.includes('Session') || error.includes('401') ? 'Session Expired' : 
-               error.includes('privileges') || error.includes('403') ? 'Access Denied' : 
-               'Unable to load announcements'}
-            </h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              {error.includes('expired') || error.includes('Session') || error.includes('401') ? 'Please sign in again.' : 
-               error.includes('privileges') || error.includes('403') ? 'You do not have permission to access this page.' : 
-               'Please try again later.'}
-            </p>
-          </div>
-        ) : filteredAnnouncements.length === 0 ? (
-          <EmptyState 
-            selectedCategory={selectedCategory} 
-            college={college} 
-            onRefresh={() => fetchAnnouncements(college)} 
-          />
-        ) : (
-          <div className="space-y-8">
-            {/* 1. PINNED / IMPORTANT SECTION */}
-            {pinnedAnnouncements.length > 0 && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-1.5">
-                  <Pin className="h-4 w-4 text-red-500 fill-current" />
-                  <h3 className="text-xs font-black uppercase tracking-widest text-red-400">Important Notices</h3>
+      {feedTab === 'students' ? (
+        <>
+          {/* Hero Header Card */}
+          {selectedCategory !== 'placement' && (
+            <div className="px-6 mt-6">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: "spring", damping: 20, stiffness: 100, delay: 0.15 }}
+                className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-gradient-to-br from-[#141824]/90 via-[#0E111A]/95 to-[#09090B] p-6 md:p-8 shadow-2xl backdrop-blur-xl"
+              >
+                <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                  <Shield className="h-28 w-28 text-white" />
                 </div>
-                <div className="grid grid-cols-1 gap-6">
-                  {pinnedAnnouncements.map((ann) => (
-                    <CommunicationCard key={ann.id} ann={ann} getBadgeClass={getCategoryBadgeClass} getCategoryIcon={getCategoryIcon} />
+                
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-3 max-w-xl">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black bg-violet-500/10 text-violet-400 border border-violet-500/20 uppercase tracking-widest">
+                      <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                      Official Channel
+                    </span>
+                    <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Campus News & Broadcast</h2>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      Real-time official notices, placement opportunities, upcoming hackathons, and circulars directly from {college} administration.
+                    </p>
+                  </div>
+
+                  <motion.div
+                    animate={{ y: [-4, 4] }}
+                    transition={{ repeat: Infinity, repeatType: "reverse", duration: 6, ease: "easeInOut" }}
+                    className="hidden md:flex h-20 w-20 rounded-2xl bg-white/[0.02] border border-white/10 items-center justify-center shadow-xl backdrop-blur-md"
+                  >
+                    <Shield className="h-10 w-10 text-violet-400" />
+                  </motion.div>
+                </div>
+
+                {/* Live Stats */}
+                <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t border-white/[0.06] z-10 relative">
+                  {[
+                    { label: 'Announcements', value: stats.announcements, color: 'text-violet-400' },
+                    { label: 'Placements', value: stats.placements, color: 'text-blue-400' },
+                    { label: 'Events', value: stats.events, color: 'text-amber-400' },
+                    { label: 'Notices', value: stats.notices, color: 'text-emerald-400' },
+                  ].map((stat, idx) => (
+                    <div key={idx} className="text-center md:text-left space-y-1">
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">{stat.label}</span>
+                      <span className={`text-xl md:text-2xl font-black ${stat.color}`}>
+                        <Counter value={stat.value} />
+                      </span>
+                    </div>
                   ))}
                 </div>
-              </div>
-            )}
+              </motion.div>
+            </div>
+          )}
 
-            {/* 2. PLACEMENT UPDATES */}
-            {placementUpdates.length > 0 && selectedCategory === 'all' && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-1.5">
-                  <Briefcase className="h-4 w-4 text-blue-400" />
-                  <h3 className="text-xs font-black uppercase tracking-widest text-blue-400">Placement Drives</h3>
+          {/* Search and Category Filters */}
+          <div className="px-6 mt-6 space-y-4 relative z-10">
+            {selectedCategory !== 'placement' && (
+              <motion.div 
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="relative w-full"
+              >
+                <motion.div
+                  animate={{
+                    borderColor: isSearchFocused ? "rgba(139, 92, 246, 0.4)" : "rgba(255, 255, 255, 0.08)",
+                    boxShadow: isSearchFocused 
+                      ? "0 0 20px 2px rgba(139, 92, 246, 0.1), inset 0 1px 1px rgba(255,255,255,0.05)" 
+                      : "0 4px 6px -1px rgba(0,0,0,0.1), inset 0 1px 1px rgba(255,255,255,0.02)"
+                  }}
+                  transition={{ duration: 0.2 }}
+                  className="flex items-center w-full bg-white/[0.02] backdrop-blur-xl border rounded-xl overflow-hidden px-4 py-2.5"
+                >
+                  <motion.div whileHover={{ rotate: 15 }} className="mr-3">
+                    <Search className="w-4 h-4 text-zinc-500" />
+                  </motion.div>
+                  <input
+                    type="text"
+                    placeholder="Search official notices..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onFocus={() => setIsSearchFocused(true)}
+                    onBlur={() => setIsSearchFocused(false)}
+                    className="w-full bg-transparent border-none text-xs focus:outline-none text-white placeholder:text-zinc-500"
+                  />
                 </div>
                 <div className="grid grid-cols-1 gap-6">
                   {placementUpdates.map((ann) => (

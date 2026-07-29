@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { useAuthStore } from './authStore';
 import { useMatchStore } from './matchStore';
+import { useSettingsStore } from './settingsStore';
 import { Message, ReactionEmoji } from '@/types';
-import { getCurrentUserEmail } from '@/utils/userUtils';
+import { getCurrentUserEmail, isOwnMessage } from '@/utils/userUtils';
 import { chatApi } from '@/services/api';
 import { ResonanceState } from '@/components/chat/ResonanceThread';
 import { socketService } from '@/services/socketService';
 import { getApiUrl } from '@/services/connectionService';
+import { playSoundEffect } from '@/utils/soundEngine';
 
 interface ChatState {
   messages: Record<string, Message[]>;
@@ -20,15 +22,16 @@ interface ChatState {
   fetchSharedAssets: (matchId: string) => Promise<void>;
   openMessage: (matchId: string, messageId: string) => Promise<void>;
   fetchMessages: (matchId: string) => Promise<void>;
-  sendMessage: (matchId: string, text: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link', attachments?: any[], retentionMode?: 'VIEW_ONCE' | 'NEVER_DELETE') => Promise<void>;
-  forwardMessage: (targetRoomIds: string[], messageId: string, caption?: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link', attachments?: any[]) => Promise<any>;
+  sendMessage: (matchId: string, text: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice', attachments?: any[], retentionMode?: 'VIEW_ONCE' | 'NEVER_DELETE') => Promise<void>;
+  forwardMessage: (targetRoomIds: string[], messageId: string, caption?: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice', attachments?: any[]) => Promise<any>;
   reactToMessage: (matchId: string, messageId: string, emoji: ReactionEmoji) => Promise<void>;
   initializeMessages: (messages: Record<string, Message[]>, userEmail: string) => void;
   markResonanceState: (matchId: string, messageId: string, state: ResonanceState) => Promise<void>;
   focusChannel: (matchId: string, isFocused: boolean) => Promise<void>;
+  markChannelAsRead: (matchId: string) => Promise<void>;
   connectSocket: () => void;
   disconnectSocket: () => void;
-  replyToMessage: (matchId: string, messageId: string, text: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link') => Promise<void>;
+  replyToMessage: (matchId: string, messageId: string, text: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice') => Promise<void>;
   pinMessage: (matchId: string, messageId: string) => Promise<void>;
   bookmarkMessage: (matchId: string, messageId: string) => Promise<void>;
   shareMessage: (matchId: string, messageId: string, targetMatchId: string) => Promise<void>;
@@ -120,10 +123,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Update media counts
       get().fetchSharedAssets(msg.matchId);
 
-      if (
-        String(msg.senderId) === String(currentUserId) ||
-        String(msg.senderId) === String(currentUserUid)
-      ) {
+      if (isOwnMessage(msg.senderId)) {
         return;
       }
 
@@ -133,14 +133,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const exists = list.some(m => m.id === msg.id || (m as any)._id === (msg as any)._id || (m as any)._id === msg.id || m.id === (msg as any)._id);
       if (exists) return;
 
+      // Play premium sound effect for incoming message
+      if (msg.messageType === 'voice') {
+        playSoundEffect('voice_received');
+      } else {
+        playSoundEffect('incoming_message');
+      }
+
       const isCurrentChatFocused = get().focusedMatchId === msg.matchId;
-      if (isCurrentChatFocused) {
+      const autoSeenEnabled = useSettingsStore.getState().settings.autoSeen;
+      const isReadReceiptsEnabled = useSettingsStore.getState().settings.readReceipts;
+      if (isCurrentChatFocused && autoSeenEnabled) {
         msg.read = true;
         msg.status = 'seen';
         msg.seenAt = new Date().toISOString();
         chatApi.markAsRead(msg.matchId, msg.id || (msg as any)._id);
         const myId = currentUserId || currentUserUid;
-        if (socket?.connected && myId) {
+        if (socket?.connected && myId && isReadReceiptsEnabled) {
           socket.emit('message:seen', {
             conversationId: msg.matchId,
             seenBy: myId,
@@ -216,12 +225,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     socket.on('message:seen', ({ conversationId, seenBy, seenAt }) => {
       const currentMsgs = get().messages;
       const list = currentMsgs[conversationId] || [];
+      let didUpdate = false;
       const updated = list.map(m => {
         if (m.senderId !== seenBy && m.status !== 'seen') {
+          didUpdate = true;
           return { ...m, status: 'seen', read: true, seenAt };
         }
         return m;
       });
+      if (didUpdate) {
+        playSoundEffect('read_receipt');
+      }
       set({
         messages: {
           ...currentMsgs,
@@ -243,7 +257,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       
       const updated = list.map(m => {
         if (m.id === messageId || (m as any)._id === messageId) {
-          const isOwn = String(m.senderId) === String(currentUserId);
+          const isOwn = isOwnMessage(m.senderId);
           return {
             ...m,
             viewed: true,
@@ -361,7 +375,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         
         const updated = list.map(m => {
           if (m.id === messageId || (m as any)._id === messageId) {
-            const isOwn = String(m.senderId) === String(currentUserId);
+            const isOwn = isOwnMessage(m.senderId);
             return {
               ...m,
               viewed: true,
@@ -411,11 +425,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessage: async (matchId: string, text: string, messageType: 'text' | 'image' | 'file' | 'document' | 'link' = 'text', attachments: any[] = [], retentionMode?: 'VIEW_ONCE' | 'NEVER_DELETE') => {
+  sendMessage: async (matchId: string, text: string, messageType: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice' = 'text', attachments: any[] = [], retentionMode?: 'VIEW_ONCE' | 'NEVER_DELETE') => {
     try {
       // Optimistic message placeholder
       const tempId = `temp-${Date.now()}`;
-      const senderId = useAuthStore.getState()._id || 'current-user';
+      const senderId = useAuthStore.getState().uid || useAuthStore.getState()._id || 'current-user';
       const tempMsg: Message = {
         id: tempId,
         _id: tempId,
@@ -455,6 +469,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...listCopy[index],
             id: res.data.id || res.data._id,
             _id: res.data._id || res.data.id,
+            senderId: res.data.senderId || listCopy[index].senderId,
+            receiverId: res.data.receiverId || (listCopy[index] as any).receiverId,
             stableKey: listCopy[index].stableKey || res.data.id || res.data._id,
             status: res.data.status || 'delivered',
             timestamp: res.data.timestamp,
@@ -489,9 +505,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (socket?.connected) {
           socket.emit('typing', { roomId: matchId, isTyping: false });
         }
+
+        // Play outgoing sound effect
+        if (messageType === 'voice') {
+          playSoundEffect('voice_sent');
+        } else {
+          playSoundEffect('outgoing_message');
+        }
       }
     } catch (error) {
       console.error('Error sending message in store:', error);
+      playSoundEffect('error');
     }
   },
 
@@ -514,7 +538,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  replyToMessage: async (matchId: string, messageId: string, text: string, messageType: 'text' | 'image' | 'file' | 'document' | 'link' = 'text') => {
+  replyToMessage: async (matchId: string, messageId: string, text: string, messageType: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice' = 'text') => {
     try {
       const res = await chatApi.replyToMessage(messageId, text, messageType);
       if (res && res.success && res.data) {
@@ -626,7 +650,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  forwardMessage: async (targetRoomIds: string[], messageId: string, caption?: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link', attachments?: any[]) => {
+  forwardMessage: async (targetRoomIds: string[], messageId: string, caption?: string, messageType?: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice', attachments?: any[]) => {
     try {
       const res = await chatApi.forwardMessage(targetRoomIds, messageId, caption, messageType, attachments);
       if (res && res.success && res.data) {
@@ -701,29 +725,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       
       if (isFocused) {
         socketService.joinRoom(`match_${matchId}`);
-        chatApi.markAllAsRead(matchId);
-        useMatchStore.getState().clearUnreadCount(matchId);
+        
+        const autoSeenEnabled = useSettingsStore.getState().settings.autoSeen;
+        if (autoSeenEnabled) {
+          chatApi.markAllAsRead(matchId);
+          useMatchStore.getState().clearUnreadCount(matchId);
 
-        // Also trigger the new patch read receipt endpoint
-        if (token) {
-          fetch('http://localhost:5000/api/messages/read', {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ conversationId: matchId })
-          }).catch(() => {});
-        }
+          const isReadReceiptsEnabled = useSettingsStore.getState().settings.readReceipts;
+          if (token && isReadReceiptsEnabled) {
+            fetch('http://localhost:5000/api/messages/read', {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({ conversationId: matchId })
+            }).catch(() => {});
+          }
 
-        const socket = socketService.getSocket();
-        const myId = useAuthStore.getState().uid || useAuthStore.getState()._id;
-        if (socket?.connected && myId) {
-          socket.emit('message:seen', {
-            conversationId: matchId,
-            seenBy: myId,
-            seenAt: new Date().toISOString()
-          });
+          const socket = socketService.getSocket();
+          const myId = useAuthStore.getState().uid || useAuthStore.getState()._id;
+          if (socket?.connected && myId && isReadReceiptsEnabled) {
+            socket.emit('message:seen', {
+              conversationId: matchId,
+              seenBy: myId,
+              seenAt: new Date().toISOString()
+            });
+          }
         }
       } else {
         socketService.leaveRoom(`match_${matchId}`);
@@ -739,6 +767,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     } catch (error) {
       console.error('Failed to notify channel focus:', error);
+    }
+  },
+
+  markChannelAsRead: async (matchId: string) => {
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
+      chatApi.markAllAsRead(matchId);
+      useMatchStore.getState().clearUnreadCount(matchId);
+
+      const isReadReceiptsEnabled = useSettingsStore.getState().settings.readReceipts;
+      if (token && isReadReceiptsEnabled) {
+        fetch('http://localhost:5000/api/messages/read', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ conversationId: matchId })
+        }).catch(() => {});
+      }
+
+      const socket = socketService.getSocket();
+      const myId = useAuthStore.getState().uid || useAuthStore.getState()._id;
+      if (socket?.connected && myId && isReadReceiptsEnabled) {
+        socket.emit('message:seen', {
+          conversationId: matchId,
+          seenBy: myId,
+          seenAt: new Date().toISOString()
+        });
+      }
+
+      // Update local message list state to reflect they are read/seen
+      const currentMsgs = get().messages;
+      const list = currentMsgs[matchId] || [];
+      const updated = list.map(m => {
+        if (m.senderId !== myId && m.status !== 'seen') {
+          return { ...m, status: 'seen' as const, read: true, seenAt: new Date().toISOString() };
+        }
+        return m;
+      });
+      set({
+        messages: {
+          ...currentMsgs,
+          [matchId]: updated
+        }
+      });
+    } catch (e) {
+      console.error('Failed to mark channel as read:', e);
     }
   }
 }));

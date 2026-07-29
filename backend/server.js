@@ -142,7 +142,7 @@ mongoose.connect(MONGODB_URI)
 
     const jwt = require('jsonwebtoken');
     const JWT_SECRET = process.env.JWT_SECRET || 'campus-connect-super-secret';
-    const { User, Alumni, Connection, Message } = require('./models');
+    const { User, Alumni, Connection, Message, UserSettings } = require('./models');
 
     io.use(async (socket, next) => {
       const token = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -164,6 +164,7 @@ mongoose.connect(MONGODB_URI)
       console.log('🔌 Socket connected:', socket.id, 'User:', userId);
 
       if (userId) {
+        socket.join(`user_${userId}`);
         const Model = role === 'alumni' ? Alumni : User;
         await Model.findOneAndUpdate({ userId }, {
           $set: {
@@ -176,13 +177,19 @@ mongoose.connect(MONGODB_URI)
         const connections = await Connection.find({
           $or: [{ user1: userId }, { user2: userId }]
         });
+
+        const settings = await UserSettings.findOne({ userId });
+        const onlinePresenceEnabled = settings ? settings.onlinePresence : true;
+
         connections.forEach(conn => {
           socket.join(`match_${conn._id}`);
-          socket.to(`match_${conn._id}`).emit('presence:status', {
-            userId,
-            isOnline: true,
-            lastSeen: new Date()
-          });
+          if (onlinePresenceEnabled) {
+            socket.to(`match_${conn._id}`).emit('presence:status', {
+              userId,
+              isOnline: true,
+              lastSeen: new Date()
+            });
+          }
         });
       }
 
@@ -196,17 +203,31 @@ mongoose.connect(MONGODB_URI)
         console.log(`👤 Socket ${socket.id} left room: ${roomId}`);
       });
 
-      socket.on('typing', ({ roomId, userId, isTyping }) => {
-        socket.to(roomId).emit('typing', { roomId, userId, isTyping });
+      socket.on('typing', async ({ roomId, userId, isTyping }) => {
+        const settings = await UserSettings.findOne({ userId });
+        const isTypingEnabled = settings ? settings.typingIndicator : true;
+        if (isTypingEnabled) {
+          socket.to(roomId).emit('typing', { roomId, userId, isTyping });
+        }
       });
 
-      socket.on('presence', ({ roomId, userId, status, lastSeen }) => {
-        socket.to(roomId).emit('presence', { roomId, userId, status, lastSeen });
+      socket.on('presence', async ({ roomId, userId, status, lastSeen }) => {
+        const settings = await UserSettings.findOne({ userId });
+        const onlinePresenceEnabled = settings ? settings.onlinePresence : true;
+        if (onlinePresenceEnabled) {
+          socket.to(roomId).emit('presence', { roomId, userId, status, lastSeen });
+        }
       });
 
       // Mark messages as seen
       socket.on('message:seen', async ({ conversationId, seenBy, seenAt }) => {
         try {
+          const settings = await UserSettings.findOne({ userId: seenBy });
+          const isReadReceiptsEnabled = settings ? settings.readReceipts : true;
+          if (!isReadReceiptsEnabled) {
+            return;
+          }
+
           await Message.updateMany(
             { conversationId, senderId: { $ne: seenBy }, status: { $ne: 'seen' } },
             { $set: { status: 'seen', seenAt: new Date(seenAt || Date.now()), read: true } }
@@ -268,12 +289,18 @@ mongoose.connect(MONGODB_URI)
           const connections = await Connection.find({
             $or: [{ user1: userId }, { user2: userId }]
           });
+
+          const settings = await UserSettings.findOne({ userId });
+          const onlinePresenceEnabled = settings ? settings.onlinePresence : true;
+
           connections.forEach(conn => {
-            socket.to(`match_${conn._id}`).emit('presence:status', {
-              userId,
-              isOnline: false,
-              lastSeen: new Date()
-            });
+            if (onlinePresenceEnabled) {
+              socket.to(`match_${conn._id}`).emit('presence:status', {
+                userId,
+                isOnline: false,
+                lastSeen: new Date()
+              });
+            }
           });
         }
       });

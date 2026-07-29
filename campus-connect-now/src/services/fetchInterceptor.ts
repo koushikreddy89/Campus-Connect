@@ -26,21 +26,29 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Pr
   options.credentials = 'include';
   
   // 2. Attach Authorization token if available in local storage and not already present
-  const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
-  if (token) {
-    const headers = new Headers(options.headers || {});
-    if (!headers.has('Authorization')) {
+  const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || localStorage.getItem('token');
+  let finalInput = input;
+  
+  if (input instanceof Request) {
+    const headers = new Headers(input.headers);
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    finalInput = new Request(input, { headers });
+  } else {
+    if (token) {
+      const headers = new Headers(options.headers || {});
       headers.set('Authorization', `Bearer ${token}`);
       console.log(`[API] Authorization Header Attached: Bearer ${token.substring(0, 15)}...`);
+      options.headers = headers;
     }
-    options.headers = headers;
   }
   
   const requestUrl = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : input.url);
   console.log(`[API] Fetch Request: ${requestUrl}`);
 
   try {
-    const response = await originalFetch(input, options);
+    const response = await originalFetch(finalInput, options);
     
     // Auto-detect session expiry / unauthorized status and redirect to login if session is revoked
     if (response.status === 401) {
@@ -86,10 +94,17 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Pr
         // Wait for token refresh and retry
         return new Promise<Response>((resolve) => {
           subscribeTokenRefresh((newToken) => {
-            const headers = new Headers(options.headers || {});
-            headers.set('Authorization', `Bearer ${newToken}`);
-            options.headers = headers;
-            resolve(originalFetch(input, options));
+            if (input instanceof Request) {
+              const headers = new Headers(input.headers);
+              headers.set('Authorization', `Bearer ${newToken}`);
+              const retryRequest = new Request(input, { headers });
+              resolve(originalFetch(retryRequest, options));
+            } else {
+              const headers = new Headers(options.headers || {});
+              headers.set('Authorization', `Bearer ${newToken}`);
+              options.headers = headers;
+              resolve(originalFetch(input, options));
+            }
           });
         });
       }

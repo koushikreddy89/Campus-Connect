@@ -1,22 +1,14 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, Newspaper, MessageCircle, User, Trophy } from 'lucide-react';
+import { Home, MessageCircle, User, Bell } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '@/store/authStore';
 import { useMatchStore } from '@/store/matchStore';
 import { memo, useMemo } from 'react';
 
-const defaultTabs = [
+const tabs = [
   { path: '/home', icon: Home, label: 'Home' },
-  { path: '/feed', icon: Newspaper, label: 'Feed' },
-  { path: '/alumni', icon: Trophy, label: 'Alumni' },
   { path: '/chat', icon: MessageCircle, label: 'Chat' },
-  { path: '/profile', icon: User, label: 'Profile' },
-];
-
-const alumniTabs = [
-  { path: '/alumni/dashboard', icon: Trophy, label: 'My Alumni' },
-  { path: '/alumni/explorer', icon: Home, label: 'Alumni' },
-  { path: '/chat', icon: MessageCircle, label: 'Chat' },
+  { path: '/notifications', icon: Bell, label: 'Notifications' },
   { path: '/profile', icon: User, label: 'Profile' },
 ];
 
@@ -26,7 +18,11 @@ export const BottomTabBar = memo(({ isGlobal }: { isGlobal?: boolean }) => {
   const role = useAuthStore(s => s.role);
   const matches = useMatchStore(s => s.matches);
 
-  const tabs = role === 'alumni' ? alumniTabs : defaultTabs;
+  const getTabPath = (basePath: string) => {
+    if (basePath === '/home' && role === 'alumni') return '/alumni/home';
+    if (basePath === '/profile' && role === 'alumni') return '/alumni/dashboard';
+    return basePath;
+  };
 
   // Detect student swipe routing paths
   const isSwipeRoute = ['/student/dashboard', '/home', '/feed', '/alumni', '/chat', '/profile', '/settings'].some(path => 
@@ -47,14 +43,16 @@ export const BottomTabBar = memo(({ isGlobal }: { isGlobal?: boolean }) => {
       <div className="glass-strong border-t-0 border-x-0 rounded-none bg-zinc-950/60 backdrop-blur-xl border-t border-white/[0.08]" style={{ borderBottom: 'none' }}>
         <nav className="relative flex items-center justify-around h-[64px] max-w-lg mx-auto px-2">
           {tabs.map(({ path, icon: Icon, label }) => {
+            const mappedPath = getTabPath(path);
             const isActive = location.pathname.startsWith(path) || 
-              (path === '/home' && location.pathname.startsWith('/student/dashboard')) ||
-              (path === '/profile' && location.pathname.startsWith('/settings'));
+              location.pathname.startsWith(mappedPath) ||
+              (path === '/profile' && location.pathname.startsWith('/settings')) ||
+              (path === '/profile' && location.pathname.startsWith('/alumni/dashboard'));
             
             return (
               <motion.button
                 key={path}
-                onClick={() => navigate(path)}
+                onClick={() => navigate(mappedPath)}
                 whileTap={{ scale: 0.92 }}
                 className="relative flex flex-col items-center justify-center gap-1 px-4 py-2"
               >
@@ -64,7 +62,7 @@ export const BottomTabBar = memo(({ isGlobal }: { isGlobal?: boolean }) => {
                       isActive 
                         ? 'text-violet-400 scale-110 drop-shadow-[0_0_8px_rgba(139,92,246,0.45)]' 
                         : 'text-zinc-500 hover:text-zinc-300'
-                    }`}
+                     }`}
                     strokeWidth={isActive ? 2.5 : 1.8}
                   />
                   {label === 'Chat' && totalUnread > 0 && (

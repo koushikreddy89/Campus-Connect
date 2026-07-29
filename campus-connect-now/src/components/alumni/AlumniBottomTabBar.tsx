@@ -1,9 +1,9 @@
 import React, { memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, Plus, FileText, Users, MessageCircle, User } from 'lucide-react';
+import { Home, Sparkles, MessageSquare, MessageCircle, User } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-type TabId = 'home' | 'create' | 'posts' | 'network' | 'chat' | 'profile';
+type TabId = 'home' | 'alumni-feed' | 'student-feed' | 'chat' | 'profile';
 
 interface NavTab {
   id: TabId;
@@ -19,19 +19,17 @@ const AlumniBottomTabBar: React.FC = memo(() => {
   
   const tabs: NavTab[] = [
     { id: 'home', label: 'Home', icon: Home, path: '/alumni/home' },
-    { id: 'create', label: 'Post', icon: Plus, path: '/alumni/post/create' },
-    { id: 'posts', label: 'My Posts', icon: FileText, path: '/alumni/posts' },
-    { id: 'network', label: 'Network', icon: Users, path: '/alumni/network' },
+    { id: 'alumni-feed', label: 'Alumni Feed', icon: Sparkles, path: '/alumni/feed/alumni' },
+    { id: 'student-feed', label: 'Student Feed', icon: MessageSquare, path: '/alumni/feed/students' },
     { id: 'chat', label: 'Chat', icon: MessageCircle, path: '/alumni/chat' },
-    { id: 'profile', label: 'Profile', icon: User, path: '/alumni/dashboard' },
+    { id: 'profile', label: 'Profile', icon: User, path: '/alumni/profile' },
   ];
 
   const getActiveTab = (): TabId | null => {
     const path = location.pathname;
     if (path.startsWith('/alumni/home')) return 'home';
-    if (path.startsWith('/alumni/post/create')) return 'create';
-    if (path.startsWith('/alumni/posts')) return 'posts';
-    if (path.startsWith('/alumni/network')) return 'network';
+    if (path.startsWith('/alumni/feed/alumni')) return 'alumni-feed';
+    if (path.startsWith('/alumni/feed/students')) return 'student-feed';
     if (path.startsWith('/alumni/chat')) return 'chat';
     if (path.startsWith('/alumni/profile') || path.startsWith('/alumni/dashboard')) return 'profile';
     return null;

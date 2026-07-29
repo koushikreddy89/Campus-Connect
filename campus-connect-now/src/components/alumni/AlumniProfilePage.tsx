@@ -19,7 +19,7 @@ interface AlumniProfileProps {
 
 export const AlumniProfile: React.FC<AlumniProfileProps> = ({ alumniId }) => {
   const navigate = useNavigate();
-  const { uid } = useAuthStore(s => ({ uid: s.uid }));
+  const uid = useAuthStore(s => s.uid);
   const [isFollowingLocal, setIsFollowingLocal] = useState(false);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
 

@@ -23,10 +23,8 @@ interface AlumniCard {
 
 const AlumniNetworkPage: React.FC = () => {
   const navigate = useNavigate();
-  const { uid, college } = useAuthStore(s => ({
-    uid: s.uid,
-    college: s.college || 'SR University'
-  }));
+  const uid = useAuthStore(s => s.uid);
+  const college = useAuthStore(s => s.college || 'SR University');
   const [isLoading, setIsLoading] = useState(true);
   const [cards, setCards] = useState<AlumniCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);

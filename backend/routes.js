@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
-const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug, Follow, AnnouncementView, AnnouncementClick, UserPreferences } = require('./models');
+const { Alumni, Post, Referral, Resource, Roadmap, Achievement, AdminPost, Placement, User, StudentPost, Like, Comment, Connection, FriendRequest, Notification, CollegeAlumniRecord, OTP, Message, GroupChat, GroupMessage, Story, SupportTicket, FAQ, FeatureRequest, Report, CollegeDomain, Session, LoginAttempt, SecurityLog, AlumniVerification, GroupActivity, Bug, Follow, AnnouncementView, AnnouncementClick, UserPreferences, UserSettings } = require('./models');
 const emailService = require('./emailService');
 const crypto = require('crypto');
 const { validatePasswordStrength, isDisposableEmail, generateCaptcha, verifyCaptcha } = require('./securityUtils');
@@ -373,7 +373,7 @@ const requireAuth = async (req, res, next) => {
     }
     
     if (!token) {
-      return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
+      return res.status(401).json({ success: false, error: 'Unauthorized: No token provided', reason: 'No token provided' });
     }
     
     console.log(`🔑 [Auth] JWT Received. Verifying...`);
@@ -384,9 +384,13 @@ const requireAuth = async (req, res, next) => {
     let college = '';
     if (decoded.sessionId) {
       const session = await Session.findOne({ sessionId: decoded.sessionId });
-      if (!session || new Date() > session.expiresAt) {
+      if (!session) {
+        console.warn(`🔑 [Auth] Session record not found: session=${decoded.sessionId}`);
+        return res.status(401).json({ success: false, error: 'Session not found. Please log in again.', isSessionInvalid: true, reason: 'Session record not found' });
+      }
+      if (new Date() > session.expiresAt) {
         console.warn(`🔑 [Auth] Session expired or revoked: session=${decoded.sessionId}`);
-        return res.status(401).json({ success: false, error: 'Session expired or revoked. Please log in again.', isSessionInvalid: true });
+        return res.status(401).json({ success: false, error: 'Session expired or revoked. Please log in again.', isSessionInvalid: true, reason: 'Session expired' });
       }
       
       // Inactivity limit check (30 minutes)
@@ -396,7 +400,7 @@ const requireAuth = async (req, res, next) => {
         await Session.deleteOne({ sessionId: session.sessionId });
         res.clearCookie('access_token');
         res.clearCookie('refresh_token');
-        return res.status(401).json({ success: false, error: 'Session expired due to inactivity. Please log in again.', isSessionInvalid: true });
+        return res.status(401).json({ success: false, error: 'Session expired due to inactivity. Please log in again.', isSessionInvalid: true, reason: 'Inactivity timeout' });
       }
 
       session.lastActiveAt = new Date();
@@ -408,7 +412,7 @@ const requireAuth = async (req, res, next) => {
     } else if (decoded.role !== 'admin') {
       // Require session ID for non-admin accounts to ensure active session tracking
       console.warn(`🔑 [Auth] Missing sessionId in non-admin token`);
-      return res.status(401).json({ success: false, error: 'Session tracking is required. Please log in again.', isSessionInvalid: true });
+      return res.status(401).json({ success: false, error: 'Session tracking is required. Please log in again.', isSessionInvalid: true, reason: 'Missing session tracking id' });
     }
 
     let userOid = '';
@@ -416,14 +420,16 @@ const requireAuth = async (req, res, next) => {
     if (decoded.role === 'student' || decoded.role === 'alumni') {
       const Model = decoded.role === 'alumni' ? Alumni : User;
       const account = await Model.findOne({ userId: decoded.userId });
-      if (account) {
-        if (account.isSuspended) {
-          console.warn(`🔑 [Auth] Account suspended: user=${decoded.userId}`);
-          return res.status(403).json({ success: false, error: 'Your account has been suspended. Please contact support.', isSuspended: true });
-        }
-        college = account.college;
-        userOid = account._id.toString();
+      if (!account) {
+        console.warn(`🔑 [Auth] User record not found for: ${decoded.userId} in collection ${decoded.role}`);
+        return res.status(401).json({ success: false, error: 'Account not found.', reason: 'Account record not found' });
       }
+      if (account.isSuspended) {
+        console.warn(`🔑 [Auth] Account suspended: user=${decoded.userId}`);
+        return res.status(403).json({ success: false, error: 'Your account has been suspended. Please contact support.', isSuspended: true, reason: 'Account suspended' });
+      }
+      college = account.college;
+      userOid = account._id.toString();
     } else if (decoded.role === 'admin') {
       college = 'SR University'; // Admin college fallback
       userOid = 'admin-id';
@@ -434,8 +440,8 @@ const requireAuth = async (req, res, next) => {
     next();
   } catch (err) {
     const errorMsg = err.name === 'TokenExpiredError' ? 'Unauthorized: Token expired' : 'Unauthorized: Invalid token';
-    console.warn(`🔑 [Auth] JWT Invalid: ${errorMsg}. Reason: ${err.message}`);
-    return res.status(401).json({ success: false, error: errorMsg, isSessionInvalid: true });
+    console.warn(`🔑 [Auth Failure] Request URL: [${req.method} ${req.originalUrl}], Header Status: ${req.headers.authorization ? 'Present' : 'Missing'}, JWT Error: ${errorMsg}. Reason: ${err.message}`);
+    return res.status(401).json({ success: false, error: errorMsg, isSessionInvalid: true, reason: err.name === 'TokenExpiredError' ? 'JWT expired' : 'JWT verification failed' });
   }
 };
 
@@ -1103,12 +1109,10 @@ router.post('/auth/refresh-token', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Session expired or invalid.' });
     }
 
-    // Perform rotation
-    const newSessionId = `session-${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
+    // Perform rotation (We extend session expiry, but preserve sessionId to prevent race conditions during concurrent request bursts)
     const newSessionExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    // Save rotated session
-    session.sessionId = newSessionId;
+    // Save session updates
     session.expiresAt = newSessionExpires;
     session.lastActiveAt = new Date();
     await session.save();
@@ -1117,9 +1121,9 @@ router.post('/auth/refresh-token', async (req, res) => {
     const email = user ? user.email : (decoded.userId === 'admin-user-id' ? 'admin@mit.edu' : '');
     const role = user ? user.role : (decoded.userId === 'admin-user-id' ? 'admin' : 'student');
 
-    const userPayload = { userId: decoded.userId, email, role, sessionId: newSessionId };
+    const userPayload = { userId: decoded.userId, email, role, sessionId: decoded.sessionId };
     const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '15m' });
-    const newRefreshToken = jwt.sign({ sessionId: newSessionId, userId: decoded.userId }, JWT_SECRET, { expiresIn: '7d' });
+    const newRefreshToken = jwt.sign({ sessionId: decoded.sessionId, userId: decoded.userId }, JWT_SECRET, { expiresIn: '7d' });
 
     res.cookie('access_token', token, ACCESS_COOKIE_OPTIONS);
     res.cookie('refresh_token', newRefreshToken, COOKIE_OPTIONS);
@@ -4590,6 +4594,21 @@ const handleGetStudentProfile = async (req, res) => {
     }
 
     const profileObj = profile.toObject();
+    
+    // Privacy filters for settings
+    const settings = await UserSettings.findOne({ userId: rawId });
+    const onlinePresenceEnabled = settings ? settings.onlinePresence : true;
+    const activeStatusEnabled = settings ? settings.activeStatus : true;
+
+    if (rawId !== req.user.userId) {
+      if (!onlinePresenceEnabled) {
+        profileObj.isOnline = false;
+      }
+      if (!activeStatusEnabled) {
+        profileObj.lastSeen = null;
+      }
+    }
+
     profileObj.profileCompletion = computeBackendProfileCompletion(profileObj);
     res.json({ success: true, data: profileObj });
   } catch (error) {
@@ -4729,9 +4748,12 @@ router.get('/users/:id/presence', requireAuth, async (req, res) => {
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
+    const settings = await UserSettings.findOne({ userId: id });
+    const onlinePresenceEnabled = settings ? settings.onlinePresence : true;
+    const activeStatusEnabled = settings ? settings.activeStatus : true;
     res.json({
-      isOnline: user.isOnline || false,
-      lastSeen: user.lastSeen || user.updatedAt || new Date().toISOString()
+      isOnline: onlinePresenceEnabled ? (user.isOnline || false) : false,
+      lastSeen: activeStatusEnabled ? (user.lastSeen || user.updatedAt || new Date().toISOString()) : null
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4772,6 +4794,10 @@ router.get('/connections', requireAuth, async (req, res) => {
           read: false
         });
 
+        const settings = await UserSettings.findOne({ userId: otherUserId });
+        const onlinePresenceEnabled = settings ? settings.onlinePresence : true;
+        const activeStatusEnabled = settings ? settings.activeStatus : true;
+
         matches.push({
           id: conn._id.toString(),
           userId: otherUserId,
@@ -4790,8 +4816,8 @@ router.get('/connections', requireAuth, async (req, res) => {
             profileImageUrl: otherUser.profileImageUrl || otherUser.profileImage || '',
             photos: otherUser.photos || (otherUser.profileImageUrl ? [otherUser.profileImageUrl] : []),
             college: otherUser.college || '',
-            isOnline: otherUser.isOnline || false,
-            lastSeen: otherUser.lastSeen || otherUser.updatedAt || new Date()
+            isOnline: onlinePresenceEnabled ? (otherUser.isOnline || false) : false,
+            lastSeen: activeStatusEnabled ? (otherUser.lastSeen || otherUser.updatedAt || new Date()) : null
           },
           matchedAt: conn.createdAt.toISOString(),
           unreadCount,
@@ -5355,10 +5381,14 @@ router.patch('/users/presence', requireAuth, async (req, res) => {
 router.post('/typing/start', requireAuth, async (req, res) => {
   try {
     const { conversationId } = req.body;
-    if (global.io) {
+    const userId = req.user.userId;
+    const settings = await UserSettings.findOne({ userId });
+    const isTypingEnabled = settings ? settings.typingIndicator : true;
+
+    if (isTypingEnabled && global.io) {
       global.io.to(`match_${conversationId}`).emit('typing', {
         roomId: conversationId,
-        userId: req.user.userId,
+        userId: userId,
         isTyping: true
       });
     }
@@ -5372,10 +5402,14 @@ router.post('/typing/start', requireAuth, async (req, res) => {
 router.post('/typing/stop', requireAuth, async (req, res) => {
   try {
     const { conversationId } = req.body;
-    if (global.io) {
+    const userId = req.user.userId;
+    const settings = await UserSettings.findOne({ userId });
+    const isTypingEnabled = settings ? settings.typingIndicator : true;
+
+    if (isTypingEnabled && global.io) {
       global.io.to(`match_${conversationId}`).emit('typing', {
         roomId: conversationId,
-        userId: req.user.userId,
+        userId: userId,
         isTyping: false
       });
     }
@@ -5397,28 +5431,33 @@ router.patch('/messages/read', requireAuth, async (req, res) => {
 
     const otherUserId = conn.user1 === currentUserId ? conn.user2 : conn.user1;
 
-    await Message.updateMany(
-      { 
-        $or: [{ matchId: conversationId }, { conversationId }], 
-        senderId: otherUserId, 
-        status: { $ne: 'seen' } 
-      },
-      { 
-        $set: { 
-          read: true, 
-          status: 'seen', 
-          seenAt: new Date(),
-          resonanceState: 'absorbed' 
-        } 
-      }
-    );
+    const settings = await UserSettings.findOne({ userId: currentUserId });
+    const isReadReceiptsEnabled = settings ? settings.readReceipts : true;
 
-    if (global.io) {
-      global.io.to(`match_${conversationId}`).emit('message:seen', {
-        conversationId,
-        seenBy: currentUserId,
-        seenAt: new Date()
-      });
+    if (isReadReceiptsEnabled) {
+      await Message.updateMany(
+        { 
+          $or: [{ matchId: conversationId }, { conversationId }], 
+          senderId: otherUserId, 
+          status: { $ne: 'seen' } 
+        },
+        { 
+          $set: { 
+            read: true, 
+            status: 'seen', 
+            seenAt: new Date(),
+            resonanceState: 'absorbed' 
+          } 
+        }
+      );
+
+      if (global.io) {
+        global.io.to(`match_${conversationId}`).emit('message:seen', {
+          conversationId,
+          seenBy: currentUserId,
+          seenAt: new Date()
+        });
+      }
     }
 
     res.json({ success: true });
@@ -10950,6 +10989,61 @@ router.post('/media/upload', safeMulterMiddleware, handleUploadEndpoint);
 router.post('/chats/:chatId/upload', safeMulterMiddleware, handleUploadEndpoint);
 router.post('/chat/:chatId/upload', safeMulterMiddleware, handleUploadEndpoint);
 
+// CHAT SETTINGS API
+// GET /api/settings - Fetch user chat settings
+router.get('/settings', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is missing from request session' });
+    }
+    let settings = await UserSettings.findOne({ userId });
+    if (!settings) {
+      settings = new UserSettings({ userId });
+      await settings.save();
+    }
+    res.json({ success: true, data: settings });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ success: false, error: 'Unable to retrieve settings. Please try again.' });
+  }
+});
+
+// PUT /api/settings - Update user chat settings
+router.put('/settings', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId || (req.user && req.user.userId);
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is missing from request session' });
+    }
+    const updates = req.body;
+    delete updates.userId;
+    delete updates._id;
+    delete updates.createdAt;
+    delete updates.updatedAt;
+
+    const settings = await UserSettings.findOneAndUpdate(
+      { userId },
+      { $set: updates },
+      { new: true, runValidators: true, upsert: true }
+    );
+
+    // Emit Socket.IO event settingsUpdated
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${userId}`).emit('settingsUpdated', settings);
+      if (updates.onlinePresence !== undefined || updates.activeStatus !== undefined) {
+        io.emit('userPresenceUpdated', { userId, onlinePresence: settings.onlinePresence, activeStatus: settings.activeStatus });
+      }
+    }
+
+    res.json({ success: true, data: settings });
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    res.status(400).json({ success: false, error: 'Unable to update settings. Please try again.' });
+  }
+});
+
 // PREFERENCES API (Production-Ready)
 const getOrCreatePreferences = async (userId) => {
   let prefs = await UserPreferences.findOne({ userId });
@@ -11094,7 +11188,7 @@ router.patch('/preferences/notification', requireAuth, async (req, res) => {
     const { notificationSound, notificationVolume } = req.body;
     const updates = {};
     if (notificationSound) {
-      if (!['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent'].includes(notificationSound)) {
+      if (!['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent', 'Aurora', 'Pulse', 'Zen', 'Echo', 'Minimal'].includes(notificationSound)) {
         return res.status(400).json({ success: false, error: 'Invalid notification sound specified' });
       }
       updates.notificationSound = notificationSound;

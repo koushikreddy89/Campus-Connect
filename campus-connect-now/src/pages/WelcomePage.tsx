@@ -436,32 +436,32 @@ export default function WelcomePage() {
       setPhase(StartupPhase.LANDING);
       sessionStorage.setItem('cc_splash_played', 'true');
       console.warn("⚠️ Splash screen emergency failsafe activated!");
-    }, 7000);
+    }, 12000);
 
     const addTimer = (fn: () => void, delay: number) => {
       timersRef.current.push(setTimeout(fn, delay));
     };
 
-    // Phase 1: 0.0s - 0.8s: BOOT (Tiny center logo)
-    // Phase 2: 0.8s: Transition to PRELOAD (Logo grows to giant hero size)
+    // Phase 1: 0.0s - 1.0s: BOOT (Tiny center logo / glow)
+    // Phase 2: 1.0s: Transition to PRELOAD (Orbiting particles)
     addTimer(() => {
       setPhase(StartupPhase.PRELOAD);
       Promise.race([preloadPromise, timeoutPromise]).then(() => {
         console.log("✅ Static preloading completed or timed out.");
       });
-    }, 800);
+    }, 1000);
 
-    // Phase 3 & 4: 2.0s: Transition to SPLASH (Hero showcase pauses, floats, page reveals behind)
+    // Phase 3: 3.5s: Transition to SPLASH (Drawing & Connect)
     addTimer(() => {
       setPhase(StartupPhase.SPLASH);
-    }, 2000);
+    }, 3500);
 
-    // Phase 5: 3.8s: Transition to TRANSITION (Logo collapses along Bezier path to navbar size)
+    // Phase 5: 10.0s: Transition to TRANSITION (Collapsing to navbar size / Fade everything together)
     addTimer(() => {
       setPhase(StartupPhase.TRANSITION);
-    }, 3800);
+    }, 10000);
 
-    // Phase 6: 4.8s: Transition to LANDING (Landing page active, cards and headers stagger in)
+    // Phase 6: 10.8s: Transition to LANDING (Landing page active, cards and headers stagger in / Open home screen)
     addTimer(() => {
       setPhase(StartupPhase.LANDING);
       sessionStorage.setItem('cc_splash_played', 'true');
@@ -471,7 +471,7 @@ export default function WelcomePage() {
       import('@/services/connectionService').then(({ checkBackendHealth }) => {
         checkBackendHealth();
       });
-    }, 4800);
+    }, 10800);
 
     return () => {
       timersRef.current.forEach(clearTimeout);
@@ -1007,7 +1007,7 @@ export default function WelcomePage() {
   const passwordStrengthScore = getPasswordStrengthScore(password);
   const passwordRequirements = checkPasswordRequirements(password);
 
-  const isCenteredPhase = phase === StartupPhase.BOOT || phase === StartupPhase.PRELOAD || phase === StartupPhase.SPLASH;
+  const isCenteredPhase = phase === StartupPhase.BOOT || phase === StartupPhase.PRELOAD || phase === StartupPhase.SPLASH || phase === StartupPhase.TRANSITION;
 
   return (
     <div className="min-h-[100dvh] w-full flex flex-col items-center justify-center text-white relative overflow-hidden px-4 md:px-8 font-sans select-none bg-[#09090B]">
@@ -1021,11 +1021,19 @@ export default function WelcomePage() {
       {/* Main Content Container (Max width 1440px, centered) */}
       <div className="relative z-10 w-full max-w-[1440px] min-h-[100dvh] flex flex-col items-center justify-center py-6 md:py-12">
         
-        {/* If splash phases, render centered logo overlay */}
+        {/* If splash phases, render centered logo overlay with premium crossfade fadeout */}
         {isCenteredPhase && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+          <motion.div 
+            initial={{ opacity: 1, scale: 1 }}
+            animate={{ 
+              opacity: phase === StartupPhase.TRANSITION ? 0 : 1,
+              scale: phase === StartupPhase.TRANSITION ? 1.02 : 1
+            }}
+            transition={{ duration: 0.8, ease: 'easeInOut' }}
+            className="absolute inset-0 flex items-center justify-center pointer-events-none z-30"
+          >
             <SharedLogo phase={phase} />
-          </div>
+          </motion.div>
         )}
 
         <AnimatePresence mode="wait">

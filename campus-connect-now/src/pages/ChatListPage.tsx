@@ -15,10 +15,13 @@ import ChatPage from './ChatPage';
 import GroupChatPage from './GroupChatPage';
 import GroupInfoPanel from '@/components/chat/GroupInfoPanel';
 import { Button } from '@/components/ui/button';
+import { useAuthStore } from '@/store/authStore';
+
 
 export default function ChatListPage() {
   const { matchId, groupId } = useParams<{ matchId?: string; groupId?: string }>();
   const navigate = useNavigate();
+  const role = useAuthStore(s => s.role);
 
   // If mobile width and active conversation is present, render full-screen page
   if (window.innerWidth < 1024) {
@@ -148,7 +151,8 @@ export default function ChatListPage() {
 
   const handleItemClick = (id: string, type: 'direct' | 'group') => {
     setSelectedChat({ id, type });
-    navigate(type === 'direct' ? `/chat/${id}` : `/chat/group/${id}`);
+    const prefix = role === 'alumni' ? '/alumni' : '';
+    navigate(type === 'direct' ? `${prefix}/chat/${id}` : `${prefix}/chat/group/${id}`);
   };
 
   // Compute selected chat info for the Right Sidebar
@@ -876,6 +880,7 @@ function ChatListItem({ match, index, isActive, onClick }: { match: any; index: 
           </button>
         </div>
       )}
+
     </div>
   );
 }

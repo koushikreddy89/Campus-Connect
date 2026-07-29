@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense, useState } from "react";
+import { useEffect, lazy, Suspense, useState, useRef } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { BrowserRouter, Route, Routes, Navigate, useLocation } from "react-router-dom";
@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuthStore } from "@/store/authStore";
 import { useProfileStore } from "@/store/profileStore";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { alumniProfileService } from "@/services/alumniService";
 import { userApi } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -177,6 +178,14 @@ const AlumniNetworkPage = lazy(() => import("./pages/alumni/AlumniNetworkPage.ts
   console.error('[Lazy Load Error] AlumniNetworkPage:', err);
   throw err;
 }));
+const StudentFeedPage = lazy(() => import("./pages/alumni/StudentFeedPage.tsx").catch(err => {
+  console.error('[Lazy Load Error] StudentFeedPage:', err);
+  throw err;
+}));
+const AlumniLayout = lazy(() => import("./components/alumni/AlumniLayout.tsx").catch(err => {
+  console.error('[Lazy Load Error] AlumniLayout:', err);
+  throw err;
+}));
 
 const AlumniPostFeedPage = lazy(() => import("./pages/AlumniPostFeedPage.tsx").catch(err => {
   console.error('[Lazy Load Error] AlumniPostFeedPage:', err);
@@ -216,8 +225,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   // If onboarding is not complete, redirect to /setup
   if (!isProfileComplete) return <Navigate to="/setup" replace />;
   
-  // If user is alumni or admin, they shouldn't access standard student routes (/home, /feed, etc.)
-  if (role === 'alumni') return <Navigate to="/alumni/dashboard" replace />;
+  if (role === 'alumni') return <Navigate to="/alumni/home" replace />;
   if (role === 'admin') return <Navigate to="/admin" replace />;
   
   return <>{children}</>;
@@ -275,6 +283,9 @@ const App = () => {
   const fetchUnreadCount = useNotificationStore(s => s.fetchUnreadCount);
   const appearance = useProfileStore(s => s.profile.appearance) || 'dark';
 
+  const isInitializingRef = useRef(false);
+  const isInitializedCompletedRef = useRef(false);
+
   useEffect(() => {
     const root = window.document.documentElement;
     const applyTheme = (theme: 'dark' | 'light') => {
@@ -320,6 +331,9 @@ const App = () => {
 
     // Check persisted auth session from useAuthStore in background
     const checkPersistedSession = async () => {
+      if (isInitializingRef.current || isInitializedCompletedRef.current) return;
+      isInitializingRef.current = true;
+
       const state = useAuthStore.getState();
       console.log('🔐 [App Init] Hydration completed. Restoring session in background if authenticated:', {
         isAuthenticated: state.isAuthenticated,
@@ -368,7 +382,12 @@ const App = () => {
             });
 
             if (dbRole !== 'admin') {
-              await useProfileStore.getState().loadProfile(dbUser.id);
+              useProfileStore.getState().loadProfile(dbUser.id).catch((err) => {
+                console.warn('⚠️ [App Init] Failed to load user profile in background:', err);
+              });
+              useSettingsStore.getState().fetchSettings().catch((err) => {
+                console.warn('⚠️ [App Init] Failed to load settings in background:', err);
+              });
             }
           } else {
             console.warn('⚠️ [App Init] Invalid session. Performing clean background logout.');
@@ -379,20 +398,31 @@ const App = () => {
           // Silently proceed so that the user is not blocked
         }
       }
+      isInitializedCompletedRef.current = true;
+      isInitializingRef.current = false;
     };
 
     // Hydration check loop to prevent race condition before state is rehydrated
+    let hydrationTimer: NodeJS.Timeout;
     const checkHydration = () => {
       if (useAuthStore.persist?.hasHydrated && useAuthStore.persist.hasHydrated()) {
         checkPersistedSession();
       } else {
-        setTimeout(checkHydration, 25);
+        hydrationTimer = setTimeout(checkHydration, 25);
       }
     };
     checkHydration();
 
+    // Safety fallback: Force application initialization to render UI if store hydration hangs
+    const safetyTimer = setTimeout(() => {
+      console.warn('⚠️ [App Init] Hydration safety timer fired. Forcing UI initialization.');
+      setIsInitialized(true);
+    }, 850);
+
     return () => {
       stopHealthChecks();
+      clearTimeout(safetyTimer);
+      if (hydrationTimer) clearTimeout(hydrationTimer);
     };
   }, []);
 
@@ -613,72 +643,44 @@ const App = () => {
                   }
                 />
                 <Route
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <AlumniRoute><AlumniLayout /></AlumniRoute>
+                    </Suspense>
+                  }
+                >
+                  <Route path="/alumni/profile" element={<MyAlumniProfilePage />} />
+                  <Route path="/alumni/home" element={<AlumniHomePage />} />
+                  <Route path="/alumni/post/create" element={<AlumniPostCreatePage />} />
+                  <Route path="/alumni/feed/alumni" element={<PremiumAlumniFeedPage />} />
+                  <Route path="/alumni/feed/students" element={<StudentFeedPage />} />
+                  <Route path="/alumni/chat" element={<ChatListPage />} />
+                  <Route path="/alumni/chat/:matchId" element={<ChatPage />} />
+                  <Route path="/alumni/chat/group/:groupId" element={<GroupChatPage />} />
+                </Route>
+                <Route
                   path="/alumni/dashboard"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <AlumniRoute><MyAlumniProfilePage /></AlumniRoute>
-                    </Suspense>
-                  }
-                />
-                <Route
-                  path="/alumni/home"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <AlumniRoute><AlumniHomePage /></AlumniRoute>
-                    </Suspense>
-                  }
-                />
-                <Route
-                  path="/alumni/post/create"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <AlumniRoute><AlumniPostCreatePage /></AlumniRoute>
-                    </Suspense>
-                  }
+                  element={<Navigate to="/alumni/profile" replace />}
                 />
                 <Route
                   path="/alumni/posts"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <AlumniRoute><AlumniMyPostsPage /></AlumniRoute>
-                    </Suspense>
-                  }
+                  element={<Navigate to="/alumni/profile" replace />}
                 />
                 <Route
                   path="/alumni/network"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <AlumniRoute><AlumniNetworkPage /></AlumniRoute>
-                    </Suspense>
-                  }
-                />
-                <Route
-                  path="/alumni/profile"
-                  element={<Navigate to="/alumni/dashboard" replace />}
+                  element={<Navigate to="/alumni/profile" replace />}
                 />
                 <Route
                   path="/alumni/feed"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <AlumniRoute><AlumniPostFeedPage /></AlumniRoute>
-                    </Suspense>
-                  }
+                  element={<Navigate to="/alumni/feed/alumni" replace />}
                 />
                 <Route
                   path="/alumni/discover"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><AlumniDiscoveryPage /></ProtectedRoute>
-                    </Suspense>
-                  }
+                  element={<Navigate to="/alumni/feed/alumni" replace />}
                 />
                 <Route
                   path="/alumni/social-feed"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <ProtectedRoute><AlumniSocialFeedPage /></ProtectedRoute>
-                    </Suspense>
-                  }
+                  element={<Navigate to="/alumni/feed/students" replace />}
                 />
                 <Route
                   path="/alumni/networking"

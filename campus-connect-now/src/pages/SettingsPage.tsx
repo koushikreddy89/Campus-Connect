@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useProfileStore } from '@/store/profileStore';
 import { useAuthStore } from '@/store/authStore';
 import { usePreferencesStore } from '@/store/preferencesStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { TRANSLATIONS, playNotificationSound } from '@/utils/preferencesHelpers';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -306,12 +307,14 @@ export default function SettingsPage({
   setActiveSubView: propSetActiveSubView
 }: SettingsPageProps = {}) {
   const navigate = useNavigate();
-  const showReadReceipts = useProfileStore(s => s?.profile?.showReadReceipts);
-  const showActiveStatus = useProfileStore(s => s?.profile?.showActiveStatus);
-  const showTypingIndicator = useProfileStore(s => s?.profile?.showTypingIndicator);
-  const showOnlinePresence = useProfileStore(s => s?.profile?.showOnlinePresence);
-  const autoSeen = useProfileStore(s => s?.profile?.autoSeen);
-  const notificationEnabled = useProfileStore(s => s?.profile?.notificationEnabled);
+  const settings = useSettingsStore(s => s.settings);
+  const fetchSettings = useSettingsStore(s => s.fetchSettings);
+  const updateToggleSetting = useSettingsStore(s => s.updateToggleSetting);
+
+  useEffect(() => {
+    fetchSettings().catch(() => {});
+  }, [fetchSettings]);
+
   const personalEmail = useProfileStore(s => s?.profile?.personalEmail);
   const collegeEmail = useProfileStore(s => s?.profile?.collegeEmail || s?.profile?.email);
   const collegeEmailVerified = useProfileStore(s => s?.profile?.collegeEmailVerified);
@@ -586,8 +589,8 @@ export default function SettingsPage({
                         description={t('readReceiptsDesc')}
                         iconBgClass="bg-emerald-55 dark:bg-emerald-950/20"
                         iconColorClass="text-emerald-600 dark:text-emerald-400"
-                        checked={showReadReceipts ?? true} 
-                        onChange={() => handleToggleChange('showReadReceipts', showReadReceipts ?? true)} 
+                        checked={settings.readReceipts} 
+                        onChange={() => updateToggleSetting('readReceipts', !settings.readReceipts)} 
                         disabled={isSaving}
                       />
                     )}
@@ -598,8 +601,8 @@ export default function SettingsPage({
                         description={t('activeStatusDesc')}
                         iconBgClass="bg-purple-55 dark:bg-purple-950/20"
                         iconColorClass="text-purple-600 dark:text-purple-400"
-                        checked={showActiveStatus ?? true} 
-                        onChange={() => handleToggleChange('showActiveStatus', showActiveStatus ?? true)} 
+                        checked={settings.activeStatus} 
+                        onChange={() => updateToggleSetting('activeStatus', !settings.activeStatus)} 
                         disabled={isSaving}
                       />
                     )}
@@ -610,8 +613,8 @@ export default function SettingsPage({
                         description={t('typingIndicatorDesc')}
                         iconBgClass="bg-blue-55 dark:bg-blue-950/20"
                         iconColorClass="text-blue-600 dark:text-blue-400"
-                        checked={showTypingIndicator ?? true} 
-                        onChange={() => handleToggleChange('showTypingIndicator', showTypingIndicator ?? true)} 
+                        checked={settings.typingIndicator} 
+                        onChange={() => updateToggleSetting('typingIndicator', !settings.typingIndicator)} 
                         disabled={isSaving}
                       />
                     )}
@@ -622,8 +625,8 @@ export default function SettingsPage({
                         description={t('onlinePresenceDesc')}
                         iconBgClass="bg-cyan-50 dark:bg-cyan-950/20"
                         iconColorClass="text-cyan-600 dark:text-cyan-455"
-                        checked={showOnlinePresence ?? true} 
-                        onChange={() => handleToggleChange('showOnlinePresence', showOnlinePresence ?? true)} 
+                        checked={settings.onlinePresence} 
+                        onChange={() => updateToggleSetting('onlinePresence', !settings.onlinePresence)} 
                         disabled={isSaving}
                       />
                     )}
@@ -634,8 +637,8 @@ export default function SettingsPage({
                         description={t('autoSeenDesc')}
                         iconBgClass="bg-amber-50 dark:bg-amber-950/20"
                         iconColorClass="text-amber-600 dark:text-amber-400"
-                        checked={autoSeen ?? true} 
-                        onChange={() => handleToggleChange('autoSeen', autoSeen ?? true)} 
+                        checked={settings.autoSeen} 
+                        onChange={() => updateToggleSetting('autoSeen', !settings.autoSeen)} 
                         disabled={isSaving}
                       />
                     )}
@@ -659,11 +662,31 @@ export default function SettingsPage({
                         description={t('pushNotificationsDesc')}
                         iconBgClass="bg-yellow-50 dark:bg-yellow-950/20"
                         iconColorClass="text-yellow-600 dark:text-yellow-450"
-                        checked={notificationEnabled ?? true} 
-                        onChange={() => handleToggleChange('notificationEnabled', notificationEnabled ?? true)} 
+                        checked={settings.pushNotifications} 
+                        onChange={() => updateToggleSetting('pushNotifications', !settings.pushNotifications)} 
                         disabled={isSaving}
                       />
                     )}
+                    <SettingRowToggle 
+                      icon={Volume2} 
+                      label="Sound Effects" 
+                      description="Play sound effects for incoming and outgoing messages"
+                      iconBgClass="bg-blue-50 dark:bg-blue-950/20"
+                      iconColorClass="text-blue-600 dark:text-blue-450"
+                      checked={settings.soundEffects} 
+                      onChange={() => updateToggleSetting('soundEffects', !settings.soundEffects)} 
+                      disabled={isSaving}
+                    />
+                    <SettingRowToggle 
+                      icon={Eye} 
+                      label="Message Preview" 
+                      description="Show message preview in push notifications"
+                      iconBgClass="bg-cyan-50 dark:bg-cyan-950/20"
+                      iconColorClass="text-cyan-600 dark:text-cyan-455"
+                      checked={settings.messagePreview} 
+                      onChange={() => updateToggleSetting('messagePreview', !settings.messagePreview)} 
+                      disabled={isSaving}
+                    />
                   </div>
                 </div>
               )}
@@ -1075,7 +1098,7 @@ export default function SettingsPage({
               <div>
                 <SectionHeader title="Notification Tone" />
                 <div className="space-y-2 mt-2">
-                  {(['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent'] as const).map((sound) => (
+                  {(['Default', 'Chime', 'Pop', 'Bell', 'Campus', 'Silent', 'Aurora', 'Pulse', 'Zen', 'Echo', 'Minimal'] as const).map((sound) => (
                     <button
                       key={sound}
                       onClick={() => {

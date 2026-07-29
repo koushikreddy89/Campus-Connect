@@ -1272,7 +1272,7 @@ export interface UserPreferencesData {
   timezone: string;
   dateFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
   timeFormat: '12h' | '24h';
-  notificationSound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent';
+  notificationSound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent' | 'Aurora' | 'Pulse' | 'Zen' | 'Echo' | 'Minimal';
   notificationVolume: number;
   dataSaver: boolean;
   autoPlayVideos: boolean;
@@ -1389,6 +1389,44 @@ export const preferencesApi = {
       return await res.json();
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to update data saver settings' };
+    }
+  }
+};
+
+export interface UserSettingsData {
+  userId?: string;
+  readReceipts: boolean;
+  activeStatus: boolean;
+  typingIndicator: boolean;
+  onlinePresence: boolean;
+  autoSeen: boolean;
+  pushNotifications: boolean;
+  soundEffects: boolean;
+  messagePreview: boolean;
+}
+
+export const settingsApi = {
+  async getSettings() {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/settings`, {
+        headers: getHeaders(undefined)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to fetch settings' };
+    }
+  },
+
+  async updateSettings(data: Partial<UserSettingsData>) {
+    try {
+      const res = await fetch(`${getApiUrl()}/api/settings`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify(data)
+      });
+      return await res.json();
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update settings' };
     }
   }
 };

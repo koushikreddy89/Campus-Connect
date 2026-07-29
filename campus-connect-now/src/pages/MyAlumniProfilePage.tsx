@@ -1,9 +1,4 @@
-/**
- * My Alumni Profile Page - Redesigned Premium Alumni Creator Dashboard
- * Inspired by LinkedIn Premium, ADPList, and Notion.
- */
-
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -11,7 +6,6 @@ import {
   Edit2,
   Trash2,
   CheckCircle,
-  Menu,
   X,
   Briefcase,
   Award,
@@ -25,31 +19,33 @@ import {
   ChevronRight,
   Bookmark,
   Sparkles,
-  Pin,
-  Map,
   Link as LinkIcon,
   Calendar,
   AlertCircle,
-  Clock,
   ExternalLink,
   ChevronDown,
-  LogOut,
-  Camera
+  ChevronUp,
+  Camera,
+  Linkedin,
+  Github,
+  Mail,
+  UserCheck,
+  Check,
+  Zap,
+  MapPin
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { useAuthStore } from '@/store/authStore';
 import { useAlumniStore } from '@/store/alumniStore';
-import { formatAlumniDesignation } from '@/utils/alumniUtils';
+import { useProfileStore } from '@/store/profileStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Avatar } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+
 import { alumniProfileService, alumniPostsService } from '@/services/alumniService';
 import {
-  AlumniProfile,
   AlumniPost,
   AlumniReferral,
   AlumniRoadmap,
@@ -61,126 +57,53 @@ import {
 } from '@/types/alumni';
 import { toast } from 'sonner';
 
-class SidebarErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
+// Counting animations for stats
+function Counter({ value }: { value: number }) {
+  const [count, setCount] = useState(0);
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: any, errorInfo: any) {
-    console.error('[SidebarErrorBoundary] Caught error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="p-4 bg-destructive/10 border border-destructive/20 text-destructive text-xs rounded-md">
-          <p className="font-bold mb-1">Sidebar Navigation Error</p>
-          <p>Please reload or click back.</p>
-        </div>
-      );
+  useEffect(() => {
+    let start = 0;
+    const end = value;
+    if (end === 0) {
+      setCount(0);
+      return;
     }
-    return this.props.children;
-  }
+    
+    const duration = 1.0; // seconds
+    const totalFrames = Math.round(duration * 60);
+    let frame = 0;
+
+    const timer = setInterval(() => {
+      frame++;
+      const progress = frame / totalFrames;
+      const current = Math.round(end * (progress * (2 - progress)));
+      setCount(current);
+
+      if (frame >= totalFrames) {
+        setCount(end);
+        clearInterval(timer);
+      }
+    }, 1000 / 60);
+
+    return () => clearInterval(timer);
+  }, [value]);
+
+  return <span>{count}</span>;
 }
-
-interface PremiumAvatarProps {
-  src?: string;
-  name?: string;
-  onClick?: () => void;
-  size?: 'sm' | 'md' | 'lg';
-  showStatus?: boolean;
-}
-
-const PremiumDashboardAvatar: React.FC<PremiumAvatarProps> = ({ src, name = 'User', onClick, size = 'sm', showStatus = true }) => {
-  const [imageError, setImageError] = useState(false);
-  
-  const initials = name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase() || 'U';
-
-  const sizeClasses = {
-    sm: 'h-9 w-9 text-xs',
-    md: 'h-16 w-16 text-lg',
-    lg: 'h-20 w-20 text-xl'
-  };
-
-  const statusSizeClasses = {
-    sm: 'h-2.5 w-2.5 right-0 bottom-0 ring-1',
-    md: 'h-3.5 w-3.5 right-0.5 bottom-0.5 ring-2',
-    lg: 'h-4 w-4 right-1 bottom-1 ring-2'
-  };
-
-  const hasImage = !!src && src.startsWith('http') && !imageError;
-
-  return (
-    <div 
-      className="relative inline-block cursor-pointer group transition-all duration-300 ease-out"
-      onClick={onClick}
-    >
-      <div className={`
-        ${sizeClasses[size]}
-        rounded-full 
-        flex 
-        items-center 
-        justify-center 
-        overflow-hidden 
-        transition-all 
-        duration-300 
-        border-2 
-        border-primary 
-        shadow-[0_0_15px_rgba(124,92,252,0.20)] 
-        group-hover:shadow-[0_0_20px_rgba(124,92,252,0.45)] 
-        group-hover:scale-105 
-        bg-gradient-to-br from-primary via-purple-500 to-violet-600 
-        text-white 
-        font-bold
-      `}>
-        {hasImage ? (
-          <img 
-            src={src} 
-            alt={name} 
-            className="h-full w-full object-cover transition-all duration-300 group-hover:scale-105"
-            onError={() => setImageError(true)}
-          />
-        ) : (
-          <span className="tracking-wider text-white select-none">{initials}</span>
-        )}
-      </div>
-      
-      {showStatus && (
-        <span className={`
-          ${statusSizeClasses[size]}
-          absolute 
-          rounded-full 
-          bg-green-500 
-          ring-background 
-          animate-pulse
-        `} />
-      )}
-    </div>
-  );
-};
 
 export const MyAlumniProfilePage: React.FC = () => {
   const navigate = useNavigate();
+  const hasLoadedRef = useRef(false);
   const authCollege = useAuthStore((state) => state.college);
   const college = authCollege || 'SR University';
   const userId = useAuthStore((state) => state.uid);
-  const logout = useAuthStore((state) => state.logout);
+  const email = useAuthStore((state) => state.email);
 
   // Core Page State
   const [isChecking, setIsChecking] = useState(true);
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isDashboardExpanded, setIsDashboardExpanded] = useState(false);
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
 
   // Sub-resource lists
@@ -189,7 +112,6 @@ export const MyAlumniProfilePage: React.FC = () => {
   const [roadmaps, setRoadmaps] = useState<AlumniRoadmap[]>([]);
   const [resources, setResources] = useState<AlumniResource[]>([]);
   const [achievements, setAchievements] = useState<AlumniAchievement[]>([]);
-  const [pinnedPostId, setPinnedPostId] = useState<string | null>(null);
 
   // Modal / Form Management
   const [activeModal, setActiveModal] = useState<string | null>(null);
@@ -243,19 +165,19 @@ export const MyAlumniProfilePage: React.FC = () => {
 
   // Effects
   useEffect(() => {
-    // Immediate execution on component mount using authenticated session or stored credentials
-    const activeUserId = userId || localStorage.getItem('user_id') || 'alumni-test-user-89';
-    console.log('🚀 [Dashboard Mount] Initializing creator dashboard for activeUserId:', activeUserId);
-    loadAllData(activeUserId);
+    const activeUserId = userId || localStorage.getItem('user_id') || '';
+    if (activeUserId) {
+      loadAllData(activeUserId);
+    }
 
     if (college) {
-      loadProfile();
+      if (!hasLoadedRef.current) {
+        hasLoadedRef.current = true;
+        loadProfile();
+      }
     } else {
-      const timer = setTimeout(() => {
-        setIsChecking(false);
-        setIsCreatingProfile(true);
-      }, 2000);
-      return () => clearTimeout(timer);
+      setIsChecking(false);
+      setIsCreatingProfile(true);
     }
   }, [college, userId]);
 
@@ -272,7 +194,12 @@ export const MyAlumniProfilePage: React.FC = () => {
         profileImageUrl: currentAlumniProfile.profileImageUrl || currentAlumniProfile.profileImage,
         skills: currentAlumniProfile.skills ? currentAlumniProfile.skills.join(', ') : '',
         linkedinUrl: currentAlumniProfile.linkedinUrl || '',
-        portfolioUrl: currentAlumniProfile.portfolioUrl || ''
+        portfolioUrl: currentAlumniProfile.portfolioUrl || '',
+        githubUrl: currentAlumniProfile.githubUrl || '',
+        resumeUrl: currentAlumniProfile.resumeUrl || '',
+        isAvailableForMentorship: currentAlumniProfile.isAvailableForMentorship ?? true,
+        isAvailableForReferrals: currentAlumniProfile.isAvailableForReferrals ?? true,
+        hiringStatus: currentAlumniProfile.hiringStatus || 'not_hiring'
       });
     }
   }, [currentAlumniProfile]);
@@ -288,7 +215,6 @@ export const MyAlumniProfilePage: React.FC = () => {
         }
         setIsChecking(false);
       } else {
-        // Fallback: If no dedicated alumni profile document exists yet, load data using current user ID
         if (userId) {
           await loadAllData(userId);
         }
@@ -306,24 +232,26 @@ export const MyAlumniProfilePage: React.FC = () => {
   const loadAllData = async (profileId: string) => {
     try {
       setLoadingData(true);
-      console.log('🔄 [Dashboard] Fetching creator content for profileId:', profileId);
       
       let postsResult: any = { data: [] };
       try {
         postsResult = await alumniPostsService.getMyPosts();
       } catch (myPostsErr) {
-        console.warn('⚠️ getMyPosts failed, falling back to getPostsByAlumniId:', myPostsErr);
         postsResult = await alumniPostsService.getPostsByAlumniId(profileId, college);
       }
 
-      const [fetchedReferrals, fetchedRoadmaps, fetchedResources, fetchedAchievements] = await Promise.all([
+      const results = await Promise.allSettled([
         alumniProfileService.getReferralsByAlumniId(profileId),
         alumniProfileService.getRoadmapsByAlumniId(profileId),
         alumniProfileService.getResourcesByAlumniId(profileId),
         alumniProfileService.getAchievementsByAlumniId(profileId)
       ]);
 
-      console.log('✅ [Dashboard] Loaded creator posts count:', (postsResult.data || []).length);
+      const fetchedReferrals = results[0].status === 'fulfilled' ? (results[0] as any).value : [];
+      const fetchedRoadmaps = results[1].status === 'fulfilled' ? (results[1] as any).value : [];
+      const fetchedResources = results[2].status === 'fulfilled' ? (results[2] as any).value : [];
+      const fetchedAchievements = results[3].status === 'fulfilled' ? (results[3] as any).value : [];
+
       setPosts(postsResult.data || []);
       setReferrals(fetchedReferrals || []);
       setRoadmaps(fetchedRoadmaps || []);
@@ -336,7 +264,6 @@ export const MyAlumniProfilePage: React.FC = () => {
     }
   };
 
-  // Handlers for profile creation/updating
   const onSubmitProfile = async (data: any) => {
     try {
       if (!college) return;
@@ -356,25 +283,20 @@ export const MyAlumniProfilePage: React.FC = () => {
         await fetchAlumniById(profile.id, college);
         toast.success('Creator Profile Setup Complete!');
       }
+      setIsEditingInfo(false);
     } catch (error) {
       console.error('Failed to save profile:', error);
       toast.error('Failed to save profile details');
     }
   };
 
-  // State for post submission
-  const [isSubmittingPost, setIsSubmittingPost] = useState(false);
-
-  // CRUD handlers for Posts
+  // CRUD actions for post, referrals, roadmaps, resources
   const handleSavePost = async (data: any) => {
-    console.log('📝 [Alumni Creator] handleSavePost triggered with form data:', data);
     if (!data.content || !data.content.trim()) {
       toast.error('Post content cannot be empty.');
       return;
     }
-
     try {
-      setIsSubmittingPost(true);
       const targetAlumniId = currentAlumniProfile?.id || userId || '';
       const payload = {
         content: data.content.trim(),
@@ -385,34 +307,23 @@ export const MyAlumniProfilePage: React.FC = () => {
       };
 
       if (editingItem) {
-        console.log('🔄 [Alumni Creator] Updating existing post:', editingItem.id);
         const updated = await alumniPostsService.updatePost(editingItem.id, payload, college);
         toast.success('Post updated successfully!');
         if (updated) {
           setPosts(prev => prev.map(p => (p.id === updated.id || p._id === updated._id) ? { ...p, ...updated } : p));
         }
       } else {
-        console.log('📤 [Alumni Creator] Publishing new post payload:', payload);
         const newCreatedPost = await alumniPostsService.createPost(payload, college);
         toast.success('Post published successfully.');
-        // Immediately prepend new post into React state
         if (newCreatedPost) {
           setPosts(prev => [newCreatedPost, ...prev]);
         }
       }
-      
       setActiveModal(null);
       setEditingItem(null);
       postForm.reset();
-      
-      if (targetAlumniId) {
-        loadAllData(targetAlumniId);
-      }
-    } catch (err: any) {
-      console.error('❌ [Alumni Creator] Post publication failed:', err);
-      toast.error(err?.message || 'Failed to publish post. Please try again.');
-    } finally {
-      setIsSubmittingPost(false);
+    } catch (err) {
+      toast.error('Failed to publish post');
     }
   };
 
@@ -420,25 +331,16 @@ export const MyAlumniProfilePage: React.FC = () => {
     if (!confirm('Are you sure you want to delete this post?')) return;
     try {
       await alumniPostsService.deletePost(id, college);
-      toast.success('Post removed');
-      setPosts(prev => prev.filter(p => (p.id !== id && p._id !== id)));
-      if (userId) loadAllData(userId);
+      toast.success('Post deleted successfully');
+      setPosts(prev => prev.filter(p => p.id !== id && (p as any)._id !== id));
     } catch (err) {
       toast.error('Failed to delete post');
     }
   };
 
-  // CRUD handlers for Referrals
   const handleSaveReferral = async (data: any) => {
     try {
       if (!currentAlumniProfile) return;
-      
-      const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$/i;
-      if (!data.applicationUrl || !urlPattern.test(data.applicationUrl.trim())) {
-        toast.error('Invalid application URL. Please provide a valid web link.');
-        return;
-      }
-
       const payload = {
         alumniId: currentAlumniProfile.id,
         company: data.companyName,
@@ -460,7 +362,6 @@ export const MyAlumniProfilePage: React.FC = () => {
         await alumniProfileService.createReferral(payload);
         toast.success('Referral shared with students!');
       }
-
       setActiveModal(null);
       setEditingItem(null);
       referralForm.reset();
@@ -481,7 +382,6 @@ export const MyAlumniProfilePage: React.FC = () => {
     }
   };
 
-  // CRUD handlers for Roadmaps
   const handleAddRoadmapStep = () => {
     setRoadmapSteps([...roadmapSteps, { title: '', description: '' }]);
   };
@@ -513,7 +413,6 @@ export const MyAlumniProfilePage: React.FC = () => {
         await alumniProfileService.createRoadmap(payload);
         toast.success('Roadmap published for students!');
       }
-
       setActiveModal(null);
       setEditingItem(null);
       roadmapForm.reset();
@@ -535,7 +434,6 @@ export const MyAlumniProfilePage: React.FC = () => {
     }
   };
 
-  // CRUD handlers for Resources
   const handleSaveResource = async (data: any) => {
     try {
       if (!currentAlumniProfile) return;
@@ -551,7 +449,6 @@ export const MyAlumniProfilePage: React.FC = () => {
         await alumniProfileService.createResource(payload);
         toast.success('Resource uploaded successfully!');
       }
-
       setActiveModal(null);
       setEditingItem(null);
       resourceForm.reset();
@@ -572,7 +469,6 @@ export const MyAlumniProfilePage: React.FC = () => {
     }
   };
 
-  // CRUD handlers for Achievements
   const handleSaveAchievement = async (data: any) => {
     try {
       if (!currentAlumniProfile) return;
@@ -588,7 +484,6 @@ export const MyAlumniProfilePage: React.FC = () => {
         await alumniProfileService.createAchievement(payload);
         toast.success('Achievement shared with network!');
       }
-
       setActiveModal(null);
       setEditingItem(null);
       achievementForm.reset();
@@ -609,29 +504,6 @@ export const MyAlumniProfilePage: React.FC = () => {
     }
   };
 
-  // Toggle Pinned Post status locally
-  const togglePinPost = (id: string) => {
-    if (pinnedPostId === id) {
-      setPinnedPostId(null);
-      toast.success('Post unpinned');
-    } else {
-      setPinnedPostId(id);
-      toast.success('Post pinned to top');
-    }
-  };
-
-  // Sidebar Menu Items Definition
-  const menuItems = [
-    { id: 'dashboard', label: 'Creator Home', icon: BarChart2 },
-    { id: 'posts', label: 'My Posts', icon: FileText },
-    { id: 'referrals', label: 'My Referrals', icon: Briefcase },
-    { id: 'roadmaps', label: 'My Roadmaps', icon: Map },
-    { id: 'resources', label: 'My Resources', icon: BookOpen },
-    { id: 'achievements', label: 'My Achievements', icon: Award },
-    { id: 'analytics', label: 'My Analytics', icon: TrendingUp },
-    { id: 'settings', label: 'Profile Settings', icon: Settings },
-  ];
-
   // Helper stats computation
   const stats = {
     totalPosts: posts.length,
@@ -641,10 +513,9 @@ export const MyAlumniProfilePage: React.FC = () => {
     studentsHelped: currentAlumniProfile?.connections?.length || currentAlumniProfile?.helpedCount || 0
   };
 
-  // Loading indicator for profile check
   if (isChecking) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-[#09090B] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
           <p className="text-muted-foreground text-sm font-medium">Loading Alumni Dashboard...</p>
@@ -656,7 +527,7 @@ export const MyAlumniProfilePage: React.FC = () => {
   // Profile setup flow
   if (isCreatingProfile && !currentAlumniProfile) {
     return (
-      <div className="min-h-screen bg-background py-12 px-4">
+      <div className="min-h-screen bg-[#09090B] py-12 px-4">
         <div className="max-w-lg mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -668,7 +539,7 @@ export const MyAlumniProfilePage: React.FC = () => {
               <div className="inline-flex p-3 rounded-full bg-primary/10 text-primary mb-2">
                 <Sparkles size={32} />
               </div>
-              <h1 className="text-3xl font-bold tracking-tight">Alumni Creator Setup</h1>
+              <h1 className="text-3xl font-bold tracking-tight text-white">Alumni Creator Setup</h1>
               <p className="text-muted-foreground text-sm">
                 Join our elite alumni team and help students unlock their potential.
               </p>
@@ -739,69 +610,6 @@ export const MyAlumniProfilePage: React.FC = () => {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">Profile Photo (Optional)</label>
-                  <div className="flex items-center gap-4 bg-background/25 border border-border/40 rounded-xl p-3">
-                    <div className="relative group">
-                      <PremiumDashboardAvatar
-                        src={profileForm.watch('profileImageUrl')}
-                        name={profileForm.watch('name') || 'Alumni'}
-                        size="md"
-                        showStatus={false}
-                      />
-                      <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                        <Camera size={16} className="text-white" />
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handleImageUpload}
-                        />
-                      </label>
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const input = document.getElementById('profile-image-upload-setup') as HTMLInputElement;
-                            if (input) input.click();
-                          }}
-                          className="h-8 text-xs font-semibold border-primary/20 hover:bg-primary/10 text-primary"
-                          disabled={uploadingImage}
-                        >
-                          {uploadingImage ? 'Loading...' : 'Upload Photo'}
-                        </Button>
-                        {profileForm.watch('profileImageUrl') && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              profileForm.setValue('profileImageUrl', '');
-                            }}
-                            className="h-8 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">
-                        JPG, PNG or WEBP. Max size 5MB.
-                      </p>
-                      <input
-                        id="profile-image-upload-setup"
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleImageUpload}
-                      />
-                    </div>
-                  </div>
-                </div>
-
                 <div className="flex gap-3 pt-4 border-t border-border/40">
                   <Button
                     type="button"
@@ -827,872 +635,393 @@ export const MyAlumniProfilePage: React.FC = () => {
     );
   }
 
-  // Dashboard Page Content
-  const renderTabContent = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return (
-          <div className="space-y-6">
-            {/* Performance overview */}
-            <div className="space-y-3">
-              <h2 className="text-lg font-bold text-foreground">Performance Overview</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <Card className="bg-card/40 border-border/30 backdrop-blur-sm p-4 flex flex-col justify-between">
-                  <div className="flex justify-between items-center text-muted-foreground">
-                    <span className="text-xs font-medium uppercase tracking-wider">Total Views</span>
-                    <Eye size={16} className="text-primary" />
-                  </div>
-                  <div className="mt-4">
-                    <span className="text-2xl font-bold">{currentAlumniProfile?.viewCount || 0}</span>
-                    <p className="text-[10px] text-green-500 mt-1">▲ 12.3% this month</p>
-                  </div>
-                </Card>
-
-                <Card className="bg-card/40 border-border/30 backdrop-blur-sm p-4 flex flex-col justify-between">
-                  <div className="flex justify-between items-center text-muted-foreground">
-                    <span className="text-xs font-medium uppercase tracking-wider">Connections</span>
-                    <Users size={16} className="text-blue-500" />
-                  </div>
-                  <div className="mt-4">
-                    <span className="text-2xl font-bold">{stats.studentsHelped}</span>
-                    <p className="text-[10px] text-blue-500 mt-1">Students connected</p>
-                  </div>
-                </Card>
-
-                <Card className="bg-card/40 border-border/30 backdrop-blur-sm p-4 flex flex-col justify-between">
-                  <div className="flex justify-between items-center text-muted-foreground">
-                    <span className="text-xs font-medium uppercase tracking-wider">Referrals</span>
-                    <Briefcase size={16} className="text-amber-500" />
-                  </div>
-                  <div className="mt-4">
-                    <span className="text-2xl font-bold">{stats.totalReferrals}</span>
-                    <p className="text-[10px] text-amber-500 mt-1">Opportunities shared</p>
-                  </div>
-                </Card>
-
-                <Card className="bg-card/40 border-border/30 backdrop-blur-sm p-4 flex flex-col justify-between">
-                  <div className="flex justify-between items-center text-muted-foreground">
-                    <span className="text-xs font-medium uppercase tracking-wider">Saved Resources</span>
-                    <Bookmark size={16} className="text-purple-500" />
-                  </div>
-                  <div className="mt-4">
-                    <span className="text-2xl font-bold">{currentAlumniProfile?.savedResources?.length || 0}</span>
-                    <p className="text-[10px] text-purple-500 mt-1">Bookmarked items</p>
-                  </div>
-                </Card>
-              </div>
-            </div>
-
-            {/* Recent activity */}
-            <div className="space-y-3">
-              <h2 className="text-lg font-bold text-foreground">Recent Activity</h2>
-              <Card className="bg-card/40 border-border/30 backdrop-blur-sm p-4 divide-y divide-border/20">
-                {posts.length === 0 && referrals.length === 0 && roadmaps.length === 0 && resources.length === 0 && (
-                  <div className="text-center py-6 text-muted-foreground text-sm">
-                    No recent activities. Share a post or a referral to get started!
-                  </div>
-                )}
-
-                {posts.slice(0, 1).map(post => (
-                  <div key={post.id} className="py-3 first:pt-0 flex items-start gap-3">
-                    <div className="p-2 bg-primary/10 text-primary rounded-full mt-0.5">
-                      <FileText size={16} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-foreground">Published Post</span>
-                        <span className="text-[10px] text-muted-foreground">Latest</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{post.content}</p>
-                    </div>
-                  </div>
-                ))}
-
-                {referrals.slice(0, 1).map(ref => (
-                  <div key={ref.id} className="py-3 flex items-start gap-3">
-                    <div className="p-2 bg-amber-500/10 text-amber-500 rounded-full mt-0.5">
-                      <Briefcase size={16} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-foreground">Referral Shared</span>
-                        <span className="text-[10px] text-muted-foreground">{ref.company}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">{ref.role} referral opportunity is live</p>
-                    </div>
-                  </div>
-                ))}
-
-                {resources.slice(0, 1).map(res => (
-                  <div key={res.id} className="py-3 flex items-start gap-3">
-                    <div className="p-2 bg-purple-500/10 text-purple-500 rounded-full mt-0.5">
-                      <BookOpen size={16} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-foreground">Resource Uploaded</span>
-                        <span className="text-[10px] text-muted-foreground">{res.categoryType}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">{res.title}</p>
-                    </div>
-                  </div>
-                ))}
-              </Card>
-            </div>
-          </div>
-        );
-
-      case 'posts':
-        return (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-foreground">Creator Feed Posts</h2>
-              <Button size="sm" onClick={() => { setEditingItem(null); postForm.reset(); setActiveModal('post'); }} className="gap-1.5 h-8">
-                <Plus size={14} /> New Post
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {posts.length === 0 ? (
-                <Card className="p-8 text-center text-muted-foreground text-sm border-dashed col-span-full">
-                  Write your first career insight or hiring update.
-                </Card>
-              ) : (
-                posts.map(post => {
-                  const postId = post._id || post.id || '';
-                  return (
-                    <Card key={postId} className="bg-card/40 border-border/30 p-4 relative overflow-hidden">
-                      {pinnedPostId === postId && (
-                        <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-[8px] font-bold px-2 py-0.5 rounded-bl">
-                          PINNED
-                        </div>
-                      )}
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex gap-2 items-center">
-                            <Badge variant="secondary" className="text-[9px] px-2 py-0">
-                              {post.type}
-                            </Badge>
-                            <span className="text-[10px] text-muted-foreground">
-                              {post.createdAt ? new Date(post.createdAt).toLocaleDateString() : 'Just now'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-foreground mt-2 leading-relaxed whitespace-pre-wrap">{post.content}</p>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
-                        <div className="flex gap-1.5">
-                          <Button 
-                            size="icon" 
-                            variant="ghost" 
-                            onClick={() => togglePinPost(postId)}
-                            className={`h-7 w-7 ${pinnedPostId === postId ? 'text-primary' : 'text-muted-foreground'}`}
-                          >
-                            <Pin size={13} />
-                          </Button>
-                          <Button 
-                            size="icon" 
-                            variant="ghost" 
-                            onClick={() => {
-                              setEditingItem({ ...post, id: postId });
-                              postForm.reset({
-                                content: post.content,
-                                type: post.type
-                              });
-                              setActiveModal('post');
-                            }}
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                          >
-                            <Edit2 size={13} />
-                          </Button>
-                        </div>
-                        <Button size="icon" variant="ghost" onClick={() => handleDeletePost(postId)} className="h-7 w-7 text-destructive hover:bg-destructive/10">
-                          <Trash2 size={13} />
-                        </Button>
-                      </div>
-                    </Card>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        );
-
-      case 'referrals':
-        return (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-foreground">Hiring Referrals</h2>
-              <Button size="sm" onClick={() => { setEditingItem(null); referralForm.reset(); setActiveModal('referral'); }} className="gap-1.5 h-8">
-                <Plus size={14} /> Share Opportunity
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {referrals.length === 0 ? (
-                <Card className="p-8 text-center text-muted-foreground text-sm border-dashed col-span-full">
-                  No referrals listed. Help students get referred to your company!
-                </Card>
-              ) : (
-                referrals.map(ref => (
-                  <Card key={ref.id} className="bg-card/40 border-border/30 p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-sm font-bold text-foreground">{ref.jobTitle || ref.role}</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">{ref.companyName || ref.company} • {ref.location || 'Remote'}</p>
-                        
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-3 text-[11px] text-muted-foreground">
-                          <p>🎯 <span className="font-semibold">Eligibility:</span> {ref.eligibility || 'Open'}</p>
-                          <p>📅 <span className="font-semibold">Deadline:</span> {ref.deadline || 'No Deadline'}</p>
-                          {ref.salary && <p>💰 <span className="font-semibold">Salary:</span> {ref.salary}</p>}
-                          {(ref.role || ref.jobTitle) && <p>👔 <span className="font-semibold">Role:</span> {ref.jobTitle || ref.role}</p>}
-                        </div>
-                        {ref.description && (
-                          <p className="text-xs text-muted-foreground mt-2 border-t border-border/10 pt-2">{ref.description}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
-                      {(ref.applicationUrl || ref.applicationLink) ? (
-                        <a href={ref.applicationUrl || ref.applicationLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-                          <LinkIcon size={10} /> Link
-                        </a>
-                      ) : <span className="text-[10px] text-muted-foreground">No Link</span>}
-
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setEditingItem(ref);
-                            referralForm.reset({
-                              companyName: ref.companyName || ref.company,
-                              jobTitle: ref.jobTitle || ref.role,
-                              eligibility: ref.eligibility || '',
-                              deadline: ref.deadline || '',
-                              salary: ref.salary || '',
-                              location: ref.location || 'Remote',
-                              applicationUrl: ref.applicationUrl || ref.applicationLink || '',
-                              description: ref.description || ''
-                            });
-                            setActiveModal('referral');
-                          }}
-                          className="h-7 px-2.5 text-xs text-muted-foreground"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDeleteReferral(ref.id)}
-                          className="h-7 px-2.5 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          Close
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
-        );
-
-      case 'roadmaps':
-        return (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-foreground">Learning Roadmaps</h2>
-              <Button size="sm" onClick={() => { setEditingItem(null); roadmapForm.reset(); setRoadmapSteps([{ title: '', description: '' }]); setActiveModal('roadmap'); }} className="gap-1.5 h-8">
-                <Plus size={14} /> Create Roadmap
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {roadmaps.length === 0 ? (
-                <Card className="p-8 text-center text-muted-foreground text-sm border-dashed col-span-full">
-                  No learning roadmaps shared yet. Guide students step-by-step.
-                </Card>
-              ) : (
-                roadmaps.map(rd => (
-                  <Card key={rd.id} className="bg-card/40 border-border/30 p-4">
-                    <div>
-                      <h3 className="text-sm font-bold text-foreground">{rd.title}</h3>
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{rd.description}</p>
-                      
-                      <div className="mt-3 space-y-2">
-                        <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Milestones</p>
-                        <div className="space-y-1">
-                          {rd.steps.map((st, idx) => (
-                            <div key={idx} className="flex gap-2 items-center text-xs text-muted-foreground">
-                              <span className="font-semibold text-primary">{idx + 1}.</span>
-                              <span className="truncate">{st.title}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-border/10">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingItem(rd);
-                          roadmapForm.reset(rd);
-                          setRoadmapSteps(rd.steps);
-                          setActiveModal('roadmap');
-                        }}
-                        className="h-7 px-2.5 text-xs text-muted-foreground"
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleDeleteRoadmap(rd.id)}
-                        className="h-7 px-2.5 text-xs text-destructive hover:bg-destructive/10"
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
-        );
-
-      case 'resources':
-        return (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-foreground">Content Resources</h2>
-              <Button size="sm" onClick={() => { setEditingItem(null); resourceForm.reset(); setActiveModal('resource'); }} className="gap-1.5 h-8">
-                <Plus size={14} /> Upload / Link
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {resources.length === 0 ? (
-                <Card className="p-8 text-center text-muted-foreground text-sm border-dashed col-span-full">
-                  No learning resources shared. Add PDFs, course links, or templates.
-                </Card>
-              ) : (
-                resources.map(res => (
-                  <Card key={res.id} className="bg-card/40 border-border/30 p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-bold text-foreground">{res.title}</h3>
-                          <Badge className="text-[8px] uppercase">{res.categoryType}</Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{res.description}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
-                      {res.link ? (
-                        <a href={res.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                          Access Resource <ExternalLink size={10} />
-                        </a>
-                      ) : <span className="text-xs text-muted-foreground">Link not available</span>}
-
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setEditingItem(res);
-                            resourceForm.reset(res);
-                            setActiveModal('resource');
-                          }}
-                          className="h-7 px-2.5 text-xs text-muted-foreground"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDeleteResource(res.id)}
-                          className="h-7 px-2.5 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
-        );
-
-      case 'achievements':
-        return (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-foreground">Milestones & Awards</h2>
-              <Button size="sm" onClick={() => { setEditingItem(null); achievementForm.reset(); setActiveModal('achievement'); }} className="gap-1.5 h-8">
-                <Plus size={14} /> Add Achievement
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {achievements.length === 0 ? (
-                <Card className="p-8 text-center text-muted-foreground text-sm border-dashed col-span-full">
-                  No achievements posted. Share promotion updates, awards, or certs!
-                </Card>
-              ) : (
-                achievements.map(ac => (
-                  <Card key={ac.id} className="bg-card/40 border-border/30 p-4">
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <Badge variant="outline" className="text-[8px] uppercase tracking-wider mb-1">
-                            {ac.type}
-                          </Badge>
-                          <h3 className="text-sm font-bold text-foreground">{ac.title}</h3>
-                          {ac.issuer && <p className="text-[11px] text-muted-foreground">{ac.issuer}</p>}
-                        </div>
-                        {ac.date && <span className="text-[10px] text-muted-foreground">{ac.date}</span>}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{ac.description}</p>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-4 pt-3 border-t border-border/10">
-                      {ac.link ? (
-                        <a href={ac.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-                          View Verification <ExternalLink size={10} />
-                        </a>
-                      ) : <span />}
-
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setEditingItem(ac);
-                            achievementForm.reset(ac);
-                            setActiveModal('achievement');
-                          }}
-                          className="h-7 px-2.5 text-xs text-muted-foreground"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDeleteAchievement(ac.id)}
-                          className="h-7 px-2.5 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
-        );
-
-      case 'analytics':
-        return (
-          <div className="space-y-6">
-            <h2 className="text-lg font-bold text-foreground">Creator Analytics</h2>
-            
-            {/* Main graph placeholder styled premium */}
-            <Card className="bg-card/40 border-border/30 p-4 space-y-4">
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Weekly Reach</span>
-                <h3 className="text-xl font-bold text-foreground mt-0.5">1,240 Impressions</h3>
-              </div>
-              <div className="h-28 bg-gradient-to-t from-primary/10 to-transparent border-b border-border/20 rounded flex items-end justify-between p-2">
-                <div className="w-6 bg-primary/20 h-8 rounded-t" />
-                <div className="w-6 bg-primary/30 h-14 rounded-t" />
-                <div className="w-6 bg-primary/40 h-20 rounded-t" />
-                <div className="w-6 bg-primary/30 h-10 rounded-t" />
-                <div className="w-6 bg-primary/50 h-24 rounded-t" />
-                <div className="w-6 bg-primary/80 h-28 rounded-t" />
-              </div>
-            </Card>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Card className="bg-card/40 border-border/30 p-3 space-y-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Post Engagement</p>
-                <p className="text-lg font-bold text-foreground">4.2%</p>
-                <div className="w-full bg-border/20 h-1 rounded overflow-hidden">
-                  <div className="bg-green-500 h-full w-[42%]" />
-                </div>
-              </Card>
-
-              <Card className="bg-card/40 border-border/30 p-3 space-y-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Search Appearances</p>
-                <p className="text-lg font-bold text-foreground">186</p>
-                <div className="w-full bg-border/20 h-1 rounded overflow-hidden">
-                  <div className="bg-primary h-full w-[60%]" />
-                </div>
-              </Card>
-            </div>
-          </div>
-        );
-
-      case 'settings':
-        return (
-          <div className="space-y-4 max-w-2xl mx-auto">
-            <h2 className="text-lg font-bold text-foreground">Edit Profile Settings</h2>
-            
-            <Card className="bg-card/40 border-border/30 p-5">
-              <form onSubmit={profileForm.handleSubmit(onSubmitProfile)} className="space-y-4">
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Full Name</label>
-                  <Input {...profileForm.register('name')} className="mt-1 bg-background/50 h-9" />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Batch Year</label>
-                    <select
-                      {...profileForm.register('batch')}
-                      className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    >
-                      {BatchOptions.map((year) => (
-                        <option key={year} value={year}>{year}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Department</label>
-                    <Input {...profileForm.register('department')} className="mt-1 bg-background/50 h-9" />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Company</label>
-                    <Input {...profileForm.register('company')} className="mt-1 bg-background/50 h-9" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Designation / Role</label>
-                    <Input {...profileForm.register('role')} className="mt-1 bg-background/50 h-9" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Bio / Story / Career Journey</label>
-                  <Textarea {...profileForm.register('story')} className="mt-1 bg-background/50 h-24" />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Skills (comma separated)</label>
-                  <Input {...profileForm.register('skills')} placeholder="React, Node.js, Python" className="mt-1 bg-background/50 h-9" />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block">Profile Photo</label>
-                  <div className="flex items-center gap-4 bg-background/25 border border-border/40 rounded-xl p-3">
-                    <div className="relative group">
-                      <PremiumDashboardAvatar
-                        src={profileForm.watch('profileImageUrl')}
-                        name={profileForm.watch('name') || 'Alumni'}
-                        size="md"
-                        showStatus={false}
-                      />
-                      <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                        <Camera size={16} className="text-white" />
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handleImageUpload}
-                        />
-                      </label>
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const input = document.getElementById('profile-image-upload-edit') as HTMLInputElement;
-                            if (input) input.click();
-                          }}
-                          className="h-8 text-xs font-semibold border-primary/20 hover:bg-primary/10 text-primary"
-                          disabled={uploadingImage}
-                        >
-                          {uploadingImage ? 'Loading...' : 'Upload Photo'}
-                        </Button>
-                        {profileForm.watch('profileImageUrl') && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              profileForm.setValue('profileImageUrl', '');
-                            }}
-                            className="h-8 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">
-                        JPG, PNG or WEBP. Max size 5MB.
-                      </p>
-                      <input
-                        id="profile-image-upload-edit"
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleImageUpload}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">LinkedIn URL</label>
-                    <Input {...profileForm.register('linkedinUrl')} className="mt-1 bg-background/50 h-9" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Portfolio URL</label>
-                    <Input {...profileForm.register('portfolioUrl')} className="mt-1 bg-background/50 h-9" />
-                  </div>
-                </div>
-
-                <Button type="submit" disabled={profilesLoading} className="w-full mt-4 h-9">
-                  {profilesLoading ? 'Saving...' : 'Save Profile Changes'}
-                </Button>
-              </form>
-            </Card>
-          </div>
-        );
-
-      default:
-        return null;
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-background text-foreground pb-20">
-      {/* Header Bar */}
-      <div className="border-b border-border/40 backdrop-blur-md bg-background/80 sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button size="icon" variant="ghost" onClick={() => setIsSidebarOpen(true)} className="h-8 w-8 text-foreground">
-            <Menu size={20} />
-          </Button>
-          <div>
-            <h1 className="text-sm font-extrabold tracking-tight flex items-center gap-1">
-              CAMPUS CONNECT <Badge className="bg-primary/25 hover:bg-primary/20 text-primary text-[8px] font-black px-1.5 py-0.5 border border-primary/20">CREATOR</Badge>
-            </h1>
+    <div className="min-h-screen bg-[#09090B] pb-28 text-white font-sans overflow-x-hidden relative">
+      
+      {/* 1. Header banner layout */}
+      <div className="relative h-48 bg-gradient-to-r from-purple-900/40 via-primary/30 to-accent/20 border-b border-white/[0.06] overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(124,58,237,0.15)_0%,transparent_70%)] pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#09090B] to-transparent" />
+      </div>
+
+      {/* 2. Main Profile Content Container */}
+      <div className="max-w-4xl mx-auto px-4 md:px-6 -mt-20 relative z-10 space-y-6">
+        
+        {/* Profile Card Header */}
+        <Card className="bg-[#141824]/40 border border-white/[0.08] backdrop-blur-xl rounded-[24px] p-6 shadow-2xl relative overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-start gap-6">
+            
+            {/* Avatar & online status */}
+            <div className="relative self-center md:self-start">
+              <div className="h-28 w-28 rounded-full border-4 border-[#09090B] overflow-hidden bg-gradient-to-tr from-violet-600 to-indigo-600 flex items-center justify-center">
+                {currentAlumniProfile?.profileImageUrl ? (
+                  <img src={currentAlumniProfile.profileImageUrl} alt="Avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-3xl font-black text-white font-mono">
+                    {(currentAlumniProfile?.name || email || 'A')[0].toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <span className="absolute bottom-1 right-1 h-5 w-5 rounded-full bg-green-500 border-4 border-[#141824] animate-pulse" />
+            </div>
+
+            {/* User Metadata */}
+            <div className="flex-1 text-center md:text-left space-y-2">
+              <div className="flex flex-col md:flex-row md:items-center gap-2 justify-center md:justify-start">
+                <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2 justify-center md:justify-start">
+                  {currentAlumniProfile?.name || email}
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase tracking-wider">
+                    Verified Alumni
+                  </span>
+                </h1>
+              </div>
+
+              <p className="text-sm font-semibold text-zinc-300">
+                {currentAlumniProfile?.role || 'Senior Software Engineer'} at <span className="text-violet-400">{currentAlumniProfile?.company || 'Technology Company'}</span>
+              </p>
+              
+              <div className="flex items-center justify-center md:justify-start gap-3 text-xs text-zinc-400 font-medium">
+                <span className="flex items-center gap-1"><MapPin size={13} /> Remote / USA</span>
+                <span>•</span>
+                <span>Batch {currentAlumniProfile?.batch || '2022'}</span>
+                <span>•</span>
+                <span>{currentAlumniProfile?.department || 'CSE'}</span>
+              </div>
+
+              <p className="text-xs text-zinc-400 max-w-xl leading-relaxed mt-2">
+                {currentAlumniProfile?.story || 'Passionate about engineering clean architectures, mentorship, and building sustainable tech products.'}
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap gap-2.5 pt-4 justify-center md:justify-start">
+                <Button 
+                  onClick={() => setIsEditingInfo(true)}
+                  className="rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-bold gap-1.5 h-9"
+                >
+                  <Edit2 size={13} /> Edit Profile
+                </Button>
+                <Button 
+                  variant="outline"
+                  onClick={() => navigate('/settings')}
+                  className="rounded-xl border-white/10 hover:bg-white/5 text-xs font-bold gap-1.5 h-9 text-zinc-300"
+                >
+                  <Settings size={13} /> Settings
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Social Links Panel */}
+          <div className="flex justify-center md:justify-start gap-4 border-t border-white/[0.06] mt-6 pt-4 text-zinc-400">
+            {currentAlumniProfile?.linkedinUrl && (
+              <a href={currentAlumniProfile.linkedinUrl} target="_blank" className="hover:text-white transition-colors flex items-center gap-1.5 text-xs font-semibold">
+                <Linkedin size={14} className="text-[#0A66C2]" /> LinkedIn
+              </a>
+            )}
+            {currentAlumniProfile?.portfolioUrl && (
+              <a href={currentAlumniProfile.portfolioUrl} target="_blank" className="hover:text-white transition-colors flex items-center gap-1.5 text-xs font-semibold">
+                <LinkIcon size={14} className="text-violet-400" /> Portfolio
+              </a>
+            )}
+            <span className="text-white/10">|</span>
+            <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Contact: {email}</span>
+          </div>
+        </Card>
+
+        {/* 3. Statistics Section */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label: 'Network Reach', value: 1420, color: 'text-violet-400' },
+            { label: 'Students Mentored', value: stats.studentsHelped, color: 'text-emerald-400' },
+            { label: 'Referrals Listed', value: stats.totalReferrals, color: 'text-amber-400' },
+            { label: 'Resources Shared', value: stats.totalResources, color: 'text-sky-400' }
+          ].map((stat, idx) => (
+            <Card key={idx} className="bg-[#141824]/40 border border-white/[0.06] p-4 text-center">
+              <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-1">{stat.label}</div>
+              <div className={`text-2xl font-black ${stat.color}`}>
+                <Counter value={stat.value} />
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {/* 4. Collapsible Dashboard Section */}
+        <Card className="bg-[#141824]/40 border border-white/[0.08] rounded-[24px] overflow-hidden">
+          <button 
+            onClick={() => setIsDashboardExpanded(!isDashboardExpanded)}
+            className="w-full flex items-center justify-between p-6 text-left hover:bg-white/[0.01] transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <BarChart2 className="text-violet-400 w-5 h-5" />
+              <div>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">Analytics Performance Dashboard</h2>
+                <p className="text-[11px] text-zinc-500">Weekly reach, student connection requests, and download insights</p>
+              </div>
+            </div>
+            {isDashboardExpanded ? <ChevronUp size={18} className="text-zinc-400" /> : <ChevronDown size={18} className="text-zinc-400" />}
+          </button>
+
+          <AnimatePresence>
+            {isDashboardExpanded && (
+              <motion.div
+                initial={{ height: 0 }}
+                animate={{ height: 'auto' }}
+                exit={{ height: 0 }}
+                className="overflow-hidden border-t border-white/[0.06]"
+              >
+                <div className="p-6 space-y-6">
+                  {/* Performance stats metrics grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Profile Views', val: '240', rate: '▲ 8.2%' },
+                      { label: 'Resource DLs', val: stats.totalResources, rate: '▲ 14.5%' },
+                      { label: 'Weekly Reach', val: '6,450', rate: '▲ 22.1%' },
+                      { label: 'Acceptance Rate', val: '94%', rate: 'Stable' }
+                    ].map((metric, idx) => (
+                      <div key={idx} className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-1">
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">{metric.label}</span>
+                        <div className="flex justify-between items-end">
+                          <span className="text-lg font-black text-white">{metric.val}</span>
+                          <span className="text-[9px] font-bold text-emerald-400">{metric.rate}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* SVG Bar Chart for reach */}
+                  <div className="space-y-3">
+                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Weekly Reach Activity</span>
+                    <div className="h-28 flex items-end gap-2.5 pt-4 px-2 border-b border-white/10">
+                      {[30, 45, 35, 60, 80, 55, 90].map((h, idx) => (
+                        <div key={idx} className="flex-1 flex flex-col items-center gap-1.5">
+                          <div 
+                            className="w-full bg-gradient-to-t from-violet-600 to-indigo-500 rounded-t-sm transition-all duration-500" 
+                            style={{ height: `${h}%` }} 
+                          />
+                          <span className="text-[9px] text-zinc-500 font-bold uppercase">{"MTWTFSS"[idx]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Recent activities logged */}
+                  <div className="space-y-3 pt-4">
+                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Recent Activity Log</span>
+                    <div className="space-y-3">
+                      {[
+                        { title: 'Posted Job Referral at Google', time: 'Today' },
+                        { title: 'Approved 3 Student Connection Requests', time: 'Yesterday' },
+                        { title: 'Shared roadmap on Frontend Engineering Track', time: '4 days ago' }
+                      ].map((act, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-xs p-3 bg-white/[0.01] rounded-xl border border-white/5">
+                          <span className="text-zinc-300 font-medium">{act.title}</span>
+                          <span className="text-[10px] text-zinc-500 font-bold">{act.time}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Card>
+
+        {/* 5. Creator Center (Premium Action Cards) */}
+        <div className="space-y-3">
+          <h2 className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Creator Center Hub</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              { title: 'Share Opportunity', sub: 'Post job referalls & hiring drives', count: stats.totalReferrals, key: 'referral', color: 'border-violet-500/20' },
+              { title: 'Publish Roadmap', sub: 'Create linear learning paths', count: stats.totalRoadmaps, key: 'roadmap', color: 'border-amber-500/20' },
+              { title: 'Upload Resource', sub: 'Share documents, PDFs, study prep', count: stats.totalResources, key: 'resource', color: 'border-sky-500/20' }
+            ].map((card, idx) => (
+              <motion.div
+                key={idx}
+                whileHover={{ scale: 1.02, y: -3 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => {
+                  setEditingItem(null);
+                  setActiveModal(card.key);
+                }}
+                className={`p-5 rounded-2xl border ${card.color} bg-white/[0.02] hover:bg-white/[0.04] cursor-pointer flex flex-col justify-between h-36 transition-all`}
+              >
+                <div>
+                  <h3 className="font-bold text-white text-sm">{card.title}</h3>
+                  <p className="text-[11px] text-zinc-400 mt-1">{card.sub}</p>
+                </div>
+                <div className="flex justify-between items-center pt-2">
+                  <span className="text-xs font-black text-violet-400">{card.count} active</span>
+                  <ChevronRight size={14} className="text-zinc-400" />
+                </div>
+              </motion.div>
+            ))}
           </div>
         </div>
 
-        {currentAlumniProfile && (
-          <PremiumDashboardAvatar
-            src={currentAlumniProfile.profileImageUrl || currentAlumniProfile.profileImage}
-            name={currentAlumniProfile.name}
-            onClick={() => setActiveTab('settings')}
-            size="sm"
-            showStatus={true}
-          />
-        )}
-      </div>
-
-      {/* Slide-out Sidebar Drawer */}
-      <AnimatePresence>
-        {isSidebarOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.5 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsSidebarOpen(false)}
-              className="fixed inset-0 bg-black z-50 max-w-lg mx-auto"
-            />
-            <motion.div
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="fixed inset-y-0 left-0 w-3/4 max-w-[280px] bg-background/95 backdrop-blur-xl border-r border-border/40 z-50 p-5 flex flex-col justify-between"
+        {/* Inline editable Professional Information */}
+        <Card className="bg-[#141824]/40 border border-white/[0.08] rounded-[24px] p-6 space-y-6">
+          <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+              <Briefcase size={16} className="text-violet-400" />
+              Professional Profile details
+            </h2>
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              onClick={() => setIsEditingInfo(!isEditingInfo)}
+              className="text-violet-400 text-xs font-semibold hover:bg-white/5"
             >
-              <SidebarErrorBoundary>
-                <div className="flex flex-col h-full justify-between">
-                  <div className="space-y-6">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-black tracking-wider text-muted-foreground uppercase">Creator Center</span>
-                      <Button size="icon" variant="ghost" onClick={() => setIsSidebarOpen(false)} className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                        {X ? <X size={16} /> : <span>×</span>}
-                      </Button>
-                    </div>
-
-                    <div className="space-y-1">
-                      {menuItems.map(item => {
-                        const Icon = item.icon;
-                        const isActive = activeTab === item.id;
-                        return (
-                          <button
-                            key={item.id}
-                            onClick={() => {
-                              setActiveTab(item.id);
-                              setIsSidebarOpen(false);
-                            }}
-                            className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition-all ${
-                              isActive
-                                ? 'bg-primary/10 text-primary border-l-2 border-primary'
-                                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                            }`}
-                          >
-                            {Icon ? <Icon size={16} /> : <div className="w-4 h-4 rounded bg-muted" />}
-                            <span>{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="border-t border-border/30 pt-4 space-y-3">
-                    {currentAlumniProfile && (
-                      <div className="flex items-center gap-3">
-                        <PremiumDashboardAvatar
-                          src={currentAlumniProfile.profileImageUrl || currentAlumniProfile.profileImage}
-                          name={currentAlumniProfile.name}
-                          size="sm"
-                          showStatus={false}
-                        />
-                        <div className="truncate">
-                          <p className="text-xs font-bold text-foreground truncate">{currentAlumniProfile.name}</p>
-                          <p className="text-[10px] text-muted-foreground truncate">{currentAlumniProfile.company}</p>
-                        </div>
-                      </div>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={async () => {
-                        await logout();
-                        navigate('/');
-                      }}
-                      className="w-full text-xs font-semibold justify-start text-muted-foreground hover:text-foreground"
-                    >
-                      {LogOut ? <LogOut size={14} className="mr-2" /> : <div className="w-3.5 h-3.5 rounded bg-muted mr-2" />} Exit Dashboard
-                    </Button>
-                  </div>
-                </div>
-              </SidebarErrorBoundary>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      <div className="px-4 py-6 w-full max-w-md sm:max-w-xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl mx-auto space-y-6">
-        {/* Top Professional Alumni Header Card */}
-        {currentAlumniProfile && (
-          <Card className="overflow-hidden border border-border/40 bg-card/40 backdrop-blur-md relative">
-            <div className="h-16 bg-gradient-to-r from-primary/20 via-primary/5 to-transparent absolute top-0 inset-x-0" />
-            <CardContent className="pt-8 px-4 pb-4 relative space-y-4">
-              <div className="flex gap-4 items-start">
-                <PremiumDashboardAvatar
-                  src={currentAlumniProfile.profileImageUrl || currentAlumniProfile.profileImage}
-                  name={currentAlumniProfile.name}
-                  size="md"
-                  showStatus={true}
-                />
-                <div className="space-y-1">
-                  <div className="flex items-center gap-1.5">
-                    <h2 className="text-base font-extrabold tracking-tight text-foreground">{currentAlumniProfile.name}</h2>
-                    <Badge className="bg-primary/15 hover:bg-primary/10 border-primary/20 text-primary p-0.5 text-[8px] rounded-full">
-                      <Sparkles size={8} className="fill-primary" />
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground font-semibold">
-                    {formatAlumniDesignation(currentAlumniProfile)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/80">
-                    Batch {currentAlumniProfile.batch || currentAlumniProfile.batchYear} • {currentAlumniProfile.department}
-                  </p>
-                </div>
-              </div>
-
-              {/* Stat Cards Row */}
-              <div className="grid grid-cols-5 gap-1.5 pt-2 border-t border-border/10 text-center">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-foreground">{stats.totalPosts}</p>
-                  <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wide">Posts</p>
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-foreground">{stats.totalReferrals}</p>
-                  <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wide">Refers</p>
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-foreground">{stats.totalRoadmaps}</p>
-                  <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wide">Maps</p>
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-foreground">{stats.totalResources}</p>
-                  <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wide">Links</p>
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-primary">{stats.studentsHelped}</p>
-                  <p className="text-[8px] font-bold text-primary uppercase tracking-wide">Helped</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Dynamic section renderer */}
-        {loadingData ? (
-          <div className="py-20 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-            <p className="text-xs text-muted-foreground mt-3">Syncing dashboard data...</p>
+              {isEditingInfo ? 'Cancel' : 'Edit details'}
+            </Button>
           </div>
-        ) : (
-          renderTabContent()
-        )}
+
+          {isEditingInfo ? (
+            <form onSubmit={profileForm.handleSubmit(onSubmitProfile)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Current Company</label>
+                  <Input {...profileForm.register('company')} className="bg-background/50 text-xs mt-1" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Role Designation</label>
+                  <Input {...profileForm.register('role')} className="bg-background/50 text-xs mt-1" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">LinkedIn Profile URL</label>
+                  <Input {...profileForm.register('linkedinUrl')} className="bg-background/50 text-xs mt-1" placeholder="https://linkedin.com/in/..." />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Portfolio URL</label>
+                  <Input {...profileForm.register('portfolioUrl')} className="bg-background/50 text-xs mt-1" placeholder="https://..." />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Technical Skills (comma separated)</label>
+                <Input {...profileForm.register('skills')} className="bg-background/50 text-xs mt-1" placeholder="React, Node.js, Python, AWS" />
+              </div>
+
+              <div className="flex gap-4 items-center pt-2">
+                <label className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+                  <input type="checkbox" {...profileForm.register('isAvailableForMentorship')} className="rounded border-white/10 bg-background" />
+                  Available for Mentorship
+                </label>
+                <label className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+                  <input type="checkbox" {...profileForm.register('isAvailableForReferrals')} className="rounded border-white/10 bg-background" />
+                  Available for Referrals
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="submit" size="sm">Save Changes</Button>
+              </div>
+            </form>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+              <div className="space-y-4">
+                <div>
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">Company & Role</span>
+                  <p className="text-zinc-200 font-medium">{currentAlumniProfile?.role || 'Senior Software Engineer'} at {currentAlumniProfile?.company || 'Google'}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">Tech Stack & Skills</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {(currentAlumniProfile?.skills || ['React', 'Node.js', 'Typescript', 'AWS', 'Next.js']).map((skill, idx) => (
+                      <span key={idx} className="px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/5 text-zinc-300 font-semibold text-[10px]">{skill}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">Mentorship Status</span>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
+                    currentAlumniProfile?.isAvailableForMentorship ?? true 
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                      : 'bg-zinc-500/10 text-zinc-400 border border-white/5'
+                  } uppercase`}>
+                    <Check size={10} /> {currentAlumniProfile?.isAvailableForMentorship ?? true ? 'Available' : 'Unavailable'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">Referral Status</span>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
+                    currentAlumniProfile?.isAvailableForReferrals ?? true 
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                      : 'bg-zinc-500/10 text-zinc-400 border border-white/5'
+                  } uppercase`}>
+                    <Check size={10} /> {currentAlumniProfile?.isAvailableForReferrals ?? true ? 'Available' : 'Unavailable'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* 6. Achievements Vertical Timeline */}
+        <Card className="bg-[#141824]/40 border border-white/[0.08] rounded-[24px] p-6 space-y-6">
+          <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/[0.06] pb-3">
+            <Award size={16} className="text-violet-400" />
+            Achievements Milestones
+          </h2>
+
+          <div className="relative pl-6 border-l border-white/10 space-y-6">
+            {achievements.length === 0 ? (
+              <div className="text-xs text-zinc-500 py-3">No professional achievements logged yet. Click "Achievements" card inside Creator Center to add!</div>
+            ) : (
+              achievements.map((ach) => (
+                <div key={ach.id} className="relative space-y-1">
+                  <span className="absolute -left-[30px] top-1 h-3.5 w-3.5 rounded-full bg-violet-600 border border-zinc-950 flex items-center justify-center">
+                    <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                  </span>
+                  <div className="flex justify-between items-start">
+                    <h4 className="text-xs font-bold text-white">{ach.title}</h4>
+                    <span className="text-[10px] text-zinc-500 font-bold">{ach.date}</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">{ach.description}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
       </div>
 
-      {/* Universal Modals Manager */}
-      
+      {/* dialog forms */}
       {/* 1. Post Dialog */}
       <Dialog open={activeModal === 'post'} onOpenChange={(open) => !open && setActiveModal(null)}>
         <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40">
           <DialogHeader>
-            <DialogTitle>{editingItem ? 'Edit Post' : 'Share Career Insight'}</DialogTitle>
-            <DialogDescription>Write career advice, industry updates, or success stories for students.</DialogDescription>
+            <DialogTitle>{editingItem ? 'Edit Opportunity Post' : 'Share Job Opportunity'}</DialogTitle>
+            <DialogDescription>Publish job alerts, industry articles, or open internships.</DialogDescription>
           </DialogHeader>
           <form onSubmit={postForm.handleSubmit(handleSavePost)} className="space-y-4 pt-2">
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Post Type</label>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Post Category</label>
               <select
                 {...postForm.register('type')}
-                className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm text-foreground focus:outline-none"
+                className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none"
               >
-                <option value="general">Career Advice / General</option>
-                <option value="job">Hiring Updates / Openings</option>
-                <option value="industry_insight">Industry Insights</option>
-                <option value="success_story">Success Stories</option>
+                <option value="internship">Internship</option>
+                <option value="hiring">Full-Time Hiring</option>
+                <option value="referral">Job Referral</option>
+                <option value="general">Career Insight</option>
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Content</label>
-              <Textarea
-                {...postForm.register('content', { required: true })}
-                placeholder="What's on your mind? Share industry insights or stories..."
-                className="mt-1 h-32 bg-background/50"
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Post Details</label>
+              <Textarea 
+                {...postForm.register('content', { required: true })} 
+                placeholder="Include eligibility, skills required, link to apply, etc." 
+                className="mt-1 h-32 bg-background/50" 
               />
             </div>
             <div className="flex gap-2 justify-end pt-2">
-              <Button type="button" variant="outline" size="sm" disabled={isSubmittingPost} onClick={() => setActiveModal(null)}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={isSubmittingPost}>
-                {isSubmittingPost ? 'Publishing...' : (editingItem ? 'Save Updates' : 'Publish Post')}
-              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
+              <Button type="submit" size="sm">Publish Post</Button>
             </div>
           </form>
         </DialogContent>
@@ -1702,90 +1031,36 @@ export const MyAlumniProfilePage: React.FC = () => {
       <Dialog open={activeModal === 'referral'} onOpenChange={(open) => !open && setActiveModal(null)}>
         <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40">
           <DialogHeader>
-            <DialogTitle>{editingItem ? 'Edit Referral Opportunity' : 'List a Hiring Referral'}</DialogTitle>
-            <DialogDescription>Input job opportunities details. Stored directly on MongoDB.</DialogDescription>
+            <DialogTitle>Create Job Referral</DialogTitle>
           </DialogHeader>
           <form onSubmit={referralForm.handleSubmit(handleSaveReferral)} className="space-y-3 pt-2">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Company Name *</label>
-                <Input 
-                  {...referralForm.register('companyName', { required: 'Company Name is required' })} 
-                  placeholder="e.g. Google" 
-                  className={`mt-1 bg-background/50 ${referralForm.formState.errors.companyName ? 'border-red-500' : ''}`}
-                />
-                {referralForm.formState.errors.companyName && (
-                  <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.companyName.message?.toString()}</p>
-                )}
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Company Name</label>
+                <Input {...referralForm.register('companyName', { required: true })} placeholder="e.g. Google" className="mt-1 bg-background/50 h-9 text-xs" />
               </div>
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Job Title *</label>
-                <Input 
-                  {...referralForm.register('jobTitle', { required: 'Job Title is required' })} 
-                  placeholder="e.g. Frontend Intern" 
-                  className={`mt-1 bg-background/50 ${referralForm.formState.errors.jobTitle ? 'border-red-500' : ''}`}
-                />
-                {referralForm.formState.errors.jobTitle && (
-                  <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.jobTitle.message?.toString()}</p>
-                )}
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Job Title</label>
+                <Input {...referralForm.register('jobTitle', { required: true })} placeholder="e.g. Product Manager" className="mt-1 bg-background/50 h-9 text-xs" />
               </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Eligibility Requirements *</label>
-              <Input 
-                {...referralForm.register('eligibility', { required: 'Eligibility requirements are required' })} 
-                placeholder="e.g. B.Tech 2025/2026, Min 8 CGPA" 
-                className={`mt-1 bg-background/50 ${referralForm.formState.errors.eligibility ? 'border-red-500' : ''}`}
-              />
-              {referralForm.formState.errors.eligibility && (
-                <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.eligibility.message?.toString()}</p>
-              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Deadline *</label>
-                <Input 
-                  {...referralForm.register('deadline', { required: 'Deadline is required' })} 
-                  type="date" 
-                  className={`mt-1 bg-background/50 text-xs ${referralForm.formState.errors.deadline ? 'border-red-500' : ''}`}
-                />
-                {referralForm.formState.errors.deadline && (
-                  <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.deadline.message?.toString()}</p>
-                )}
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Location</label>
+                <Input {...referralForm.register('location')} placeholder="e.g. Sunnyvale, CA" className="mt-1 bg-background/50 h-9 text-xs" />
               </div>
               <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Salary Range</label>
-                <select
-                  {...referralForm.register('salary')}
-                  className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none"
-                >
-                  <option value="">Select Range</option>
-                  {SalaryRangeOptions.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Application Link</label>
+                <Input {...referralForm.register('applicationUrl', { required: true })} placeholder="https://..." className="mt-1 bg-background/50 h-9 text-xs" />
               </div>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Application URL *</label>
-              <Input 
-                {...referralForm.register('applicationUrl', { required: 'Application URL is required' })} 
-                placeholder="https://..." 
-                className={`mt-1 bg-background/50 ${referralForm.formState.errors.applicationUrl ? 'border-red-500' : ''}`}
-              />
-              {referralForm.formState.errors.applicationUrl && (
-                <p className="text-[10px] text-red-500 mt-0.5">{referralForm.formState.errors.applicationUrl.message?.toString()}</p>
-              )}
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Optional Description</label>
-              <Textarea 
-                {...referralForm.register('description')} 
-                placeholder="Add optional notes, tips, or details about the referral process..." 
-                className="mt-1 h-20 bg-background/50 text-xs" 
-              />
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Role Description</label>
+              <Textarea {...referralForm.register('description')} placeholder="Detail the candidate criteria..." className="mt-1 h-20 bg-background/50 text-xs" />
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
-              <Button type="submit" size="sm">{editingItem ? 'Update Opportunity' : 'Share Opportunity'}</Button>
+              <Button type="submit" size="sm">Create Referral</Button>
             </div>
           </form>
         </DialogContent>
@@ -1793,19 +1068,18 @@ export const MyAlumniProfilePage: React.FC = () => {
 
       {/* 3. Roadmap Dialog */}
       <Dialog open={activeModal === 'roadmap'} onOpenChange={(open) => !open && setActiveModal(null)}>
-        <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40">
           <DialogHeader>
-            <DialogTitle>{editingItem ? 'Edit Learning Roadmap' : 'Publish Learning Roadmap'}</DialogTitle>
-            <DialogDescription>Map out step-by-step career tracks for current students.</DialogDescription>
+            <DialogTitle>Publish Learning Roadmap</DialogTitle>
           </DialogHeader>
           <form onSubmit={roadmapForm.handleSubmit(handleSaveRoadmap)} className="space-y-4 pt-2">
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Roadmap Track Title</label>
-              <Input {...roadmapForm.register('title', { required: true })} placeholder="e.g. Frontend Engineering Guide" className="mt-1 bg-background/50" />
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Roadmap Title</label>
+              <Input {...roadmapForm.register('title', { required: true })} placeholder="e.g. Frontend Engineering Guide" className="mt-1 bg-background/50 h-9 text-xs" />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Brief Description</label>
-              <Textarea {...roadmapForm.register('description')} placeholder="Guide summary..." className="mt-1 h-16 bg-background/50" />
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Description</label>
+              <Textarea {...roadmapForm.register('description')} placeholder="Guide summary..." className="mt-1 h-16 bg-background/50 text-xs" />
             </div>
             
             <div className="space-y-3">
@@ -1815,8 +1089,7 @@ export const MyAlumniProfilePage: React.FC = () => {
                   <Plus size={10} /> Add Milestone
                 </Button>
               </div>
-              
-              <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
                 {roadmapSteps.map((step, idx) => (
                   <div key={idx} className="p-3 rounded-md border border-border/20 bg-muted/40 space-y-2 relative">
                     <div className="flex justify-between items-center">
@@ -1844,7 +1117,6 @@ export const MyAlumniProfilePage: React.FC = () => {
                 ))}
               </div>
             </div>
-
             <div className="flex gap-2 justify-end pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
               <Button type="submit" size="sm">Publish Guide</Button>
@@ -1857,21 +1129,17 @@ export const MyAlumniProfilePage: React.FC = () => {
       <Dialog open={activeModal === 'resource'} onOpenChange={(open) => !open && setActiveModal(null)}>
         <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40">
           <DialogHeader>
-            <DialogTitle>{editingItem ? 'Edit Resource' : 'Share Resource'}</DialogTitle>
-            <DialogDescription>Publish helpful guides, PDFs, learning courses, or interview prep notes.</DialogDescription>
+            <DialogTitle>Share Resource</DialogTitle>
           </DialogHeader>
           <form onSubmit={resourceForm.handleSubmit(handleSaveResource)} className="space-y-3 pt-2">
             <div>
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Resource Title</label>
-              <Input {...resourceForm.register('title', { required: true })} placeholder="e.g. FAANG Interview Prep Guide" className="mt-1 bg-background/50" />
+              <Input {...resourceForm.register('title', { required: true })} placeholder="e.g. FAANG Interview Prep Guide" className="mt-1 bg-background/50 h-9 text-xs" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Category</label>
-                <select
-                  {...resourceForm.register('categoryType')}
-                  className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none"
-                >
+                <select {...resourceForm.register('categoryType')} className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none">
                   <option value="pdf">PDF Document</option>
                   <option value="course">Learning Course</option>
                   <option value="doc">Preparation Doc</option>
@@ -1880,68 +1148,16 @@ export const MyAlumniProfilePage: React.FC = () => {
               </div>
               <div>
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Link</label>
-                <Input {...resourceForm.register('link')} placeholder="https://..." className="mt-1 bg-background/50" />
+                <Input {...resourceForm.register('link')} placeholder="https://..." className="mt-1 bg-background/50 h-9 text-xs" />
               </div>
             </div>
             <div>
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Description</label>
-              <Textarea {...resourceForm.register('description')} placeholder="What should students focus on when reading this resource?" className="mt-1 h-20 bg-background/50" />
+              <Textarea {...resourceForm.register('description')} placeholder="What should students focus on when reading this resource?" className="mt-1 h-20 bg-background/50 text-xs" />
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
               <Button type="submit" size="sm">Share Resource</Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* 5. Achievement Dialog */}
-      <Dialog open={activeModal === 'achievement'} onOpenChange={(open) => !open && setActiveModal(null)}>
-        <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40">
-          <DialogHeader>
-            <DialogTitle>{editingItem ? 'Edit Achievement' : 'Log Professional Achievement'}</DialogTitle>
-            <DialogDescription>Announce certifications, publications, promotions, or awards.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={achievementForm.handleSubmit(handleSaveAchievement)} className="space-y-3 pt-2">
-            <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Achievement Title</label>
-              <Input {...achievementForm.register('title', { required: true })} placeholder="e.g. Promoted to Staff Engineer" className="mt-1 bg-background/50" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Milestone Type</label>
-                <select
-                  {...achievementForm.register('type')}
-                  className="mt-1 w-full rounded-md border border-input bg-background/50 px-3 h-9 text-xs text-foreground focus:outline-none"
-                >
-                  <option value="Promotion">Promotion</option>
-                  <option value="Certification">Certification</option>
-                  <option value="Award">Award</option>
-                  <option value="Publication">Publication</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Date Achieved</label>
-                <Input {...achievementForm.register('date')} placeholder="e.g. June 2026" className="mt-1 bg-background/50" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Issuer / Org</label>
-                <Input {...achievementForm.register('issuer')} placeholder="e.g. Google Cloud" className="mt-1 bg-background/50" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">External Link</label>
-                <Input {...achievementForm.register('link')} placeholder="https://..." className="mt-1 bg-background/50" />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Description</label>
-              <Textarea {...achievementForm.register('description')} placeholder="Detail your achievement milestones..." className="mt-1 h-20 bg-background/50" />
-            </div>
-            <div className="flex gap-2 justify-end pt-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setActiveModal(null)}>Cancel</Button>
-              <Button type="submit" size="sm">Log Milestone</Button>
             </div>
           </form>
         </DialogContent>

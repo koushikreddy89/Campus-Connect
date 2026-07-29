@@ -34,10 +34,8 @@ interface Post {
 
 const AlumniMyPostsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { uid, college } = useAuthStore(s => ({
-    uid: s.uid,
-    college: s.college || 'SR University'
-  }));
+  const uid = useAuthStore(s => s.uid);
+  const college = useAuthStore(s => s.college || 'SR University');
   const [isLoading, setIsLoading] = useState(true);
   const [posts, setPosts] = useState<Post[]>([]);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);

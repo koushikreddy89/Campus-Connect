@@ -2,8 +2,6 @@ import { create } from 'zustand';
 import { Notification } from '@/types';
 import { notificationApi } from '@/services/api';
 import { socketService } from '@/services/socketService';
-import { useSettingsStore } from './settingsStore';
-import { playSoundEffect } from '@/utils/soundEngine';
 
 interface NotificationState {
   notifications: Notification[];
@@ -109,15 +107,6 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       metadata: n.metadata || {}
     };
 
-    // Play premium sound effect based on notification type
-    if (parsed.type === 'match' || parsed.type === 'new_match') {
-      playSoundEffect('new_match');
-    } else if (parsed.type === 'friend_request' || parsed.type === 'connection_request') {
-      playSoundEffect('friend_request');
-    } else {
-      playSoundEffect('incoming_message');
-    }
-
     set((s) => {
       // Avoid duplicate keys
       const filtered = s.notifications.filter((existing) => existing.id !== parsed.id);
@@ -219,22 +208,16 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       });
     };
 
-    const handleSettingsUpdated = (newSettings: any) => {
-      useSettingsStore.setState({ settings: newSettings });
-    };
-
     socket.on('notification:new', handleNewNotif);
     socket.on('notification:update', handleUpdateNotif);
     socket.on('notification:read', handleReadNotif);
     socket.on('notification:delete', handleDeleteNotif);
-    socket.on('settingsUpdated', handleSettingsUpdated);
 
     return () => {
       socket.off('notification:new', handleNewNotif);
       socket.off('notification:update', handleUpdateNotif);
       socket.off('notification:read', handleReadNotif);
       socket.off('notification:delete', handleDeleteNotif);
-      socket.off('settingsUpdated', handleSettingsUpdated);
       socket.emit('leave_room', { roomId: `user_${currentUserId}` });
     };
   }

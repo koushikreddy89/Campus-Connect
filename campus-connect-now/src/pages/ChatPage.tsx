@@ -5,12 +5,9 @@ import { useChatStore } from '@/store/chatStore';
 import { useMatchStore } from '@/store/matchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useGroupChatStore } from '@/store/groupChatStore';
-import { useSettingsStore } from '@/store/settingsStore';
 import { ArrowLeft, Send, Eye, Phone, Video, Info, Paperclip, Smile, Mic, Copy, Reply, Trash2, Download, FileText, Image as ImageIcon, Loader2, Forward, Check, ChevronLeft, ChevronRight, X, Star, ArrowDown, Flame, Infinity, Lock, Heart, Pin, Bookmark, Share2, Sparkles } from 'lucide-react';
 import { chatApi } from '@/services/api';
 import { getApiUrl } from '@/services/connectionService';
-import { isOwnMessage } from '@/utils/userUtils';
-import { VoicePlayer } from '@/components/chat/VoicePlayer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EmptyState } from '@/components/EmptyState';
 import { ReactionEmoji } from '@/types';
@@ -88,7 +85,6 @@ export default function ChatPage({
   const { matchId: paramMatchId } = useParams<{ matchId: string }>();
   const matchId = embeddedMatchId || paramMatchId;
   const navigate = useNavigate();
-  const role = useAuthStore(s => s.role);
   const [text, setText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -192,12 +188,6 @@ export default function ChatPage({
   const messagesMap = useChatStore(s => s.messages);
   const messages = messagesMap[matchId!] ?? EMPTY_MESSAGES;
 
-  const autoSeenEnabled = useSettingsStore(s => s.settings.autoSeen);
-  const markChannelAsRead = useChatStore(s => s.markChannelAsRead);
-  const hasUnread = useMemo(() => {
-    return messages.some(m => String(m.senderId) !== String(currentUserId) && m.status !== 'seen');
-  }, [messages, currentUserId]);
-
   const lastOutgoingMsgId = useMemo(() => {
     const outgoing = messages.filter(m => String(m.senderId) === String(currentUserId));
     if (outgoing.length === 0) return null;
@@ -259,7 +249,7 @@ export default function ChatPage({
         if (currentGroup) {
           groups.push(currentGroup);
         }
-        const isOwn = isOwnMessage(msg.senderId);
+        const isOwn = String(msg.senderId) === String(currentUserId) || String(msg.senderId) === String(useAuthStore.getState().uid);
         currentGroup = {
           senderId: msg.senderId,
           senderName: isOwn ? 'You' : matchName,
@@ -277,161 +267,6 @@ export default function ChatPage({
   }, [messages, currentUserId, matchName, match]);
 
   const typingMatchId = useChatStore(s => s.typingMatchId);
-
-  // Voice recording states
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const [voiceOnceActive, setVoiceOnceActive] = useState(false);
-  const [selectedMediaFile, setSelectedMediaFile] = useState<File | null>(null);
-  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
-  const [mediaPreviewType, setMediaPreviewType] = useState<'image' | 'video' | null>(null);
-  const [mediaViewOnce, setMediaViewOnce] = useState(false);
-
-  useEffect(() => {
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    };
-  }, []);
-
-  const formatRecordTime = (secs: number) => {
-    const minutes = Math.floor(secs / 60);
-    const seconds = secs % 60;
-    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-  };
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const options = { mimeType: 'audio/webm' };
-      let mediaRecorder: MediaRecorder;
-      try {
-        mediaRecorder = new MediaRecorder(stream, options);
-      } catch (e) {
-        mediaRecorder = new MediaRecorder(stream);
-      }
-
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setRecordingTime(0);
-
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-
-      toast.success('Recording started...');
-    } catch (err) {
-      console.error('Failed to start recording:', err);
-      toast.error('Microphone permission denied or not available.');
-    }
-  };
-
-  const cancelRecording = () => {
-    if (!mediaRecorderRef.current) return;
-    
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
-    }
-
-    mediaRecorderRef.current.onstop = () => {
-      const stream = mediaRecorderRef.current?.stream;
-      stream?.getTracks().forEach(track => track.stop());
-      setIsRecording(false);
-      setRecordingTime(0);
-      setVoiceOnceActive(false);
-      audioChunksRef.current = [];
-      toast.info('Recording cancelled.');
-    };
-
-    mediaRecorderRef.current.stop();
-  };
-
-  const sendRecording = () => {
-    if (!mediaRecorderRef.current) return;
-
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
-    }
-
-    const duration = recordingTime;
-
-    mediaRecorderRef.current.onstop = async () => {
-      const stream = mediaRecorderRef.current?.stream;
-      stream?.getTracks().forEach(track => track.stop());
-
-      const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorderRef.current?.mimeType || 'audio/webm' });
-      setIsRecording(false);
-      setRecordingTime(0);
-      audioChunksRef.current = [];
-
-      if (audioBlob.size === 0) {
-        toast.error('Recording is empty.');
-        return;
-      }
-
-      try {
-        setUploadProgress(10);
-        const formData = new FormData();
-        formData.append('files', audioBlob, 'voice-message.webm');
-
-        const baseUrl = getApiUrl();
-        const token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token') || '';
-
-        setUploadProgress(40);
-        const response = await fetch(`${baseUrl}/api/chats/${matchId}/upload`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          body: formData
-        });
-
-        const uploadRes = await response.json();
-        setUploadProgress(80);
-
-        if (uploadRes && uploadRes.success && uploadRes.data && uploadRes.data.length > 0) {
-          const uploadedFile = uploadRes.data[0];
-          const attachment = {
-            fileName: 'Voice Message',
-            fileSize: duration,
-            mimeType: uploadedFile.mimeType,
-            downloadUrl: uploadedFile.downloadUrl
-          };
-
-          await sendMessage(matchId!, '', 'voice', [attachment], voiceOnceActive ? 'VIEW_ONCE' : 'NEVER_DELETE');
-          setVoiceOnceActive(false);
-          toast.success('Voice message sent!');
-        } else {
-          toast.error('Failed to upload voice message.');
-        }
-      } catch (err) {
-        console.error('Voice message send failed:', err);
-        toast.error('Failed to send voice message.');
-      } finally {
-        setUploadProgress(null);
-      }
-    };
-
-    mediaRecorderRef.current.stop();
-  };
 
   // Derived presence status string
   const activeStatusStr = useMemo(() => {
@@ -455,9 +290,6 @@ export default function ChatPage({
 
   const handleTextChange = (val: string) => {
     setText(val);
-    if (!val.trim()) {
-      setRetentionMode('NEVER_DELETE');
-    }
     const socket = socketService.getSocket();
     const token = localStorage.getItem('token') || '';
     if (socket?.connected && matchId) {
@@ -678,7 +510,7 @@ export default function ChatPage({
   useEffect(() => {
     if (messages.length > lastMessageCount.current) {
       const lastMsg = messages[messages.length - 1];
-      const isOwn = isOwnMessage(lastMsg?.senderId);
+      const isOwn = lastMsg?.senderId === currentUserId;
       const container = scrollContainerRef.current;
       
       if (container) {
@@ -727,43 +559,35 @@ export default function ChatPage({
 
   const handleUpload = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
+    setUploadProgress(0);
     try {
       const file = files[0];
       if (file.size > 10 * 1024 * 1024) {
         toast.error('File size exceeds the 10MB limit.');
+        setUploadProgress(null);
         return;
       }
 
-      const isImage = file.type.startsWith('image/');
-      const isVideo = file.type.startsWith('video/');
+      const res = await chatApi.uploadFile(matchId!, file, (pct) => {
+        setUploadProgress(pct);
+      });
 
-      if (isImage || isVideo) {
-        setSelectedMediaFile(file);
-        setMediaPreviewUrl(URL.createObjectURL(file));
-        setMediaPreviewType(isImage ? 'image' : 'video');
-        setMediaViewOnce(false);
+      if (res && res.success && res.data && res.data.length > 0) {
+        const uploadedFile = res.data[0];
+        const isImage = uploadedFile.mimeType.startsWith('image/');
+        const msgType = isImage ? 'image' : 'file';
+
+        await sendMessage(matchId!, '', msgType, [uploadedFile], retentionMode);
+        setRetentionMode('NEVER_DELETE');
+        toast.success('File uploaded successfully!');
       } else {
-        // Direct upload for non-media files
-        setUploadProgress(0);
-        const res = await chatApi.uploadFile(matchId!, file, (pct) => {
-          setUploadProgress(pct);
-        });
-
-        if (res && res.success && res.data && res.data.length > 0) {
-          const uploadedFile = res.data[0];
-          await sendMessage(matchId!, '', 'file', [uploadedFile], 'NEVER_DELETE');
-          toast.success('File uploaded successfully!');
-        } else {
-          toast.error(res.error || 'Upload failed.');
-        }
+        toast.error(res.error || 'Upload failed.');
       }
     } catch (err: any) {
       console.error(err);
       toast.error('Upload failed: ' + err.message);
     } finally {
-      if (!mediaPreviewUrl) {
-        setUploadProgress(null);
-      }
+      setUploadProgress(null);
     }
   };
 
@@ -1076,7 +900,7 @@ export default function ChatPage({
           <div className="flex items-center gap-4 min-w-0">
             {!embeddedMatchId && (
               <button 
-                onClick={() => navigate(role === 'alumni' ? '/alumni/chat' : '/chat')} 
+                onClick={() => navigate('/chat')} 
                 className="p-2 hover:bg-white/[0.06] rounded-xl text-zinc-400 hover:text-white transition-all active:scale-95 shrink-0"
               >
                 <ArrowLeft className="h-5 w-5" />
@@ -1123,17 +947,6 @@ export default function ChatPage({
 
           {/* Redesigned Header Actions */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {!autoSeenEnabled && hasUnread && (
-              <button 
-                onClick={() => {
-                  markChannelAsRead(matchId!);
-                  toast.success('Chat marked as read');
-                }}
-                className="mr-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-xl bg-violet-600/20 hover:bg-violet-600/40 text-violet-400 hover:text-white transition-all border border-violet-500/20 active:scale-95 shadow-md shadow-violet-950/20"
-              >
-                Mark Read
-              </button>
-            )}
             <button 
               onClick={() => toast.info('Voice call initiation coming soon')}
               className="p-2.5 text-zinc-400 hover:text-white hover:bg-white/[0.06] hover:scale-105 active:scale-95 rounded-xl transition-all"
@@ -1348,22 +1161,11 @@ export default function ChatPage({
                               >
                                 {msg.retentionMode === 'VIEW_ONCE' || msg.visibility === 'view_once' ? (
                                   msg.viewed ? (
-                                    <div className="flex items-center gap-1.5 py-1 text-zinc-455 font-medium select-none">
+                                    <div className="flex items-center gap-1.5 py-1 text-zinc-450 font-medium select-none">
                                       <Flame className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
                                       <span>Opened</span>
                                       <span className="text-[9px] text-zinc-550 italic font-mono shrink-0 ml-1">(disappeared)</span>
                                     </div>
-                                  ) : msg.messageType === 'voice' ? (
-                                    <VoicePlayer
-                                      audioUrl={msg.attachments?.[0]?.downloadUrl || ''}
-                                      duration={msg.attachments?.[0]?.fileSize}
-                                      isOwn={group.isOwn}
-                                      isViewOnce={true}
-                                      onPlayEnd={!group.isOwn ? () => {
-                                        useChatStore.getState().openMessage(matchId!, msg.id || msg._id);
-                                        toast.success("Voice message expired.");
-                                      } : undefined}
-                                    />
                                   ) : (
                                     <div
                                       onClick={!group.isOwn ? () => {
@@ -1454,15 +1256,7 @@ export default function ChatPage({
                                       </div>
                                     )}
 
-                                    {msg.messageType === 'voice' ? (
-                                      <VoicePlayer
-                                        audioUrl={msg.attachments?.[0]?.downloadUrl || ''}
-                                        duration={msg.attachments?.[0]?.fileSize}
-                                        isOwn={group.isOwn}
-                                      />
-                                    ) : (
-                                      msg.text && <p className="break-words select-text">{msg.text}</p>
-                                    )}
+                                    {msg.text && <p className="break-words select-text">{msg.text}</p>}
                                   </>
                                 )}
                                 
@@ -1487,7 +1281,12 @@ export default function ChatPage({
                                 </div>
                               </motion.div>
 
-
+                              {/* Seen status text label below bubble (latest message only) */}
+                              {group.isOwn && (msg.id === lastOutgoingMsgId || (msg as any)._id === lastOutgoingMsgId) && msg.status === 'seen' && (
+                                <div className="text-[10px] text-zinc-500 font-bold text-right mt-1 mr-1 select-none animate-fade-in">
+                                  Seen {msg.seenAt ? new Date(msg.seenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                </div>
+                              )}
 
                               {/* Reaction Emojis list overlay */}
                               {msg.reactions && msg.reactions.length > 0 && (
@@ -1630,256 +1429,93 @@ export default function ChatPage({
         )}
 
         <div className="h-[60px] rounded-[999px] border border-white/[0.08] px-4.5 shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex gap-2.5 items-center bg-[#09090D]/80 backdrop-blur-[24px]">
-          {isRecording ? (
-            <div className="flex-1 flex items-center justify-between px-3 text-xs">
-              <div className="flex items-center gap-2 text-rose-500 animate-pulse">
-                <span className="h-2 w-2 rounded-full bg-rose-500" />
-                <span className="font-semibold uppercase tracking-wider text-[10px]">Recording Voice...</span>
-                <span className="font-mono text-zinc-300 font-bold ml-2">{formatRecordTime(recordingTime)}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={cancelRecording}
-                  className="px-3 py-1.5 hover:bg-white/[0.06] hover:text-white text-zinc-400 rounded-full transition-all text-[11px] font-bold"
-                >
-                  Cancel
-                </button>
-                {/* Voice Once Toggle */}
-                <button
-                  onClick={() => setVoiceOnceActive(prev => !prev)}
-                  className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border text-[10px] select-none font-bold shrink-0 ${
-                    voiceOnceActive
-                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-pulse'
-                      : 'bg-zinc-950/40 border-white/[0.04] text-zinc-400 hover:text-zinc-200'
-                  }`}
-                  title="Toggle Play Once Mode"
-                >
-                  <Lock className="w-3.5 h-3.5 shrink-0" />
-                  <span>Voice Once</span>
-                </button>
-                <button
-                  onClick={sendRecording}
-                  className="h-9 px-4 rounded-full bg-gradient-to-br from-[#8B5CF6] via-[#6D5DF6] to-[#5A46E8] flex items-center justify-center text-white text-[11px] font-bold shadow-[0_4px_16px_rgba(109,74,255,0.4)]"
-                >
-                  Send
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                onChange={handleFileSelect} 
-              />
-              
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadProgress !== null}
-                className="p-2 text-zinc-455 hover:text-white rounded-full hover:bg-white/[0.06] disabled:opacity-40 transition-all shrink-0 hover:scale-110"
-                title="Attach Files"
-              >
-                <Paperclip className="w-4.5 h-4.5" />
-              </button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            onChange={handleFileSelect} 
+          />
+          
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadProgress !== null}
+            className="p-2 text-zinc-450 hover:text-white rounded-full hover:bg-white/[0.06] disabled:opacity-40 transition-all shrink-0 hover:scale-110"
+            title="Attach Files"
+          >
+            <Paperclip className="w-4.5 h-4.5" />
+          </button>
 
-              <button 
-                onClick={() => setText(prev => prev + '😊')}
-                className="p-2 text-zinc-455 hover:text-white rounded-full hover:bg-white/[0.06] transition-all shrink-0 hidden sm:inline-flex hover:scale-110"
-                title="Add Emoji"
-              >
-                <Smile className="w-4.5 h-4.5" />
-              </button>
-              
-              <input
-                ref={inputRef}
-                value={text}
-                disabled={uploadProgress !== null}
-                onChange={e => handleTextChange(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                onPaste={handlePaste}
-                placeholder={`Message ${matchName}...`}
-                className="flex-1 bg-transparent px-3.5 text-xs text-white placeholder:text-zinc-550/80 hover:placeholder:text-zinc-550 outline-none caret-violet-500 w-full transition-all duration-300"
-              />
+          <button 
+            onClick={() => setText(prev => prev + '😊')}
+            className="p-2 text-zinc-450 hover:text-white rounded-full hover:bg-white/[0.06] transition-all shrink-0 hidden sm:inline-flex hover:scale-110"
+            title="Add Emoji"
+          >
+            <Smile className="w-4.5 h-4.5" />
+          </button>
+          
+          <input
+            ref={inputRef}
+            value={text}
+            disabled={uploadProgress !== null}
+            onChange={e => handleTextChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            onPaste={handlePaste}
+            placeholder={`Message ${matchName}...`}
+            className="flex-1 bg-transparent px-3.5 text-xs text-white placeholder:text-zinc-550/80 hover:placeholder:text-zinc-550 outline-none caret-violet-500 w-full transition-all duration-300"
+          />
 
-              {/* Send Once & Send Buttons wrapper */}
-              <div className="shrink-0 flex items-center gap-2">
-                <AnimatePresence mode="wait">
-                  {text.trim() ? (
-                    <div className="flex items-center gap-2" key="send-container">
-                      <motion.button
-                        key="send-once"
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0, opacity: 0 }}
-                        onClick={() => setRetentionMode(prev => prev === 'VIEW_ONCE' ? 'NEVER_DELETE' : 'VIEW_ONCE')}
-                        className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border text-[10px] select-none font-bold shrink-0 ${
-                          retentionMode === 'VIEW_ONCE'
-                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-pulse'
-                            : 'bg-zinc-950/40 border-white/[0.04] text-zinc-400 hover:text-zinc-200'
-                        }`}
-                        title="Toggle Send Once (View Once text message)"
-                      >
-                        <Lock className="w-3.5 h-3.5 shrink-0" />
-                        <span>Send Once</span>
-                      </motion.button>
-                      
-                      <motion.button
-                        key="send"
-                        initial={{ scale: 0, rotate: -30, opacity: 0 }}
-                        animate={{ scale: 1.05, rotate: 0, opacity: 1 }}
-                        exit={{ scale: 0, rotate: 30, opacity: 0 }}
-                        transition={{ type: 'spring', ...SPRING_CONFIG }}
-                        onClick={handleSend}
-                        disabled={isSending || uploadProgress !== null}
-                        className="h-10 w-10 rounded-full bg-gradient-to-br from-[#8B5CF6] via-[#6D5DF6] to-[#5A46E8] flex items-center justify-center text-white shadow-[0_4px_16px_rgba(109,74,255,0.4)]"
-                      >
-                        <Send className="h-4 w-4" />
-                      </motion.button>
-                    </div>
-                  ) : (
-                    <motion.button
-                      key="mic"
-                      initial={{ scale: 0, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      exit={{ scale: 0, opacity: 0 }}
-                      transition={{ type: 'spring', ...SPRING_CONFIG }}
-                      onClick={startRecording}
-                      className="h-10 w-10 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 flex items-center justify-center text-zinc-455 hover:text-white"
-                    >
-                      <Mic className="h-4 w-4" />
-                    </motion.button>
-                  )}
-                </AnimatePresence>
-              </div>
-            </>
-          )}
+          {/* View Once Toggle Button */}
+          <button 
+            onClick={() => setRetentionMode(prev => prev === 'VIEW_ONCE' ? 'NEVER_DELETE' : 'VIEW_ONCE')}
+            className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border text-[10px] select-none shrink-0 ${
+              retentionMode === 'VIEW_ONCE' 
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 font-bold shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-pulse' 
+                : 'bg-zinc-950/40 border-white/[0.04] text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Toggle View Once Mode"
+          >
+            <Flame className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden md:inline">View Once</span>
+          </button>
+
+          {/* Morphing Mic to Send Action button */}
+          <div className="shrink-0 flex items-center justify-center w-10 h-10">
+            <AnimatePresence mode="wait">
+              {text.trim() ? (
+                <motion.button
+                  key="send"
+                  initial={{ scale: 0, rotate: -30, opacity: 0 }}
+                  animate={{ scale: 1.05, rotate: 0, opacity: 1 }}
+                  exit={{ scale: 0, rotate: 30, opacity: 0 }}
+                  transition={{ type: 'spring', ...SPRING_CONFIG }}
+                  onClick={handleSend}
+                  disabled={isSending || uploadProgress !== null}
+                  className="h-10 w-10 rounded-full bg-gradient-to-br from-[#8B5CF6] via-[#6D5DF6] to-[#5A46E8] flex items-center justify-center text-white shadow-[0_4px_16px_rgba(109,74,255,0.4)]"
+                >
+                  <Send className="h-4 w-4" />
+                </motion.button>
+              ) : (
+                <motion.button
+                  key="mic"
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: 'spring', ...SPRING_CONFIG }}
+                  onClick={() => toast.info('Voice messages arriving soon! 🎙️')}
+                  className="h-10 w-10 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 flex items-center justify-center text-zinc-455 hover:text-white"
+                >
+                  <Mic className="h-4 w-4" />
+                </motion.button>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
-
-      {/* Premium Media Preview Modal with View Once Toggle */}
-      {selectedMediaFile && mediaPreviewUrl && createPortal(
-        <div className="fixed inset-0 z-[100000] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 select-none">
-          <div className="max-w-md w-full flex flex-col gap-6 bg-zinc-950 border border-white/[0.08] p-6 rounded-3xl shadow-2xl animate-fade-in">
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-              <h3 className="text-sm font-semibold text-zinc-200">Media Preview</h3>
-              <button
-                onClick={() => {
-                  URL.revokeObjectURL(mediaPreviewUrl);
-                  setSelectedMediaFile(null);
-                  setMediaPreviewUrl(null);
-                  setMediaPreviewType(null);
-                  setMediaViewOnce(false);
-                }}
-                className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Media Content */}
-            <div className="flex-1 max-h-[300px] flex items-center justify-center bg-zinc-900/50 rounded-2xl overflow-hidden border border-white/[0.04] p-2">
-              {mediaPreviewType === 'image' ? (
-                <img
-                  src={mediaPreviewUrl}
-                  alt="Preview"
-                  className="max-h-[280px] max-w-full object-contain rounded-xl"
-                />
-              ) : (
-                <video
-                  src={mediaPreviewUrl}
-                  controls
-                  className="max-h-[280px] max-w-full object-contain rounded-xl"
-                />
-              )}
-            </div>
-
-            {/* View Once Toggle Option */}
-            <div className="flex items-center gap-3 py-2">
-              <button
-                onClick={() => setMediaViewOnce(prev => !prev)}
-                className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border text-[10px] select-none font-bold ${
-                  mediaViewOnce
-                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-pulse'
-                    : 'bg-zinc-900 border-white/[0.04] text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Lock className="w-3.5 h-3.5 shrink-0" />
-                <span>View Once</span>
-              </button>
-              <p className="text-[10px] text-zinc-500">
-                {mediaViewOnce 
-                  ? "Receiver can view this media only once." 
-                  : "Normal media attachment."}
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-3 justify-end pt-3 border-t border-white/[0.06]">
-              <button
-                onClick={() => {
-                  URL.revokeObjectURL(mediaPreviewUrl);
-                  setSelectedMediaFile(null);
-                  setMediaPreviewUrl(null);
-                  setMediaPreviewType(null);
-                  setMediaViewOnce(false);
-                }}
-                className="px-4 py-2 hover:bg-zinc-900 rounded-xl text-zinc-400 hover:text-white text-xs font-semibold transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const fileToSend = selectedMediaFile;
-                  const viewOnceVal = mediaViewOnce;
-
-                  // Revoke and clear preview UI
-                  URL.revokeObjectURL(mediaPreviewUrl);
-                  setSelectedMediaFile(null);
-                  setMediaPreviewUrl(null);
-                  setMediaPreviewType(null);
-                  setMediaViewOnce(false);
-
-                  // Perform the actual upload and send
-                  if (fileToSend) {
-                    setUploadProgress(0);
-                    try {
-                      const res = await chatApi.uploadFile(matchId!, fileToSend, (pct) => {
-                        setUploadProgress(pct);
-                      });
-
-                      if (res && res.success && res.data && res.data.length > 0) {
-                        const uploadedFile = res.data[0];
-                        const isImage = uploadedFile.mimeType.startsWith('image/');
-                        const msgType = isImage ? 'image' : 'file';
-
-                        await sendMessage(matchId!, '', msgType, [uploadedFile], viewOnceVal ? 'VIEW_ONCE' : 'NEVER_DELETE');
-                        toast.success('Media sent successfully!');
-                      } else {
-                        toast.error(res.error || 'Upload failed.');
-                      }
-                    } catch (err: any) {
-                      console.error(err);
-                      toast.error('Upload failed: ' + err.message);
-                    } finally {
-                      setUploadProgress(null);
-                    }
-                  }
-                }}
-                className="px-5 py-2.5 bg-violet-600 hover:bg-violet-755 rounded-xl text-white text-xs font-semibold shadow-lg shadow-violet-950/20 transition-all"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
 
       {/* Redesigned Premium Media Viewer */}
       {createPortal(

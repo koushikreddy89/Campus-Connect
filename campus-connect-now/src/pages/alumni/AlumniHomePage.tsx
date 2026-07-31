@@ -14,14 +14,16 @@ import {
   Plus,
   Sparkles,
 } from 'lucide-react';
-
+import AlumniBottomTabBar from '@/components/alumni/AlumniBottomTabBar';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 
 const AlumniHomePage: React.FC = () => {
   const navigate = useNavigate();
-  const email = useAuthStore(s => s.email);
-  const uid = useAuthStore(s => s.uid);
+  const { email, uid } = useAuthStore(s => ({
+    email: s.email,
+    uid: s.uid,
+  }));
   const profile = useProfileStore(s => s.profile);
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState({
@@ -178,6 +180,8 @@ const AlumniHomePage: React.FC = () => {
         </Card>
       </div>
 
+      {/* Bottom Navigation */}
+      <AlumniBottomTabBar />
     </div>
   );
 };

@@ -33,11 +33,8 @@ export const HeroTitle = memo(() => {
 
   return (
     <h1 
-      className="font-black tracking-[-0.04em] leading-[1.0] text-center bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-400 font-sans select-none w-full max-w-[900px]"
-      style={{ 
-        fontSize: 'clamp(2.2rem, 5vw, 4.5rem)', 
-        textWrap: 'balance' 
-      } as React.CSSProperties}
+      className="text-[40px] md:text-[56px] lg:text-[72px] font-black tracking-[-0.04em] leading-[1.0] text-center bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-400 font-sans select-none w-full max-w-[900px]"
+      style={{ textWrap: 'balance' } as React.CSSProperties}
     >
       <motion.span
         initial="hidden"

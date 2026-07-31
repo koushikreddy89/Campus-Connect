@@ -70,7 +70,7 @@ export interface Message {
   id: string;
   matchId: string;
   senderId: string;
-  messageType?: 'text' | 'image' | 'file' | 'document' | 'link' | 'voice';
+  messageType?: 'text' | 'image' | 'file';
   text: string;
   attachments?: Attachment[];
   timestamp: string;

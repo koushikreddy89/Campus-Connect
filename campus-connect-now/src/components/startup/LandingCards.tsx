@@ -197,67 +197,43 @@ CardWrapper.displayName = 'CardWrapper';
 
 export const LandingCards = memo(({ onSelectRole }: LandingCardsProps) => {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-4xl px-4 mt-4">
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl px-4 mt-4">
       {/* Student Card */}
       <CardWrapper role="student" delay={0.2} onClick={() => onSelectRole('student')}>
         <div>
           <AnimatedIcon role="student">
             <GraduationCap className="h-6 w-6 text-violet-400" />
           </AnimatedIcon>
-          <h3 
-            className="font-semibold mb-2 text-white group-hover:text-violet-300 transition-colors"
-            style={{ fontSize: 'clamp(1.1rem, 1.5vw, 1.25rem)' }}
-          >
-            Student
-          </h3>
-          <p 
-            className="text-zinc-400 leading-relaxed"
-            style={{ fontSize: 'clamp(0.85rem, 1.2vw, 0.95rem)' }}
-          >
+          <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-violet-300 transition-colors">Student</h3>
+          <p className="text-sm text-zinc-400 leading-relaxed">
             Discover peers, share projects, participate in hackathons, and build your campus identity.
           </p>
         </div>
         <AnimatedCTA text="Enterprise Portal" role="student" />
       </CardWrapper>
- 
+
       {/* Alumni Card */}
       <CardWrapper role="alumni" delay={0.32} onClick={() => onSelectRole('alumni')}>
         <div>
           <AnimatedIcon role="alumni">
             <Trophy className="h-6 w-6 text-amber-400" />
           </AnimatedIcon>
-          <h3 
-            className="font-semibold mb-2 text-white group-hover:text-amber-300 transition-colors"
-            style={{ fontSize: 'clamp(1.1rem, 1.5vw, 1.25rem)' }}
-          >
-            Alumni
-          </h3>
-          <p 
-            className="text-zinc-400 leading-relaxed"
-            style={{ fontSize: 'clamp(0.85rem, 1.2vw, 0.95rem)' }}
-          >
+          <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-amber-300 transition-colors">Alumni</h3>
+          <p className="text-sm text-zinc-400 leading-relaxed">
             Verify your graduation records to mentor, share job openings, and refer fellow students.
           </p>
         </div>
         <AnimatedCTA text="Verify Alumni Record" role="alumni" />
       </CardWrapper>
- 
+
       {/* Admin Card */}
       <CardWrapper role="admin" delay={0.44} onClick={() => onSelectRole('admin')}>
         <div>
           <AnimatedIcon role="admin">
             <Shield className="h-6 w-6 text-sky-400" />
           </AnimatedIcon>
-          <h3 
-            className="font-semibold mb-2 text-white group-hover:text-sky-300 transition-colors"
-            style={{ fontSize: 'clamp(1.1rem, 1.5vw, 1.25rem)' }}
-          >
-            Admin Portal
-          </h3>
-          <p 
-            className="text-zinc-400 leading-relaxed"
-            style={{ fontSize: 'clamp(0.85rem, 1.2vw, 0.95rem)' }}
-          >
+          <h3 className="text-xl font-semibold mb-2 text-white group-hover:text-sky-300 transition-colors">Admin Portal</h3>
+          <p className="text-sm text-zinc-400 leading-relaxed">
             Publish official communications, events, announcements, and placement opportunities.
           </p>
         </div>

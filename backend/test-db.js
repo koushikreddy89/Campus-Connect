@@ -56,7 +56,8 @@ async function runTest() {
   const referral = new Referral({
     alumniId: alumniProfile.userId,
     company: 'Test Referral Company',
-    role: 'SWE Intern'
+    role: 'SWE Intern',
+    applicationUrl: 'https://example.com/apply'
   });
   await referral.save();
   console.log('🤝 Created Referral in collection:', Referral.collection.name);

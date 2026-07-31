@@ -9,7 +9,6 @@ import { EmptyState } from '@/components/EmptyState';
 import { toast } from 'sonner';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { socketService } from '@/services/socketService';
-import { isOwnMessage } from '@/utils/userUtils';
 
 const EMPTY_MESSAGES: any[] = [];
 
@@ -32,7 +31,6 @@ export default function GroupChatPage({
   const group = useGroupChatStore(s => s.groups.find(g => g.id === groupId));
   const messages = useGroupChatStore(s => s.groupMessages[groupId!] || EMPTY_MESSAGES);
   const currentUserId = useAuthStore(s => s._id);
-  const role = useAuthStore(s => s.role);
   const sendGroupMessage = useGroupChatStore(s => s.sendGroupMessage);
   const fetchGroupMessages = useGroupChatStore(s => s.fetchGroupMessages);
 
@@ -121,7 +119,7 @@ export default function GroupChatPage({
   useEffect(() => {
     if (messages.length > lastMessageCount.current) {
       const lastMsg = messages[messages.length - 1];
-      const isOwn = isOwnMessage(lastMsg?.senderId);
+      const isOwn = String(lastMsg?.senderId) === String(currentUserId) || String(lastMsg?.senderId) === String(useAuthStore.getState().uid);
       const container = scrollContainerRef.current;
       
       if (container) {
@@ -180,7 +178,7 @@ export default function GroupChatPage({
         if (currentGroup) {
           groupsList.push(currentGroup);
         }
-        const isOwn = isOwnMessage(msg.senderId);
+        const isOwn = String(msg.senderId) === String(currentUserId) || String(msg.senderId) === String(useAuthStore.getState().uid);
         currentGroup = {
           senderId: msg.senderId,
           senderName: msg.senderName || 'Anonymous User',
@@ -205,7 +203,7 @@ export default function GroupChatPage({
         <div className="max-w-[820px] mx-auto w-full px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3.5 min-w-0">
             {!embeddedGroupId && (
-              <button onClick={() => navigate(role === 'alumni' ? '/alumni/chat' : '/chat')} className="p-1 rounded-lg hover:bg-zinc-900 text-zinc-400 hover:text-white">
+              <button onClick={() => navigate('/chat')} className="p-1 rounded-lg hover:bg-zinc-900 text-zinc-400 hover:text-white">
                 <ArrowLeft className="h-5 w-5" />
               </button>
             )}

@@ -31,8 +31,10 @@ interface PostFormData {
 
 const AlumniPostCreatePage: React.FC = () => {
   const navigate = useNavigate();
-  const uid = useAuthStore(s => s.uid);
-  const email = useAuthStore(s => s.email);
+  const { uid, email } = useAuthStore(s => ({
+    uid: s.uid,
+    email: s.email,
+  }));
   const profile = useProfileStore(s => s.profile);
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);

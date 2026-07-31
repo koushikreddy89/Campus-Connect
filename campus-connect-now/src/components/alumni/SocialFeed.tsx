@@ -19,7 +19,7 @@ interface SocialFeedProps {
 export const SocialFeed: React.FC<SocialFeedProps> = ({ type, onPostsLoaded }) => {
   const navigate = useNavigate();
   const observerTarget = useRef<HTMLDivElement>(null);
-  const uid = useAuthStore(s => s.uid);
+  const { uid } = useAuthStore(s => ({ uid: s.uid }));
 
   const {
     feedPosts,

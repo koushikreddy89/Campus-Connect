@@ -5,7 +5,7 @@
 
 // Import all logo variants
 import logoIcon from './logo.svg';
-import logoHorizontal from './logo.svg'; // Replaced old PNG with brand vector SVG
+import logoHorizontal from './logo-horizontal.png';
 import logoTagline from './logo-with-tagline.svg';
 
 export const LOGOS = {
@@ -16,7 +16,7 @@ export const LOGOS = {
   icon: logoIcon,
   
   /**
-   * Horizontal logo with text - High quality vector
+   * Horizontal logo with text - High quality PNG
    * Use case: Main branding, welcome page, large headers
    */
   horizontal: logoHorizontal,
@@ -37,9 +37,9 @@ export const LOGO_PATHS = {
   
   /**
    * Horizontal logo filename
-   * Direct path: /logo.svg in public folder
+   * Direct path: /logo-horizontal.png in assets
    */
-  horizontal: 'logo.svg',
+  horizontal: 'logo-horizontal.png',
   
   /**
    * Tagline logo filename

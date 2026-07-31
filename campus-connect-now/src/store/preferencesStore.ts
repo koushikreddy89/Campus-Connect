@@ -13,7 +13,7 @@ interface PreferencesState {
   updateLanguage: (language: 'English' | 'Hindi' | 'Telugu' | 'Tamil' | 'Kannada' | 'Malayalam') => Promise<void>;
   updateTimezone: (timezone: string) => Promise<void>;
   updateDateFormat: (dateFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD', timeFormat: '12h' | '24h') => Promise<void>;
-  updateNotification: (sound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent' | 'Aurora' | 'Pulse' | 'Zen' | 'Echo' | 'Minimal', volume: number) => Promise<void>;
+  updateNotification: (sound: 'Default' | 'Chime' | 'Pop' | 'Bell' | 'Campus' | 'Silent', volume: number) => Promise<void>;
   updateDataSaver: (data: {
     dataSaver?: boolean;
     autoPlayVideos?: boolean;

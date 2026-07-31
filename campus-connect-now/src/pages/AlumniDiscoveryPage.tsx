@@ -12,7 +12,9 @@ import { ArrowLeft, Sparkles } from 'lucide-react';
 
 export const AlumniDiscoveryPage: React.FC = () => {
   const navigate = useNavigate();
-  const isAuthenticated = useAuthStore(s => !!s.uid);
+  const { isAuthenticated } = useAuthStore(s => ({
+    isAuthenticated: !!s.uid,
+  }));
   const [followCount, setFollowCount] = useState(0);
 
   if (!isAuthenticated) {

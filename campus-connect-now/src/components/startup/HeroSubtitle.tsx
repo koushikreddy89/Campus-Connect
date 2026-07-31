@@ -12,11 +12,8 @@ export const HeroSubtitle = memo(() => {
         damping: 15,
         delay: 0.55, // Follows title sequence
       }}
-      className="text-zinc-400 font-medium text-center max-w-xl select-none"
-      style={{ 
-        fontSize: 'clamp(0.95rem, 1.5vw, 1.15rem)',
-        willChange: 'transform, opacity, filter' 
-      }}
+      className="text-zinc-400 text-base md:text-lg font-medium text-center max-w-xl select-none"
+      style={{ willChange: 'transform, opacity, filter' }}
     >
       Connect • Learn • Grow • Secure Enterprise Network.
     </motion.p>
